@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openwebartifact.dev/schema/site-v1.json",
+  "title": "Open Web Artifact Site Manifest v1",
+  "type": "object",
+  "required": ["specVersion", "artifactType", "entrypoint", "files"],
+  "properties": {
+    "specVersion": { "const": "owa.dev/v1" },
+    "artifactType": { "const": "application/vnd.openwebartifact.site.v1+json" },
+    "entrypoint": { "$ref": "#/$defs/artifactPath" },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/file" }
+    },
+    "routing": {
+      "type": "object",
+      "properties": { "spaFallback": { "$ref": "#/$defs/artifactPath" } },
+      "additionalProperties": false
+    },
+    "access": {
+      "type": "object",
+      "properties": { "visibility": { "enum": ["public", "unlisted"] } },
+      "additionalProperties": false
+    },
+    "lifecycle": {
+      "type": "object",
+      "properties": { "expiresAt": { "type": ["string", "null"], "format": "date-time" } },
+      "additionalProperties": false
+    },
+    "annotations": {
+      "type": "object",
+      "additionalProperties": { "type": ["string", "number", "boolean", "null"] }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "artifactPath": {
+      "type": "string",
+      "pattern": "^/(?!.*(?:^|/)\\.\\.?/)(?!.*//).+[^/]$|^/[^/]+$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "file": {
+      "type": "object",
+      "required": ["path", "digest", "size", "mediaType"],
+      "properties": {
+        "path": { "$ref": "#/$defs/artifactPath" },
+        "digest": { "$ref": "#/$defs/digest" },
+        "size": { "type": "integer", "minimum": 0 },
+        "mediaType": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    }
+  }
+}

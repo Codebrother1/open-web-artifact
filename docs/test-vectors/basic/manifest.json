@@ -1,0 +1,23 @@
+{
+  "specVersion": "owa.dev/v1",
+  "artifactType": "application/vnd.openwebartifact.site.v1+json",
+  "entrypoint": "/index.html",
+  "files": [
+    {
+      "path": "/index.html",
+      "digest": "sha256:f6c64c97726aac94c47f997a6875c727f8a889043393bd398fe008e3edeb63b0",
+      "size": 10,
+      "mediaType": "text/html; charset=utf-8"
+    }
+  ],
+  "access": {
+    "visibility": "unlisted"
+  },
+  "lifecycle": {
+    "expiresAt": null
+  },
+  "annotations": {
+    "example.note": "portable",
+    "example.version": 2
+  }
+}

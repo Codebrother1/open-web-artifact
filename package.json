@@ -1,0 +1,11 @@
+{
+  "name": "open-web-artifact",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test packages/conformance/src/*.test.js",
+    "dev:server": "node packages/server/src/index.js",
+    "artifact": "node packages/cli/src/index.js"
+  }
+}
