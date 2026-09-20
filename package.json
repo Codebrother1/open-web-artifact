@@ -7,6 +7,7 @@
     "test": "node --test packages/conformance/src/*.test.js",
     "test:conformance": "node --test packages/conformance/src/fixtures.test.js packages/conformance/src/schema.test.js",
     "test:property": "node --test packages/conformance/src/property.test.js",
+    "test:security": "node --test packages/conformance/src/security-*.test.js",
     "test:integration": "node --test packages/integration/src/*.test.js",
     "test:integration:harness": "node --test packages/integration/checks/*.test.js",
     "dev:server": "node packages/server/src/index.js",

@@ -7,12 +7,16 @@ import { FilesystemBlobStore, FilesystemMetadataStore } from '../../storage-file
 import { S3BlobStore } from '../../storage-s3/src/index.js';
 import { activateRelease, commitManifest, planManifest, resolveRequestPath } from '../../core/src/index.js';
 import { sha256 } from '../../spec/src/index.js';
+import { artifactHeaders, securityHeaders } from './security-profile.js';
 
 function json(res,status,body){res.writeHead(status,{'content-type':'application/json; charset=utf-8'});res.end(JSON.stringify(body,null,2));}
 async function readJson(req){let raw='';for await(const c of req)raw+=c;return JSON.parse(raw||'{}');}
 async function readBytes(req){const chunks=[];for await(const c of req)chunks.push(c);return Buffer.concat(chunks);}
 function safeEqualString(a,b){if(typeof a!=='string'||typeof b!=='string'||a.length!==b.length)return false;let x=0;for(let i=0;i<a.length;i++)x|=a.charCodeAt(i)^b.charCodeAt(i);return x===0;}
 function uploadSignature(secret,digest,expires){return createHmac('sha256',secret).update(`${digest}\n${expires}`).digest('hex');}
+function safeSiteSelector(value){
+  return typeof value==='string' && value.length>0 && value!=='.' && value!=='..' && !/[\/\\\0]/.test(value);
+}
 
 export async function createDefaultStores({dataDir=resolve(process.env.OWA_DATA_DIR??'.owa-data')}={}){
   await mkdir(dataDir,{recursive:true});
@@ -35,9 +39,17 @@ export async function createDefaultStores({dataDir=resolve(process.env.OWA_DATA_
 
 export function createArtifactServer({blobs,metadata,uploadSecret=randomBytes(32).toString('hex'),publicBaseUrl=null}={}){
   if(!blobs||!metadata)throw new Error('blobs and metadata stores are required');
-  return createServer(async(req,res)=>{try{
+  return createServer(async(req,res)=>{
+    // One host-policy baseline for every application response, including control
+    // responses and early errors. No artifact bytes or manifest fields change.
+    for (const [name,value] of Object.entries(securityHeaders())) res.setHeader(name,value);
+    try{
+    const target=req.url??'/';
+    if(!target.startsWith('/')||target.includes('#'))return json(res,400,{error:'Invalid request target'});
+    const queryIndex=target.indexOf('?');
+    const rawPath=queryIndex<0?target:target.slice(0,queryIndex);
     const base=`http://${req.headers.host??'localhost'}`;
-    const url=new URL(req.url??'/',base);
+    const url=new URL(target,base);
     if(req.method==='GET'&&url.pathname==='/health')return json(res,200,{ok:true,spec:'owa.dev/v1'});
 
     const planMatch=url.pathname.match(/^\/v1\/sites\/([^/]+)\/publish\/plan$/);
@@ -78,12 +90,17 @@ export function createArtifactServer({blobs,metadata,uploadSecret=randomBytes(32
 
     const host=(req.headers.host??'').split(':')[0];const slug=host.endsWith('.localhost')?host.slice(0,-10):url.searchParams.get('site');
     if((req.method==='GET'||req.method==='HEAD')&&slug){
+      // A site selector is one metadata key, never a path. Do not decode again:
+      // URLSearchParams already decoded a query selector exactly once.
+      if(!safeSiteSelector(slug))return json(res,404,{error:'site or active release not found'});
       const site=await metadata.getSite(slug);if(!site?.activeReleaseId)return json(res,404,{error:'site or active release not found'});
       const release=await metadata.getRelease(site.id,site.activeReleaseId);if(!release)return json(res,404,{error:'release not found'});
       if(release.manifest.lifecycle?.expiresAt&&new Date(release.manifest.lifecycle.expiresAt)<=new Date())return json(res,410,{error:'artifact expired'});
-      const file=resolveRequestPath(release.manifest,url.pathname);if(!file)return json(res,404,{error:'file not found'});
+      // URL parsing would erase literal/encoded dot segments before validation.
+      // Keep the existing resolver's decode-once behavior on the received path.
+      const file=resolveRequestPath(release.manifest,rawPath);if(!file)return json(res,404,{error:'file not found'});
       const body=await blobs.get(file.digest);
-      res.writeHead(200,{'content-type':file.mediaType,'content-length':String(body.byteLength),'etag':`"${file.digest}"`,'x-content-type-options':'nosniff','referrer-policy':'no-referrer','content-security-policy':"default-src 'self' data: blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"});
+      res.writeHead(200,{...artifactHeaders(file.mediaType),'content-length':String(body.byteLength),'etag':`"${file.digest}"`});
       return res.end(req.method==='HEAD'?undefined:Buffer.from(body));
     }
     return json(res,404,{error:'not found'});

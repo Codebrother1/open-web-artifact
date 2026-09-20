@@ -141,5 +141,8 @@ Issue 5 does not fix the following existing limitations:
 - Commit checks blob existence, not stored bytes' hashes or lengths. Content-mismatch fixtures exercise existing OCI read/write verification only; they do not add commit-time or S3 verification.
 - Duplicate JSON member-name policy remains outside portable corpus requirements. Unpaired-surrogate fixtures pin preservation behavior, but implementations must disclose parser limitations rather than substitute characters.
 
+## Named host security profile
+The [`sandboxed-web-v1` host policy](sandboxed-web-v1.md) defines an exact, script-disabled static-preview response contract, including CSP/sandbox headers on every application response, whole-string MIME dispatch, indexing and no-store behavior, and required production origin separation. Hosts claiming this profile MUST follow that contract; it does not change the artifact model, manifest validation, canonical identity, publishing, storage or release semantics above. The reference gateway applies its response policy but does not enforce the required content-only origin topology or implement authentication. See the [pre-implementation threat model](sandboxed-web-v1-threat-model.md) and [optional browser-validation guide](sandboxed-web-v1-browser-validation.md) for boundaries and evidence limitations.
+
 ## Still deferred
-Authentication, custom domains, broader OCI/ORAS transport semantics, adoption of RFC 8785/JCS, garbage collection, multi-tenant authorization, billing, forms/data/secret-proxy capabilities, and a stable security-profile vocabulary.
+Authentication, custom domains, broader OCI/ORAS transport semantics, adoption of RFC 8785/JCS, garbage collection, multi-tenant authorization, billing, forms/data/secret-proxy capabilities.

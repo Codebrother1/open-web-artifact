@@ -219,16 +219,22 @@ docs/
 
 ## Security / production status
 
-This is a protocol prototype, **not a production multi-tenant hosting service yet**. v0.2 intentionally does not include user authentication, tenant authorization, quotas, garbage collection, custom-domain verification, malware moderation, or a finalized browser sandbox policy.
+This is a protocol prototype, **not a production multi-tenant hosting service yet**. v0.2 intentionally does not include user authentication, tenant authorization, quotas, garbage collection, custom-domain verification, or malware moderation.
 
-Those should be added as explicit protocol/security layers rather than hidden assumptions in the storage implementation.
+The gateway applies [`sandboxed-web-v1`](docs/sandboxed-web-v1.md), a deny-by-default **static-preview** response policy. It deliberately disables all JavaScript (inline, external and same-artifact), external stylesheets, and network images/fonts/media; only inline CSS and `data:` images are allowed. Existing interactive sites and remote-asset-dependent pages will not work as ordinary web apps. Artifact bytes and identity are unchanged; unknown or invalid MIME metadata is served as an octet-stream attachment. Every application response carries the profile's security, no-store and advisory noindex headers, including assets, control responses and errors. Public and unlisted URLs remain accessible; this is neither authentication nor sanitization.
+
+A production deployment of this profile requires clean, cookieless, content-only one-site origins separate from control/admin/API services. **The prototype does not enforce that topology:** `.localhost` hostnames have distinct URL origins, but `?site=` can share an origin and API routes are exposed on every host. No-store does not erase existing browser caches, service workers or saved copies. This response policy is not a claim that the full platform is secure.
+
+Read the [pre-implementation threat model](docs/sandboxed-web-v1-threat-model.md), the [exact profile and deployment contract](docs/sandboxed-web-v1.md), and the [optional manual browser-validation guide](docs/sandboxed-web-v1-browser-validation.md). The deterministic tests verify HTTP policy and byte preservation, not browser enforcement; no browser automation is implemented and the manual report is initially **not run**.
+
+The remaining production controls should be added as explicit protocol/security layers rather than hidden assumptions in the storage implementation.
 
 ## Next milestones
 
 1. Formal canonicalization compatibility suite across at least two languages.
 2. Live integration tests against R2 and MinIO/S3.
 3. Authentication and capability-scoped publish tokens.
-4. Hardened safe-rendering security profiles.
+4. Production content/control origin isolation and separately reviewed interactive security profiles.
 5. Garbage collection and retention semantics for unreferenced blobs.
 6. OCI registry import/export convenience commands on top of ORAS.
 7. MCP adapter as a thin client over the HTTP protocol.
