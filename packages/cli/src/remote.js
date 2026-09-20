@@ -89,6 +89,9 @@ function controlClient(server) {
     }
   };
 }
+export function validateRemoteServer(server) {
+  return controlClient(server).origin;
+}
 async function safeFetch(url, options) {
   try { return await fetch(url, { ...options, redirect: 'error', credentials: 'omit' }); }
   catch { throw new CliError('OWA_CLI_NETWORK'); }
@@ -119,7 +122,7 @@ function uploadRequest(upload, client, slug, blobs) {
   return { url: url.href, options: { method: 'PUT', headers, body: Buffer.from(blobs.get(upload.digest)) } };
 }
 
-export async function remotePublish(directory, slug, server, { activate = true } = {}) {
+export async function remotePublishResult(directory, slug, server, { activate = true } = {}) {
   requireSite(slug);
   const client = controlClient(server);
   const packed = await packDirectory(directory);
@@ -140,24 +143,54 @@ export async function remotePublish(directory, slug, server, { activate = true }
   if (commit.slug !== slug || !isRelease(commit.releaseId) || !isDigest(commit.artifactDigest)
     || commit.artifactDigest !== packed.artifactDigest || !isActiveRelease(commit.activeReleaseId))
     throw new CliError('OWA_CLI_RESPONSE');
-  return `Published ${commit.releaseId}\nArtifact ${commit.artifactDigest}\nUploaded ${uploads.length} blob(s), reused ${plan.reused}`;
+  return {
+    site: slug,
+    artifactDigest: commit.artifactDigest,
+    releaseId: commit.releaseId,
+    activeReleaseId: commit.activeReleaseId,
+    uploaded: uploads.length,
+    reused: plan.reused
+  };
 }
 
-export async function remoteReleases(slug, server) {
+export async function remotePublish(directory, slug, server, { activate = true } = {}) {
+  const result = await remotePublishResult(directory, slug, server, { activate });
+  return `Published ${result.releaseId}\nArtifact ${result.artifactDigest}\nUploaded ${result.uploaded} blob(s), reused ${result.reused}`;
+}
+
+export async function remoteReleasesResult(slug, server) {
   requireSite(slug);
   const body = await controlClient(server).request(`/v1/sites/${slug}/releases`);
   if (!isRecord(body.site) || body.site.slug !== slug || !isActiveRelease(body.site.activeReleaseId)
     || !Array.isArray(body.releases) || !body.releases.every(release => isRecord(release)
       && isRelease(release.id) && isDigest(release.artifactDigest) && isTimestamp(release.createdAt)))
     throw new CliError('OWA_CLI_RESPONSE');
-  return body.releases.map(release => `${release.id}${body.site.activeReleaseId === release.id ? ' *' : ''}\t${release.artifactDigest}\t${release.createdAt}`).join('\n');
+  return {
+    site: slug,
+    activeReleaseId: body.site.activeReleaseId,
+    releases: body.releases.map(release => ({
+      releaseId: release.id,
+      artifactDigest: release.artifactDigest,
+      createdAt: release.createdAt
+    }))
+  };
 }
 
-export async function remoteActivate(releaseId, slug, server) {
+export async function remoteReleases(slug, server) {
+  const result = await remoteReleasesResult(slug, server);
+  return result.releases.map(release => `${release.releaseId}${result.activeReleaseId === release.releaseId ? ' *' : ''}\t${release.artifactDigest}\t${release.createdAt}`).join('\n');
+}
+
+export async function remoteActivateResult(releaseId, slug, server) {
   requireSite(slug);
   if (!isRelease(releaseId)) throw new CliError('OWA_CLI_INPUT');
   const body = await controlClient(server).request(`/v1/sites/${slug}/activate/${releaseId}`, undefined, 'POST');
   if (body.slug !== slug || !isRelease(body.activeReleaseId) || body.activeReleaseId !== releaseId)
     throw new CliError('OWA_CLI_RESPONSE');
-  return `Activated ${body.activeReleaseId} for ${slug}`;
+  return { site: slug, activeReleaseId: body.activeReleaseId };
+}
+
+export async function remoteActivate(releaseId, slug, server) {
+  const result = await remoteActivateResult(releaseId, slug, server);
+  return `Activated ${result.activeReleaseId} for ${slug}`;
 }

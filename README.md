@@ -1,6 +1,6 @@
 # Open Web Artifact (OWA)
 
-An experimental open specification and zero-dependency reference implementation for **portable, immutable web artifacts**.
+An experimental open specification and reference implementation for **portable, immutable web artifacts**.
 
 The thesis: an AI agent, CLI, CI job, or application should be able to produce one web artifact that can be stored, moved, signed, and served by different hosts without adopting each host's private deployment model.
 
@@ -23,9 +23,15 @@ The prototype now proves:
 - HTTP serving gateway
 - local and remote CLI workflows
 - required-by-default, site- and capability-scoped HTTP bearer authentication
+- optional local stdio MCP tools as a thin client over the same HTTP protocol
 - conformance tests, including the published AWS SigV4 test vector
 
-Everything in the reference implementation currently uses Node.js built-ins. There are **zero third-party runtime dependencies**.
+The core, HTTP server, and CLI use Node.js built-ins and have **zero third-party
+runtime dependencies**. The separately installed, optional MCP adapter adds three
+third-party runtime packages: `@modelcontextprotocol/server@2.0.0`,
+`@modelcontextprotocol/core@2.0.0`, and `zod@4.6.5`. Its official SDK client is a
+dev-only test dependency. See the [MCP guide](docs/mcp.md) for the locked dependency
+boundary and installation.
 
 ## Core architecture
 
@@ -166,6 +172,40 @@ This auth layer adds HTTP authorization checks, local upload-grant fields, and
 safe error codes. It does **not** change the manifest schema, artifact identity,
 immutable release format, or direct-to-object-storage publishing model.
 
+## Optional local MCP adapter
+
+A local MCP client can use `publish`, `list_releases`, `activate`, and `rollback`
+over stdio. The adapter uses the same HTTP plan/upload/commit lifecycle and bearer
+authentication as the CLI; the HTTP server stays authoritative. It opens no HTTP
+listener and introduces no OAuth flow or token minting. Rollback activates an
+explicitly supplied release ID, without an implicit list/read request.
+
+Requires Node.js 22+. Install separately from the repository root:
+
+```bash
+npm --prefix packages/mcp ci --ignore-scripts
+```
+
+For runtime-only installation, add `--omit=dev`. Configure the client to launch
+`node /absolute/repo/packages/mcp/src/index.js` directly, not an npm script that
+prints a banner to protocol stdout. Set `OWA_MCP_SERVER` to one trusted origin
+and `OWA_MCP_ROOT` to an existing absolute, trusted read-only staging directory.
+The client/launcher must explicitly forward `OWA_TOKEN` through approved secret
+injection for required-auth servers; never put a token in tool arguments or
+client config files, and never give the adapter the server's `OWA_AUTH_SECRET`.
+
+Every tool call requires a `server` argument matching the pinned origin before
+packing/network access. Publishing defaults to activation; `activate: false`
+stages without changing the active pointer. MCP results contain validated
+metadata, not file bytes, full manifests, or upload grants. The staging boundary
+is not a race-proof filesystem sandbox, and origin pinning is not a DNS/egress
+sandbox or per-site hosting isolation.
+
+Read the [MCP setup, exact schemas, capability matrix, and security limits](docs/mcp.md)
+and the [machine-readable tool schemas](packages/mcp/tool-schemas.json).
+Run the optional suite with `npm run test:mcp` after the full MCP install; `npm test`
+remains the independent root suite and does not require the SDK.
+
 ## S3 / Cloudflare R2 backend
 
 Configure `artifactd` with environment variables. The following is a local dev
@@ -263,6 +303,7 @@ packages/
   transport-oci/       OCI image-layout export/import
   server/              artifactd HTTP control plane + gateway
   cli/                 local/remote publish + OCI commands
+  mcp/                 optional SDK-based stdio client of the HTTP API
   conformance/         protocol and portability tests
 
 docs/
@@ -270,6 +311,7 @@ docs/
   spec-v0.2.md
   manifest.schema.json
   auth.md
+  mcp.md
   integration-tests.md
   test-vectors/
 ```
@@ -316,8 +358,7 @@ browser enforcement; browser validation remains **not run**.
 3. Production content/control origin isolation and separately reviewed interactive security profiles.
 4. Garbage collection and retention semantics for unreferenced blobs.
 5. OCI registry import/export convenience commands on top of ORAS.
-6. MCP adapter as a thin client over the HTTP protocol.
-7. Optional static capabilities (data/forms/secret proxy) only after the base lifecycle is stable.
+6. Optional static capabilities (data/forms/secret proxy) only after the base lifecycle is stable.
 
 ## License
 

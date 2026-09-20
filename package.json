@@ -10,6 +10,7 @@
     "test:security": "node --test packages/conformance/src/security-*.test.js",
     "test:integration": "node --test packages/integration/src/*.test.js",
     "test:integration:harness": "node --test packages/integration/checks/*.test.js",
+    "test:mcp": "npm --prefix packages/mcp test",
     "start": "node packages/server/src/index.js",
     "dev:server": "node packages/server/src/index.js --dev",
     "test:auth": "node --test packages/conformance/src/auth-*.test.js",
