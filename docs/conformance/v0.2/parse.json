@@ -1,0 +1,158 @@
+{
+  "format": "owa-conformance-v1",
+  "specVersion": "owa.dev/v1",
+  "operation": "parse",
+  "notes": [
+    "Parse inputJson exactly, without trimming, BOM removal, URL handling, or manifest validation.",
+    "A parser SyntaxError is mapped by the harness to OWA_INVALID_JSON. Successful parses compare static canonicalJson and digest.",
+    "Duplicate JSON object names and cross-runtime treatment of unpaired surrogates at parse time are not claimed to be universally portable."
+  ],
+  "vectors": [
+    {
+      "id": "parse-empty",
+      "description": "Invalid JSON text: a parser syntax failure maps to OWA_INVALID_JSON, not a manifest failure.",
+      "inputJson": "",
+      "expected": {
+        "errorCategory": "OWA_INVALID_JSON"
+      }
+    },
+    {
+      "id": "parse-trailing-comma",
+      "description": "Invalid JSON text: a parser syntax failure maps to OWA_INVALID_JSON, not a manifest failure.",
+      "inputJson": "{\"a\":1,}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_JSON"
+      }
+    },
+    {
+      "id": "parse-single-quotes",
+      "description": "Invalid JSON text: a parser syntax failure maps to OWA_INVALID_JSON, not a manifest failure.",
+      "inputJson": "{'a':1}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_JSON"
+      }
+    },
+    {
+      "id": "parse-unquoted-key",
+      "description": "Invalid JSON text: a parser syntax failure maps to OWA_INVALID_JSON, not a manifest failure.",
+      "inputJson": "{a:1}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_JSON"
+      }
+    },
+    {
+      "id": "parse-comment",
+      "description": "Invalid JSON text: a parser syntax failure maps to OWA_INVALID_JSON, not a manifest failure.",
+      "inputJson": "{/*comment*/\"a\":1}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_JSON"
+      }
+    },
+    {
+      "id": "parse-trailing-garbage",
+      "description": "Invalid JSON text: a parser syntax failure maps to OWA_INVALID_JSON, not a manifest failure.",
+      "inputJson": "{}x",
+      "expected": {
+        "errorCategory": "OWA_INVALID_JSON"
+      }
+    },
+    {
+      "id": "parse-trailing-value",
+      "description": "Invalid JSON text: a parser syntax failure maps to OWA_INVALID_JSON, not a manifest failure.",
+      "inputJson": "{}{}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_JSON"
+      }
+    },
+    {
+      "id": "parse-leading-zero",
+      "description": "Invalid JSON text: a parser syntax failure maps to OWA_INVALID_JSON, not a manifest failure.",
+      "inputJson": "01",
+      "expected": {
+        "errorCategory": "OWA_INVALID_JSON"
+      }
+    },
+    {
+      "id": "parse-nan",
+      "description": "Invalid JSON text: a parser syntax failure maps to OWA_INVALID_JSON, not a manifest failure.",
+      "inputJson": "NaN",
+      "expected": {
+        "errorCategory": "OWA_INVALID_JSON"
+      }
+    },
+    {
+      "id": "parse-infinity",
+      "description": "Invalid JSON text: a parser syntax failure maps to OWA_INVALID_JSON, not a manifest failure.",
+      "inputJson": "Infinity",
+      "expected": {
+        "errorCategory": "OWA_INVALID_JSON"
+      }
+    },
+    {
+      "id": "parse-undefined",
+      "description": "Invalid JSON text: a parser syntax failure maps to OWA_INVALID_JSON, not a manifest failure.",
+      "inputJson": "undefined",
+      "expected": {
+        "errorCategory": "OWA_INVALID_JSON"
+      }
+    },
+    {
+      "id": "parse-bad-escape",
+      "description": "Invalid JSON text: a parser syntax failure maps to OWA_INVALID_JSON, not a manifest failure.",
+      "inputJson": "\"\\x20\"",
+      "expected": {
+        "errorCategory": "OWA_INVALID_JSON"
+      }
+    },
+    {
+      "id": "parse-unescaped-control",
+      "description": "Invalid JSON text: a parser syntax failure maps to OWA_INVALID_JSON, not a manifest failure.",
+      "inputJson": "\"a\nb\"",
+      "expected": {
+        "errorCategory": "OWA_INVALID_JSON"
+      }
+    },
+    {
+      "id": "parse-unterminated-string",
+      "description": "Invalid JSON text: a parser syntax failure maps to OWA_INVALID_JSON, not a manifest failure.",
+      "inputJson": "\"abc",
+      "expected": {
+        "errorCategory": "OWA_INVALID_JSON"
+      }
+    },
+    {
+      "id": "parse-unterminated-object",
+      "description": "Invalid JSON text: a parser syntax failure maps to OWA_INVALID_JSON, not a manifest failure.",
+      "inputJson": "{\"a\":1",
+      "expected": {
+        "errorCategory": "OWA_INVALID_JSON"
+      }
+    },
+    {
+      "id": "parse-bom",
+      "description": "Invalid JSON text: a parser syntax failure maps to OWA_INVALID_JSON, not a manifest failure.",
+      "inputJson": "\ufeff{}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_JSON"
+      }
+    },
+    {
+      "id": "parse-whitespace",
+      "description": "Successful JSON parse followed by canonical encoding.",
+      "inputJson": " \n\t { \"b\": true, \"a\": null } \r\n",
+      "expected": {
+        "canonicalJson": "{\"a\":null,\"b\":true}",
+        "digest": "sha256:777fd7cd7406c9292c68b3a96618c04974c9823714b5625f200e8dc3eb5d6bf0"
+      }
+    },
+    {
+      "id": "parse-escaped-solidus",
+      "description": "Successful JSON parse followed by canonical encoding.",
+      "inputJson": "\"a\\/b\"",
+      "expected": {
+        "canonicalJson": "\"a/b\"",
+        "digest": "sha256:f5effa31772a3689cb116700c569f4b72d765290968f099016a899ab6c1e4ee3"
+      }
+    }
+  ]
+}

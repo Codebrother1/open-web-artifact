@@ -190,7 +190,12 @@ See:
 
 - `docs/spec-v0.2.md`
 - `docs/manifest.schema.json`
-- `docs/test-vectors/`
+- `docs/test-vectors/` (immutable published v0.2 vectors)
+- [Portable conformance corpus and cross-language guide](docs/conformance/README.md)
+
+`npm test` includes the portable corpus and deterministic property tests. To run
+these separately, use `npm run test:conformance` and `npm run test:property`.
+The property suite uses fixed seed `0x4f574132` and no third-party dependencies.
 
 ## Repository layout
 

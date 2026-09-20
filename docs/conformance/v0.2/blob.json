@@ -1,0 +1,340 @@
+{
+  "format": "owa-conformance-v1",
+  "specVersion": "owa.dev/v1",
+  "operation": "blob",
+  "notes": [
+    "Every input.manifest must pass metadata-only validation before the boundary operation. These are not tests that validateManifest reads blob content.",
+    "oci-write: input.blobs maps declared digest to actual base64 source bytes, then writeOciLayout is invoked.",
+    "oci-read: materialize input.layoutFiles verbatim beneath a fresh directory and invoke readOciLayout. The layout is static, independently encoded, and deliberately inconsistent only at the boundary named by the vector.",
+    "The write size-mismatch sample intentionally has both wrong length and digest: the existing write boundary checks size first. Read content-size sample has the correct digest but manifest and layer both declare size 4 for the 3-byte blob.",
+    "Success checks artifact identity and exact returned blob bytes. Failure checks only the stable errorCategory, never human-readable messages. No S3 behavior is changed or assumed."
+  ],
+  "vectors": [
+    {
+      "id": "blob-write-valid",
+      "description": "Manifest metadata is valid; writeOciLayout must verify supplied content bytes at the existing OCI boundary.",
+      "input": {
+        "boundary": "oci-write",
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+              "size": 3,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "blobs": [
+          {
+            "digest": "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            "contentBase64": "YWJj"
+          }
+        ]
+      },
+      "expected": {
+        "canonicalJson": "{\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/index.html\",\"size\":3}],\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:40eaf4eb8e0296f805ae416dd0f2abbad9eb28cd8e2a47fa2bb5447610438cda",
+        "blobs": [
+          {
+            "digest": "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            "contentBase64": "YWJj"
+          }
+        ]
+      }
+    },
+    {
+      "id": "blob-write-digest-mismatch",
+      "description": "Manifest metadata is valid; writeOciLayout must verify supplied content bytes at the existing OCI boundary.",
+      "input": {
+        "boundary": "oci-write",
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+              "size": 3,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "blobs": [
+          {
+            "digest": "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            "contentBase64": "YWJk"
+          }
+        ]
+      },
+      "expected": {
+        "errorCategory": "OWA_CONTENT_DIGEST_MISMATCH"
+      }
+    },
+    {
+      "id": "blob-write-size-mismatch",
+      "description": "Manifest metadata is valid; writeOciLayout must verify supplied content bytes at the existing OCI boundary.",
+      "input": {
+        "boundary": "oci-write",
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+              "size": 3,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "blobs": [
+          {
+            "digest": "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            "contentBase64": "YWJjZA=="
+          }
+        ]
+      },
+      "expected": {
+        "errorCategory": "OWA_CONTENT_SIZE_MISMATCH"
+      }
+    },
+    {
+      "id": "blob-read-valid",
+      "description": "An independently authored OCI layout exercises readOciLayout; manifest-only validation still succeeds.",
+      "input": {
+        "boundary": "oci-read",
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+              "size": 3,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "layoutFiles": [
+          {
+            "path": "oci-layout",
+            "contentBase64": "eyJpbWFnZUxheW91dFZlcnNpb24iOiIxLjAuMCJ9"
+          },
+          {
+            "path": "index.json",
+            "contentBase64": "eyJtYW5pZmVzdHMiOlt7ImFubm90YXRpb25zIjp7ImRldi5vcGVud2ViYXJ0aWZhY3QuYXJ0aWZhY3QuZGlnZXN0Ijoic2hhMjU2OjQwZWFmNGViOGUwMjk2ZjgwNWFlNDE2ZGQwZjJhYmJhZDllYjI4Y2Q4ZTJhNDdmYTJiYjU0NDc2MTA0MzhjZGEiLCJvcmcub3BlbmNvbnRhaW5lcnMuaW1hZ2UucmVmLm5hbWUiOiJsYXRlc3QifSwiYXJ0aWZhY3RUeXBlIjoiYXBwbGljYXRpb24vdm5kLm9wZW53ZWJhcnRpZmFjdC5zaXRlLnYxK2pzb24iLCJkaWdlc3QiOiJzaGEyNTY6NTY1ZDA3YzQ5ODcwNWY5ZDkwMmI5Y2ViYTk3MWY0NmYzZTE2OGQ0MDdiNzcyNGE2NzQwN2VhM2UxNzNkOThkOCIsIm1lZGlhVHlwZSI6ImFwcGxpY2F0aW9uL3ZuZC5vY2kuaW1hZ2UubWFuaWZlc3QudjEranNvbiIsInNpemUiOjY3N31dLCJtZWRpYVR5cGUiOiJhcHBsaWNhdGlvbi92bmQub2NpLmltYWdlLmluZGV4LnYxK2pzb24iLCJzY2hlbWFWZXJzaW9uIjoyfQ=="
+          },
+          {
+            "path": "blobs/sha256/40eaf4eb8e0296f805ae416dd0f2abbad9eb28cd8e2a47fa2bb5447610438cda",
+            "contentBase64": "eyJhcnRpZmFjdFR5cGUiOiJhcHBsaWNhdGlvbi92bmQub3BlbndlYmFydGlmYWN0LnNpdGUudjEranNvbiIsImVudHJ5cG9pbnQiOiIvaW5kZXguaHRtbCIsImZpbGVzIjpbeyJkaWdlc3QiOiJzaGEyNTY6YmE3ODE2YmY4ZjAxY2ZlYTQxNDE0MGRlNWRhZTIyMjNiMDAzNjFhMzk2MTc3YTljYjQxMGZmNjFmMjAwMTVhZCIsIm1lZGlhVHlwZSI6InRleHQvaHRtbDsgY2hhcnNldD11dGYtOCIsInBhdGgiOiIvaW5kZXguaHRtbCIsInNpemUiOjN9XSwic3BlY1ZlcnNpb24iOiJvd2EuZGV2L3YxIn0="
+          },
+          {
+            "path": "blobs/sha256/565d07c498705f9d902b9ceba971f46f3e168d407b7724a67407ea3e173d98d8",
+            "contentBase64": "eyJhbm5vdGF0aW9ucyI6eyJkZXYub3BlbndlYmFydGlmYWN0LmFydGlmYWN0LmRpZ2VzdCI6InNoYTI1Njo0MGVhZjRlYjhlMDI5NmY4MDVhZTQxNmRkMGYyYWJiYWQ5ZWIyOGNkOGUyYTQ3ZmEyYmI1NDQ3NjEwNDM4Y2RhIn0sImFydGlmYWN0VHlwZSI6ImFwcGxpY2F0aW9uL3ZuZC5vcGVud2ViYXJ0aWZhY3Quc2l0ZS52MStqc29uIiwiY29uZmlnIjp7ImRpZ2VzdCI6InNoYTI1Njo0MGVhZjRlYjhlMDI5NmY4MDVhZTQxNmRkMGYyYWJiYWQ5ZWIyOGNkOGUyYTQ3ZmEyYmI1NDQ3NjEwNDM4Y2RhIiwibWVkaWFUeXBlIjoiYXBwbGljYXRpb24vdm5kLm9wZW53ZWJhcnRpZmFjdC5zaXRlLnYxK2pzb24iLCJzaXplIjoyODF9LCJsYXllcnMiOlt7ImFubm90YXRpb25zIjp7ImRldi5vcGVud2ViYXJ0aWZhY3QucGF0aCI6Ii9pbmRleC5odG1sIiwib3JnLm9wZW5jb250YWluZXJzLmltYWdlLnRpdGxlIjoiaW5kZXguaHRtbCJ9LCJkaWdlc3QiOiJzaGEyNTY6YmE3ODE2YmY4ZjAxY2ZlYTQxNDE0MGRlNWRhZTIyMjNiMDAzNjFhMzk2MTc3YTljYjQxMGZmNjFmMjAwMTVhZCIsIm1lZGlhVHlwZSI6InRleHQvaHRtbDsgY2hhcnNldD11dGYtOCIsInNpemUiOjN9XSwibWVkaWFUeXBlIjoiYXBwbGljYXRpb24vdm5kLm9jaS5pbWFnZS5tYW5pZmVzdC52MStqc29uIiwic2NoZW1hVmVyc2lvbiI6Mn0="
+          },
+          {
+            "path": "blobs/sha256/ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            "contentBase64": "YWJj"
+          }
+        ]
+      },
+      "expected": {
+        "canonicalJson": "{\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/index.html\",\"size\":3}],\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:40eaf4eb8e0296f805ae416dd0f2abbad9eb28cd8e2a47fa2bb5447610438cda",
+        "blobs": [
+          {
+            "digest": "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            "contentBase64": "YWJj"
+          }
+        ]
+      }
+    },
+    {
+      "id": "blob-read-digest-mismatch",
+      "description": "An independently authored OCI layout exercises readOciLayout; manifest-only validation still succeeds.",
+      "input": {
+        "boundary": "oci-read",
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+              "size": 3,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "layoutFiles": [
+          {
+            "path": "oci-layout",
+            "contentBase64": "eyJpbWFnZUxheW91dFZlcnNpb24iOiIxLjAuMCJ9"
+          },
+          {
+            "path": "index.json",
+            "contentBase64": "eyJtYW5pZmVzdHMiOlt7ImFubm90YXRpb25zIjp7ImRldi5vcGVud2ViYXJ0aWZhY3QuYXJ0aWZhY3QuZGlnZXN0Ijoic2hhMjU2OjQwZWFmNGViOGUwMjk2ZjgwNWFlNDE2ZGQwZjJhYmJhZDllYjI4Y2Q4ZTJhNDdmYTJiYjU0NDc2MTA0MzhjZGEiLCJvcmcub3BlbmNvbnRhaW5lcnMuaW1hZ2UucmVmLm5hbWUiOiJsYXRlc3QifSwiYXJ0aWZhY3RUeXBlIjoiYXBwbGljYXRpb24vdm5kLm9wZW53ZWJhcnRpZmFjdC5zaXRlLnYxK2pzb24iLCJkaWdlc3QiOiJzaGEyNTY6NTY1ZDA3YzQ5ODcwNWY5ZDkwMmI5Y2ViYTk3MWY0NmYzZTE2OGQ0MDdiNzcyNGE2NzQwN2VhM2UxNzNkOThkOCIsIm1lZGlhVHlwZSI6ImFwcGxpY2F0aW9uL3ZuZC5vY2kuaW1hZ2UubWFuaWZlc3QudjEranNvbiIsInNpemUiOjY3N31dLCJtZWRpYVR5cGUiOiJhcHBsaWNhdGlvbi92bmQub2NpLmltYWdlLmluZGV4LnYxK2pzb24iLCJzY2hlbWFWZXJzaW9uIjoyfQ=="
+          },
+          {
+            "path": "blobs/sha256/40eaf4eb8e0296f805ae416dd0f2abbad9eb28cd8e2a47fa2bb5447610438cda",
+            "contentBase64": "eyJhcnRpZmFjdFR5cGUiOiJhcHBsaWNhdGlvbi92bmQub3BlbndlYmFydGlmYWN0LnNpdGUudjEranNvbiIsImVudHJ5cG9pbnQiOiIvaW5kZXguaHRtbCIsImZpbGVzIjpbeyJkaWdlc3QiOiJzaGEyNTY6YmE3ODE2YmY4ZjAxY2ZlYTQxNDE0MGRlNWRhZTIyMjNiMDAzNjFhMzk2MTc3YTljYjQxMGZmNjFmMjAwMTVhZCIsIm1lZGlhVHlwZSI6InRleHQvaHRtbDsgY2hhcnNldD11dGYtOCIsInBhdGgiOiIvaW5kZXguaHRtbCIsInNpemUiOjN9XSwic3BlY1ZlcnNpb24iOiJvd2EuZGV2L3YxIn0="
+          },
+          {
+            "path": "blobs/sha256/565d07c498705f9d902b9ceba971f46f3e168d407b7724a67407ea3e173d98d8",
+            "contentBase64": "eyJhbm5vdGF0aW9ucyI6eyJkZXYub3BlbndlYmFydGlmYWN0LmFydGlmYWN0LmRpZ2VzdCI6InNoYTI1Njo0MGVhZjRlYjhlMDI5NmY4MDVhZTQxNmRkMGYyYWJiYWQ5ZWIyOGNkOGUyYTQ3ZmEyYmI1NDQ3NjEwNDM4Y2RhIn0sImFydGlmYWN0VHlwZSI6ImFwcGxpY2F0aW9uL3ZuZC5vcGVud2ViYXJ0aWZhY3Quc2l0ZS52MStqc29uIiwiY29uZmlnIjp7ImRpZ2VzdCI6InNoYTI1Njo0MGVhZjRlYjhlMDI5NmY4MDVhZTQxNmRkMGYyYWJiYWQ5ZWIyOGNkOGUyYTQ3ZmEyYmI1NDQ3NjEwNDM4Y2RhIiwibWVkaWFUeXBlIjoiYXBwbGljYXRpb24vdm5kLm9wZW53ZWJhcnRpZmFjdC5zaXRlLnYxK2pzb24iLCJzaXplIjoyODF9LCJsYXllcnMiOlt7ImFubm90YXRpb25zIjp7ImRldi5vcGVud2ViYXJ0aWZhY3QucGF0aCI6Ii9pbmRleC5odG1sIiwib3JnLm9wZW5jb250YWluZXJzLmltYWdlLnRpdGxlIjoiaW5kZXguaHRtbCJ9LCJkaWdlc3QiOiJzaGEyNTY6YmE3ODE2YmY4ZjAxY2ZlYTQxNDE0MGRlNWRhZTIyMjNiMDAzNjFhMzk2MTc3YTljYjQxMGZmNjFmMjAwMTVhZCIsIm1lZGlhVHlwZSI6InRleHQvaHRtbDsgY2hhcnNldD11dGYtOCIsInNpemUiOjN9XSwibWVkaWFUeXBlIjoiYXBwbGljYXRpb24vdm5kLm9jaS5pbWFnZS5tYW5pZmVzdC52MStqc29uIiwic2NoZW1hVmVyc2lvbiI6Mn0="
+          },
+          {
+            "path": "blobs/sha256/ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            "contentBase64": "YWJk"
+          }
+        ]
+      },
+      "expected": {
+        "errorCategory": "OWA_CONTENT_DIGEST_MISMATCH"
+      }
+    },
+    {
+      "id": "blob-read-content-size-mismatch",
+      "description": "An independently authored OCI layout exercises readOciLayout; manifest-only validation still succeeds.",
+      "input": {
+        "boundary": "oci-read",
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+              "size": 4,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "layoutFiles": [
+          {
+            "path": "oci-layout",
+            "contentBase64": "eyJpbWFnZUxheW91dFZlcnNpb24iOiIxLjAuMCJ9"
+          },
+          {
+            "path": "index.json",
+            "contentBase64": "eyJtYW5pZmVzdHMiOlt7ImFubm90YXRpb25zIjp7ImRldi5vcGVud2ViYXJ0aWZhY3QuYXJ0aWZhY3QuZGlnZXN0Ijoic2hhMjU2OmExMWM1NmRmMmRmNWE3ODIwOGQzOTA3M2M2MWU2ODRiYTQwYjc1MTc0ZjBiNzJlZjcwNDkyZmI4MTgxOWFkMGUiLCJvcmcub3BlbmNvbnRhaW5lcnMuaW1hZ2UucmVmLm5hbWUiOiJsYXRlc3QifSwiYXJ0aWZhY3RUeXBlIjoiYXBwbGljYXRpb24vdm5kLm9wZW53ZWJhcnRpZmFjdC5zaXRlLnYxK2pzb24iLCJkaWdlc3QiOiJzaGEyNTY6OTg4ZjA0ZjE2NjViOTc5OTJjYjEzZDk1NGNkODkxM2U4NWU5NmI0ODk3MmY2YTY5NTYwOGQyMmFiODZkZmM4YSIsIm1lZGlhVHlwZSI6ImFwcGxpY2F0aW9uL3ZuZC5vY2kuaW1hZ2UubWFuaWZlc3QudjEranNvbiIsInNpemUiOjY3N31dLCJtZWRpYVR5cGUiOiJhcHBsaWNhdGlvbi92bmQub2NpLmltYWdlLmluZGV4LnYxK2pzb24iLCJzY2hlbWFWZXJzaW9uIjoyfQ=="
+          },
+          {
+            "path": "blobs/sha256/a11c56df2df5a78208d39073c61e684ba40b75174f0b72ef70492fb81819ad0e",
+            "contentBase64": "eyJhcnRpZmFjdFR5cGUiOiJhcHBsaWNhdGlvbi92bmQub3BlbndlYmFydGlmYWN0LnNpdGUudjEranNvbiIsImVudHJ5cG9pbnQiOiIvaW5kZXguaHRtbCIsImZpbGVzIjpbeyJkaWdlc3QiOiJzaGEyNTY6YmE3ODE2YmY4ZjAxY2ZlYTQxNDE0MGRlNWRhZTIyMjNiMDAzNjFhMzk2MTc3YTljYjQxMGZmNjFmMjAwMTVhZCIsIm1lZGlhVHlwZSI6InRleHQvaHRtbDsgY2hhcnNldD11dGYtOCIsInBhdGgiOiIvaW5kZXguaHRtbCIsInNpemUiOjR9XSwic3BlY1ZlcnNpb24iOiJvd2EuZGV2L3YxIn0="
+          },
+          {
+            "path": "blobs/sha256/988f04f1665b97992cb13d954cd8913e85e96b48972f6a695608d22ab86dfc8a",
+            "contentBase64": "eyJhbm5vdGF0aW9ucyI6eyJkZXYub3BlbndlYmFydGlmYWN0LmFydGlmYWN0LmRpZ2VzdCI6InNoYTI1NjphMTFjNTZkZjJkZjVhNzgyMDhkMzkwNzNjNjFlNjg0YmE0MGI3NTE3NGYwYjcyZWY3MDQ5MmZiODE4MTlhZDBlIn0sImFydGlmYWN0VHlwZSI6ImFwcGxpY2F0aW9uL3ZuZC5vcGVud2ViYXJ0aWZhY3Quc2l0ZS52MStqc29uIiwiY29uZmlnIjp7ImRpZ2VzdCI6InNoYTI1NjphMTFjNTZkZjJkZjVhNzgyMDhkMzkwNzNjNjFlNjg0YmE0MGI3NTE3NGYwYjcyZWY3MDQ5MmZiODE4MTlhZDBlIiwibWVkaWFUeXBlIjoiYXBwbGljYXRpb24vdm5kLm9wZW53ZWJhcnRpZmFjdC5zaXRlLnYxK2pzb24iLCJzaXplIjoyODF9LCJsYXllcnMiOlt7ImFubm90YXRpb25zIjp7ImRldi5vcGVud2ViYXJ0aWZhY3QucGF0aCI6Ii9pbmRleC5odG1sIiwib3JnLm9wZW5jb250YWluZXJzLmltYWdlLnRpdGxlIjoiaW5kZXguaHRtbCJ9LCJkaWdlc3QiOiJzaGEyNTY6YmE3ODE2YmY4ZjAxY2ZlYTQxNDE0MGRlNWRhZTIyMjNiMDAzNjFhMzk2MTc3YTljYjQxMGZmNjFmMjAwMTVhZCIsIm1lZGlhVHlwZSI6InRleHQvaHRtbDsgY2hhcnNldD11dGYtOCIsInNpemUiOjR9XSwibWVkaWFUeXBlIjoiYXBwbGljYXRpb24vdm5kLm9jaS5pbWFnZS5tYW5pZmVzdC52MStqc29uIiwic2NoZW1hVmVyc2lvbiI6Mn0="
+          },
+          {
+            "path": "blobs/sha256/ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            "contentBase64": "YWJj"
+          }
+        ]
+      },
+      "expected": {
+        "errorCategory": "OWA_CONTENT_SIZE_MISMATCH"
+      }
+    },
+    {
+      "id": "blob-read-layer-size-mismatch",
+      "description": "An independently authored OCI layout exercises readOciLayout; manifest-only validation still succeeds.",
+      "input": {
+        "boundary": "oci-read",
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+              "size": 3,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "layoutFiles": [
+          {
+            "path": "oci-layout",
+            "contentBase64": "eyJpbWFnZUxheW91dFZlcnNpb24iOiIxLjAuMCJ9"
+          },
+          {
+            "path": "index.json",
+            "contentBase64": "eyJtYW5pZmVzdHMiOlt7ImFubm90YXRpb25zIjp7ImRldi5vcGVud2ViYXJ0aWZhY3QuYXJ0aWZhY3QuZGlnZXN0Ijoic2hhMjU2OjQwZWFmNGViOGUwMjk2ZjgwNWFlNDE2ZGQwZjJhYmJhZDllYjI4Y2Q4ZTJhNDdmYTJiYjU0NDc2MTA0MzhjZGEiLCJvcmcub3BlbmNvbnRhaW5lcnMuaW1hZ2UucmVmLm5hbWUiOiJsYXRlc3QifSwiYXJ0aWZhY3RUeXBlIjoiYXBwbGljYXRpb24vdm5kLm9wZW53ZWJhcnRpZmFjdC5zaXRlLnYxK2pzb24iLCJkaWdlc3QiOiJzaGEyNTY6YzI5NGY0YmVmNDhlNTU1ZTFiZjlmMTQ4NDRiNzhjYzIwZmZhNWYxM2QwMjNlMWY1MDY4MzVhZGVlMTg2MGJlNyIsIm1lZGlhVHlwZSI6ImFwcGxpY2F0aW9uL3ZuZC5vY2kuaW1hZ2UubWFuaWZlc3QudjEranNvbiIsInNpemUiOjY3N31dLCJtZWRpYVR5cGUiOiJhcHBsaWNhdGlvbi92bmQub2NpLmltYWdlLmluZGV4LnYxK2pzb24iLCJzY2hlbWFWZXJzaW9uIjoyfQ=="
+          },
+          {
+            "path": "blobs/sha256/40eaf4eb8e0296f805ae416dd0f2abbad9eb28cd8e2a47fa2bb5447610438cda",
+            "contentBase64": "eyJhcnRpZmFjdFR5cGUiOiJhcHBsaWNhdGlvbi92bmQub3BlbndlYmFydGlmYWN0LnNpdGUudjEranNvbiIsImVudHJ5cG9pbnQiOiIvaW5kZXguaHRtbCIsImZpbGVzIjpbeyJkaWdlc3QiOiJzaGEyNTY6YmE3ODE2YmY4ZjAxY2ZlYTQxNDE0MGRlNWRhZTIyMjNiMDAzNjFhMzk2MTc3YTljYjQxMGZmNjFmMjAwMTVhZCIsIm1lZGlhVHlwZSI6InRleHQvaHRtbDsgY2hhcnNldD11dGYtOCIsInBhdGgiOiIvaW5kZXguaHRtbCIsInNpemUiOjN9XSwic3BlY1ZlcnNpb24iOiJvd2EuZGV2L3YxIn0="
+          },
+          {
+            "path": "blobs/sha256/c294f4bef48e555e1bf9f14844b78cc20ffa5f13d023e1f506835adee1860be7",
+            "contentBase64": "eyJhbm5vdGF0aW9ucyI6eyJkZXYub3BlbndlYmFydGlmYWN0LmFydGlmYWN0LmRpZ2VzdCI6InNoYTI1Njo0MGVhZjRlYjhlMDI5NmY4MDVhZTQxNmRkMGYyYWJiYWQ5ZWIyOGNkOGUyYTQ3ZmEyYmI1NDQ3NjEwNDM4Y2RhIn0sImFydGlmYWN0VHlwZSI6ImFwcGxpY2F0aW9uL3ZuZC5vcGVud2ViYXJ0aWZhY3Quc2l0ZS52MStqc29uIiwiY29uZmlnIjp7ImRpZ2VzdCI6InNoYTI1Njo0MGVhZjRlYjhlMDI5NmY4MDVhZTQxNmRkMGYyYWJiYWQ5ZWIyOGNkOGUyYTQ3ZmEyYmI1NDQ3NjEwNDM4Y2RhIiwibWVkaWFUeXBlIjoiYXBwbGljYXRpb24vdm5kLm9wZW53ZWJhcnRpZmFjdC5zaXRlLnYxK2pzb24iLCJzaXplIjoyODF9LCJsYXllcnMiOlt7ImFubm90YXRpb25zIjp7ImRldi5vcGVud2ViYXJ0aWZhY3QucGF0aCI6Ii9pbmRleC5odG1sIiwib3JnLm9wZW5jb250YWluZXJzLmltYWdlLnRpdGxlIjoiaW5kZXguaHRtbCJ9LCJkaWdlc3QiOiJzaGEyNTY6YmE3ODE2YmY4ZjAxY2ZlYTQxNDE0MGRlNWRhZTIyMjNiMDAzNjFhMzk2MTc3YTljYjQxMGZmNjFmMjAwMTVhZCIsIm1lZGlhVHlwZSI6InRleHQvaHRtbDsgY2hhcnNldD11dGYtOCIsInNpemUiOjR9XSwibWVkaWFUeXBlIjoiYXBwbGljYXRpb24vdm5kLm9jaS5pbWFnZS5tYW5pZmVzdC52MStqc29uIiwic2NoZW1hVmVyc2lvbiI6Mn0="
+          },
+          {
+            "path": "blobs/sha256/ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            "contentBase64": "YWJj"
+          }
+        ]
+      },
+      "expected": {
+        "errorCategory": "OWA_CONTENT_SIZE_MISMATCH"
+      }
+    },
+    {
+      "id": "blob-read-descriptor-size-mismatch",
+      "description": "An independently authored OCI layout exercises readOciLayout; manifest-only validation still succeeds.",
+      "input": {
+        "boundary": "oci-read",
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+              "size": 3,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "layoutFiles": [
+          {
+            "path": "oci-layout",
+            "contentBase64": "eyJpbWFnZUxheW91dFZlcnNpb24iOiIxLjAuMCJ9"
+          },
+          {
+            "path": "index.json",
+            "contentBase64": "eyJtYW5pZmVzdHMiOlt7ImFubm90YXRpb25zIjp7ImRldi5vcGVud2ViYXJ0aWZhY3QuYXJ0aWZhY3QuZGlnZXN0Ijoic2hhMjU2OjQwZWFmNGViOGUwMjk2ZjgwNWFlNDE2ZGQwZjJhYmJhZDllYjI4Y2Q4ZTJhNDdmYTJiYjU0NDc2MTA0MzhjZGEiLCJvcmcub3BlbmNvbnRhaW5lcnMuaW1hZ2UucmVmLm5hbWUiOiJsYXRlc3QifSwiYXJ0aWZhY3RUeXBlIjoiYXBwbGljYXRpb24vdm5kLm9wZW53ZWJhcnRpZmFjdC5zaXRlLnYxK2pzb24iLCJkaWdlc3QiOiJzaGEyNTY6NTY1ZDA3YzQ5ODcwNWY5ZDkwMmI5Y2ViYTk3MWY0NmYzZTE2OGQ0MDdiNzcyNGE2NzQwN2VhM2UxNzNkOThkOCIsIm1lZGlhVHlwZSI6ImFwcGxpY2F0aW9uL3ZuZC5vY2kuaW1hZ2UubWFuaWZlc3QudjEranNvbiIsInNpemUiOjY3OH1dLCJtZWRpYVR5cGUiOiJhcHBsaWNhdGlvbi92bmQub2NpLmltYWdlLmluZGV4LnYxK2pzb24iLCJzY2hlbWFWZXJzaW9uIjoyfQ=="
+          },
+          {
+            "path": "blobs/sha256/40eaf4eb8e0296f805ae416dd0f2abbad9eb28cd8e2a47fa2bb5447610438cda",
+            "contentBase64": "eyJhcnRpZmFjdFR5cGUiOiJhcHBsaWNhdGlvbi92bmQub3BlbndlYmFydGlmYWN0LnNpdGUudjEranNvbiIsImVudHJ5cG9pbnQiOiIvaW5kZXguaHRtbCIsImZpbGVzIjpbeyJkaWdlc3QiOiJzaGEyNTY6YmE3ODE2YmY4ZjAxY2ZlYTQxNDE0MGRlNWRhZTIyMjNiMDAzNjFhMzk2MTc3YTljYjQxMGZmNjFmMjAwMTVhZCIsIm1lZGlhVHlwZSI6InRleHQvaHRtbDsgY2hhcnNldD11dGYtOCIsInBhdGgiOiIvaW5kZXguaHRtbCIsInNpemUiOjN9XSwic3BlY1ZlcnNpb24iOiJvd2EuZGV2L3YxIn0="
+          },
+          {
+            "path": "blobs/sha256/565d07c498705f9d902b9ceba971f46f3e168d407b7724a67407ea3e173d98d8",
+            "contentBase64": "eyJhbm5vdGF0aW9ucyI6eyJkZXYub3BlbndlYmFydGlmYWN0LmFydGlmYWN0LmRpZ2VzdCI6InNoYTI1Njo0MGVhZjRlYjhlMDI5NmY4MDVhZTQxNmRkMGYyYWJiYWQ5ZWIyOGNkOGUyYTQ3ZmEyYmI1NDQ3NjEwNDM4Y2RhIn0sImFydGlmYWN0VHlwZSI6ImFwcGxpY2F0aW9uL3ZuZC5vcGVud2ViYXJ0aWZhY3Quc2l0ZS52MStqc29uIiwiY29uZmlnIjp7ImRpZ2VzdCI6InNoYTI1Njo0MGVhZjRlYjhlMDI5NmY4MDVhZTQxNmRkMGYyYWJiYWQ5ZWIyOGNkOGUyYTQ3ZmEyYmI1NDQ3NjEwNDM4Y2RhIiwibWVkaWFUeXBlIjoiYXBwbGljYXRpb24vdm5kLm9wZW53ZWJhcnRpZmFjdC5zaXRlLnYxK2pzb24iLCJzaXplIjoyODF9LCJsYXllcnMiOlt7ImFubm90YXRpb25zIjp7ImRldi5vcGVud2ViYXJ0aWZhY3QucGF0aCI6Ii9pbmRleC5odG1sIiwib3JnLm9wZW5jb250YWluZXJzLmltYWdlLnRpdGxlIjoiaW5kZXguaHRtbCJ9LCJkaWdlc3QiOiJzaGEyNTY6YmE3ODE2YmY4ZjAxY2ZlYTQxNDE0MGRlNWRhZTIyMjNiMDAzNjFhMzk2MTc3YTljYjQxMGZmNjFmMjAwMTVhZCIsIm1lZGlhVHlwZSI6InRleHQvaHRtbDsgY2hhcnNldD11dGYtOCIsInNpemUiOjN9XSwibWVkaWFUeXBlIjoiYXBwbGljYXRpb24vdm5kLm9jaS5pbWFnZS5tYW5pZmVzdC52MStqc29uIiwic2NoZW1hVmVyc2lvbiI6Mn0="
+          },
+          {
+            "path": "blobs/sha256/ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            "contentBase64": "YWJj"
+          }
+        ]
+      },
+      "expected": {
+        "errorCategory": "OWA_CONTENT_SIZE_MISMATCH"
+      }
+    }
+  ]
+}

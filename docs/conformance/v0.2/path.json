@@ -1,0 +1,217 @@
+{
+  "format": "owa-conformance-v1",
+  "specVersion": "owa.dev/v1",
+  "operation": "path",
+  "notes": [
+    "input is passed directly to artifact-path validation. Success returns the exact original string.",
+    "These are manifest namespace strings, not URLs. Only backslash, NUL, repeated slash, dot segments, nonabsolute/empty/root and trailing slash restrictions are imposed."
+  ],
+  "vectors": [
+    {
+      "id": "path-file",
+      "description": "Accepted exact artifact path; no decoding or normalization.",
+      "input": "/index.html",
+      "expected": {
+        "validatedPath": "/index.html"
+      }
+    },
+    {
+      "id": "path-nested",
+      "description": "Accepted exact artifact path; no decoding or normalization.",
+      "input": "/assets/app.js",
+      "expected": {
+        "validatedPath": "/assets/app.js"
+      }
+    },
+    {
+      "id": "path-percent-literal",
+      "description": "Accepted exact artifact path; no decoding or normalization.",
+      "input": "/%2e%2e/secret",
+      "expected": {
+        "validatedPath": "/%2e%2e/secret"
+      }
+    },
+    {
+      "id": "path-percent-encoded-slash-literal",
+      "description": "Accepted exact artifact path; no decoding or normalization.",
+      "input": "/a%2fb",
+      "expected": {
+        "validatedPath": "/a%2fb"
+      }
+    },
+    {
+      "id": "path-space",
+      "description": "Accepted exact artifact path; no decoding or normalization.",
+      "input": "/a b",
+      "expected": {
+        "validatedPath": "/a b"
+      }
+    },
+    {
+      "id": "path-unicode-composed",
+      "description": "Accepted exact artifact path; no decoding or normalization.",
+      "input": "/caf\u00e9.txt",
+      "expected": {
+        "validatedPath": "/caf\u00e9.txt"
+      }
+    },
+    {
+      "id": "path-unicode-decomposed",
+      "description": "Accepted exact artifact path; no decoding or normalization.",
+      "input": "/cafe\u0301.txt",
+      "expected": {
+        "validatedPath": "/cafe\u0301.txt"
+      }
+    },
+    {
+      "id": "path-punctuation-literal",
+      "description": "Accepted exact artifact path; no decoding or normalization.",
+      "input": "/a?b#c",
+      "expected": {
+        "validatedPath": "/a?b#c"
+      }
+    },
+    {
+      "id": "path-newline-literal",
+      "description": "Accepted exact artifact path; no decoding or normalization.",
+      "input": "/a\nb",
+      "expected": {
+        "validatedPath": "/a\nb"
+      }
+    },
+    {
+      "id": "path-relative",
+      "description": "Rejected artifact path; validation must not repair it.",
+      "input": "index.html",
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    },
+    {
+      "id": "path-dot",
+      "description": "Rejected artifact path; validation must not repair it.",
+      "input": "/a/./b",
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    },
+    {
+      "id": "path-dotdot",
+      "description": "Rejected artifact path; validation must not repair it.",
+      "input": "/a/../b",
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    },
+    {
+      "id": "path-repeated-slash",
+      "description": "Rejected artifact path; validation must not repair it.",
+      "input": "/a//b",
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    },
+    {
+      "id": "path-trailing-slash",
+      "description": "Rejected artifact path; validation must not repair it.",
+      "input": "/a/",
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    },
+    {
+      "id": "path-backslash",
+      "description": "Rejected artifact path; validation must not repair it.",
+      "input": "/a\\b",
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    },
+    {
+      "id": "path-nul",
+      "description": "Rejected artifact path; validation must not repair it.",
+      "input": "/a\u0000b",
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    },
+    {
+      "id": "path-root",
+      "description": "Rejected artifact path; validation must not repair it.",
+      "input": "/",
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    },
+    {
+      "id": "path-empty",
+      "description": "Rejected artifact path; validation must not repair it.",
+      "input": "",
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    },
+    {
+      "id": "path-terminal-dot",
+      "description": "Rejected artifact path; validation must not repair it.",
+      "input": "/a/.",
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    },
+    {
+      "id": "path-terminal-dotdot",
+      "description": "Rejected artifact path; validation must not repair it.",
+      "input": "/a/..",
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    },
+    {
+      "id": "path-null",
+      "description": "Rejected artifact path; validation must not repair it.",
+      "input": null,
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    },
+    {
+      "id": "path-number",
+      "description": "Rejected artifact path; validation must not repair it.",
+      "input": 3,
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    },
+    {
+      "id": "path-array",
+      "description": "Rejected artifact path; validation must not repair it.",
+      "input": [],
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    },
+    {
+      "id": "path-object-shadowed-coercion",
+      "description": "Wrong JSON type retains a path category even with coercion-like member names.",
+      "input": {
+        "toString": null
+      },
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    },
+    {
+      "id": "path-array-shadowed-coercion",
+      "description": "Wrong JSON type retains a path category even with coercion-like member names.",
+      "input": [
+        {
+          "toString": null
+        }
+      ],
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    }
+  ]
+}

@@ -1,0 +1,2104 @@
+{
+  "format": "owa-conformance-v1",
+  "specVersion": "owa.dev/v1",
+  "operation": "request",
+  "notes": [
+    "input.urlPath is the direct function argument, NOT a full URL or the output of a URL parser. A WHATWG parser can remove dot segments before the function sees them.",
+    "expected.resolvedPath is a matching manifest file path or JSON null. Invalid and unresolved requests return null, not exceptions.",
+    "Decode percent encoding exactly once. Repeated slashes and dot segments normalize; any dot-dot segment, malformed encoding, invalid UTF-8, NUL or backslash is rejected before SPA fallback. Trailing slash remains significant."
+  ],
+  "vectors": [
+    {
+      "id": "request-root",
+      "description": "Raw resolveRequestPath argument before any URL parser; decode once, reject unsafe input, then normalize.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "urlPath": "/"
+      },
+      "expected": {
+        "resolvedPath": "/index.html"
+      }
+    },
+    {
+      "id": "request-empty",
+      "description": "Raw resolveRequestPath argument before any URL parser; decode once, reject unsafe input, then normalize.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "urlPath": ""
+      },
+      "expected": {
+        "resolvedPath": "/index.html"
+      }
+    },
+    {
+      "id": "request-entrypoint",
+      "description": "Raw resolveRequestPath argument before any URL parser; decode once, reject unsafe input, then normalize.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "urlPath": "/index.html"
+      },
+      "expected": {
+        "resolvedPath": "/index.html"
+      }
+    },
+    {
+      "id": "request-relative",
+      "description": "Raw resolveRequestPath argument before any URL parser; decode once, reject unsafe input, then normalize.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "urlPath": "assets/x.js"
+      },
+      "expected": {
+        "resolvedPath": "/assets/x.js"
+      }
+    },
+    {
+      "id": "request-nested",
+      "description": "Raw resolveRequestPath argument before any URL parser; decode once, reject unsafe input, then normalize.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "urlPath": "/assets/x.js"
+      },
+      "expected": {
+        "resolvedPath": "/assets/x.js"
+      }
+    },
+    {
+      "id": "request-decode-space-miss",
+      "description": "Raw resolveRequestPath argument before any URL parser; decode once, reject unsafe input, then normalize.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "urlPath": "/assets/x%20.js"
+      },
+      "expected": {
+        "resolvedPath": null
+      }
+    },
+    {
+      "id": "request-decode-slash",
+      "description": "Raw resolveRequestPath argument before any URL parser; decode once, reject unsafe input, then normalize.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "urlPath": "/assets%2fx.js"
+      },
+      "expected": {
+        "resolvedPath": "/assets/x.js"
+      }
+    },
+    {
+      "id": "request-decode-once-percent",
+      "description": "Raw resolveRequestPath argument before any URL parser; decode once, reject unsafe input, then normalize.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "urlPath": "/%252e%252e/secret"
+      },
+      "expected": {
+        "resolvedPath": "/%2e%2e/secret"
+      }
+    },
+    {
+      "id": "request-decode-once-slash",
+      "description": "Raw resolveRequestPath argument before any URL parser; decode once, reject unsafe input, then normalize.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "urlPath": "/a%252fb"
+      },
+      "expected": {
+        "resolvedPath": "/a%2fb"
+      }
+    },
+    {
+      "id": "request-decode-utf8",
+      "description": "Raw resolveRequestPath argument before any URL parser; decode once, reject unsafe input, then normalize.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "urlPath": "/caf%C3%A9.txt"
+      },
+      "expected": {
+        "resolvedPath": "/caf\u00e9.txt"
+      }
+    },
+    {
+      "id": "request-literal-unicode",
+      "description": "Raw resolveRequestPath argument before any URL parser; decode once, reject unsafe input, then normalize.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "urlPath": "/caf\u00e9.txt"
+      },
+      "expected": {
+        "resolvedPath": "/caf\u00e9.txt"
+      }
+    },
+    {
+      "id": "request-repeated-slashes",
+      "description": "Raw resolveRequestPath argument before any URL parser; decode once, reject unsafe input, then normalize.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "urlPath": "///assets//x.js"
+      },
+      "expected": {
+        "resolvedPath": "/assets/x.js"
+      }
+    },
+    {
+      "id": "request-dot-segments",
+      "description": "Raw resolveRequestPath argument before any URL parser; decode once, reject unsafe input, then normalize.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "urlPath": "/./assets/./x.js"
+      },
+      "expected": {
+        "resolvedPath": "/assets/x.js"
+      }
+    },
+    {
+      "id": "request-encoded-dot",
+      "description": "Raw resolveRequestPath argument before any URL parser; decode once, reject unsafe input, then normalize.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "urlPath": "/assets/%2e/x.js"
+      },
+      "expected": {
+        "resolvedPath": "/assets/x.js"
+      }
+    },
+    {
+      "id": "request-trailing-slash",
+      "description": "Raw resolveRequestPath argument before any URL parser; decode once, reject unsafe input, then normalize.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "urlPath": "/assets/x.js/"
+      },
+      "expected": {
+        "resolvedPath": null
+      }
+    },
+    {
+      "id": "request-trailing-dot",
+      "description": "Raw resolveRequestPath argument before any URL parser; decode once, reject unsafe input, then normalize.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "urlPath": "/assets/x.js/."
+      },
+      "expected": {
+        "resolvedPath": "/assets/x.js"
+      }
+    },
+    {
+      "id": "request-trailing-dot-slash",
+      "description": "Raw resolveRequestPath argument before any URL parser; decode once, reject unsafe input, then normalize.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "urlPath": "/assets/x.js/./"
+      },
+      "expected": {
+        "resolvedPath": null
+      }
+    },
+    {
+      "id": "request-missing",
+      "description": "Raw resolveRequestPath argument before any URL parser; decode once, reject unsafe input, then normalize.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "urlPath": "/missing"
+      },
+      "expected": {
+        "resolvedPath": null
+      }
+    },
+    {
+      "id": "request-parent",
+      "description": "Raw resolveRequestPath argument before any URL parser; decode once, reject unsafe input, then normalize.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "urlPath": "/../index.html"
+      },
+      "expected": {
+        "resolvedPath": null
+      }
+    },
+    {
+      "id": "request-parent-inside",
+      "description": "Raw resolveRequestPath argument before any URL parser; decode once, reject unsafe input, then normalize.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "urlPath": "/assets/../index.html"
+      },
+      "expected": {
+        "resolvedPath": null
+      }
+    },
+    {
+      "id": "request-parent-encoded",
+      "description": "Raw resolveRequestPath argument before any URL parser; decode once, reject unsafe input, then normalize.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "urlPath": "/%2e%2e/index.html"
+      },
+      "expected": {
+        "resolvedPath": null
+      }
+    },
+    {
+      "id": "request-parent-mixed-case",
+      "description": "Raw resolveRequestPath argument before any URL parser; decode once, reject unsafe input, then normalize.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "urlPath": "/%2E%2e/index.html"
+      },
+      "expected": {
+        "resolvedPath": null
+      }
+    },
+    {
+      "id": "request-parent-encoded-slash",
+      "description": "Raw resolveRequestPath argument before any URL parser; decode once, reject unsafe input, then normalize.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "urlPath": "/assets%2f..%2findex.html"
+      },
+      "expected": {
+        "resolvedPath": null
+      }
+    },
+    {
+      "id": "request-backslash",
+      "description": "Raw resolveRequestPath argument before any URL parser; decode once, reject unsafe input, then normalize.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "urlPath": "/assets\\x.js"
+      },
+      "expected": {
+        "resolvedPath": null
+      }
+    },
+    {
+      "id": "request-encoded-backslash",
+      "description": "Raw resolveRequestPath argument before any URL parser; decode once, reject unsafe input, then normalize.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "urlPath": "/assets%5cx.js"
+      },
+      "expected": {
+        "resolvedPath": null
+      }
+    },
+    {
+      "id": "request-nul",
+      "description": "Raw resolveRequestPath argument before any URL parser; decode once, reject unsafe input, then normalize.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "urlPath": "/index.html\u0000"
+      },
+      "expected": {
+        "resolvedPath": null
+      }
+    },
+    {
+      "id": "request-encoded-nul",
+      "description": "Raw resolveRequestPath argument before any URL parser; decode once, reject unsafe input, then normalize.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "urlPath": "/index.html%00"
+      },
+      "expected": {
+        "resolvedPath": null
+      }
+    },
+    {
+      "id": "request-malformed-percent",
+      "description": "Raw resolveRequestPath argument before any URL parser; decode once, reject unsafe input, then normalize.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "urlPath": "/%"
+      },
+      "expected": {
+        "resolvedPath": null
+      }
+    },
+    {
+      "id": "request-short-percent",
+      "description": "Raw resolveRequestPath argument before any URL parser; decode once, reject unsafe input, then normalize.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "urlPath": "/%2"
+      },
+      "expected": {
+        "resolvedPath": null
+      }
+    },
+    {
+      "id": "request-nonhex-percent",
+      "description": "Raw resolveRequestPath argument before any URL parser; decode once, reject unsafe input, then normalize.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "urlPath": "/%GG"
+      },
+      "expected": {
+        "resolvedPath": null
+      }
+    },
+    {
+      "id": "request-invalid-utf8",
+      "description": "Raw resolveRequestPath argument before any URL parser; decode once, reject unsafe input, then normalize.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "urlPath": "/%FF"
+      },
+      "expected": {
+        "resolvedPath": null
+      }
+    },
+    {
+      "id": "request-truncated-utf8",
+      "description": "Raw resolveRequestPath argument before any URL parser; decode once, reject unsafe input, then normalize.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "urlPath": "/%E2%82"
+      },
+      "expected": {
+        "resolvedPath": null
+      }
+    },
+    {
+      "id": "request-overlong-utf8",
+      "description": "Raw resolveRequestPath argument before any URL parser; decode once, reject unsafe input, then normalize.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "urlPath": "/%C0%AF"
+      },
+      "expected": {
+        "resolvedPath": null
+      }
+    },
+    {
+      "id": "request-surrogate-utf8",
+      "description": "Raw resolveRequestPath argument before any URL parser; decode once, reject unsafe input, then normalize.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "urlPath": "/%ED%A0%80"
+      },
+      "expected": {
+        "resolvedPath": null
+      }
+    },
+    {
+      "id": "request-encoded-percent-not-decoded-twice",
+      "description": "Raw resolveRequestPath argument before any URL parser; decode once, reject unsafe input, then normalize.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "urlPath": "/%2e%2e/secret"
+      },
+      "expected": {
+        "resolvedPath": null
+      }
+    },
+    {
+      "id": "request-query-not-url-parsed",
+      "description": "Raw resolveRequestPath argument before any URL parser; decode once, reject unsafe input, then normalize.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ]
+        },
+        "urlPath": "/index.html?x=1"
+      },
+      "expected": {
+        "resolvedPath": null
+      }
+    },
+    {
+      "id": "request-spa-miss",
+      "description": "SPA fallback applies only after safe decoding/normalization and a direct lookup miss.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ],
+          "routing": {
+            "spaFallback": "/index.html"
+          }
+        },
+        "urlPath": "/route/client"
+      },
+      "expected": {
+        "resolvedPath": "/index.html"
+      }
+    },
+    {
+      "id": "request-spa-direct",
+      "description": "SPA fallback applies only after safe decoding/normalization and a direct lookup miss.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ],
+          "routing": {
+            "spaFallback": "/index.html"
+          }
+        },
+        "urlPath": "/assets/x.js"
+      },
+      "expected": {
+        "resolvedPath": "/assets/x.js"
+      }
+    },
+    {
+      "id": "request-spa-trailing",
+      "description": "SPA fallback applies only after safe decoding/normalization and a direct lookup miss.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ],
+          "routing": {
+            "spaFallback": "/index.html"
+          }
+        },
+        "urlPath": "/assets/x.js/"
+      },
+      "expected": {
+        "resolvedPath": "/index.html"
+      }
+    },
+    {
+      "id": "request-spa-malformed-percent",
+      "description": "SPA fallback applies only after safe decoding/normalization and a direct lookup miss.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ],
+          "routing": {
+            "spaFallback": "/index.html"
+          }
+        },
+        "urlPath": "/%"
+      },
+      "expected": {
+        "resolvedPath": null
+      }
+    },
+    {
+      "id": "request-spa-parent",
+      "description": "SPA fallback applies only after safe decoding/normalization and a direct lookup miss.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ],
+          "routing": {
+            "spaFallback": "/index.html"
+          }
+        },
+        "urlPath": "/../missing"
+      },
+      "expected": {
+        "resolvedPath": null
+      }
+    },
+    {
+      "id": "request-spa-backslash",
+      "description": "SPA fallback applies only after safe decoding/normalization and a direct lookup miss.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ],
+          "routing": {
+            "spaFallback": "/index.html"
+          }
+        },
+        "urlPath": "/missing%5cfile"
+      },
+      "expected": {
+        "resolvedPath": null
+      }
+    },
+    {
+      "id": "request-spa-invalid-utf8",
+      "description": "SPA fallback applies only after safe decoding/normalization and a direct lookup miss.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ],
+          "routing": {
+            "spaFallback": "/index.html"
+          }
+        },
+        "urlPath": "/%FF"
+      },
+      "expected": {
+        "resolvedPath": null
+      }
+    },
+    {
+      "id": "request-spa-nul",
+      "description": "SPA fallback applies only after safe decoding/normalization and a direct lookup miss.",
+      "input": {
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/assets/x.js",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/%2e%2e/secret",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/a%2fb",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/caf\u00e9.txt",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ],
+          "routing": {
+            "spaFallback": "/index.html"
+          }
+        },
+        "urlPath": "/missing%00"
+      },
+      "expected": {
+        "resolvedPath": null
+      }
+    }
+  ]
+}
