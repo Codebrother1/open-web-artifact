@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "test": "node --test packages/conformance/src/*.test.js",
+    "test:integration": "node --test packages/integration/src/*.test.js",
+    "test:integration:harness": "node --test packages/integration/checks/*.test.js",
     "dev:server": "node packages/server/src/index.js",
     "artifact": "node packages/cli/src/index.js"
   }
