@@ -1,0 +1,326 @@
+{
+  "format": "owa-conformance-v1",
+  "specVersion": "owa.dev/v1",
+  "operation": "pack",
+  "notes": [
+    "Materialize input.files beneath a fresh directory, then input.symlinks; call packDirectory with input.entrypoint. Always remove temporary directories.",
+    "contentBase64 encodes exact bytes. Symlink target is relative to the link; targetType directory is only a filesystem setup hint. Symlinks must be rejected even if safe-looking or dangling.",
+    "Ordering guarantees in these pack vectors intentionally cover only lowercase ASCII names: the reference uses localeCompare and does not yet define portable Unicode pack ordering.",
+    "expected.manifest, canonicalJson, artifactDigest, blobDigests are static independent goldens; every returned blob must also equal the source bytes."
+  ],
+  "vectors": [
+    {
+      "id": "pack-lower-ascii-order",
+      "description": "Portable lowercase ASCII path subset; fixture order is intentionally not the expected packed file order.",
+      "input": {
+        "files": [
+          {
+            "path": "z.txt",
+            "contentBase64": "eg=="
+          },
+          {
+            "path": "assets/b.css",
+            "contentBase64": "Ym9keXt9"
+          },
+          {
+            "path": "index.html",
+            "contentBase64": "PGgxPm9rPC9oMT4K"
+          },
+          {
+            "path": "assets/a.js",
+            "contentBase64": "YSgpOw=="
+          }
+        ],
+        "symlinks": [],
+        "entrypoint": "/index.html"
+      },
+      "expected": {
+        "canonicalJson": "{\"access\":{\"visibility\":\"unlisted\"},\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:3952c415947cf68618915dc023dfccdaac1451d4ffca628eeb9f51a55021cc49\",\"mediaType\":\"text/javascript; charset=utf-8\",\"path\":\"/assets/a.js\",\"size\":4},{\"digest\":\"sha256:7c98040a541657584690ae2a1cc3b42a8b53b159cc60c5d3abbfecbaeac6c94a\",\"mediaType\":\"text/css; charset=utf-8\",\"path\":\"/assets/b.css\",\"size\":6},{\"digest\":\"sha256:79179d7a9ab0e61354b2924a8db81f0cece3165461b7021010156cd79d363aac\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/index.html\",\"size\":12},{\"digest\":\"sha256:594e519ae499312b29433b7dd8a97ff068defcba9755b6d5d00e84c524d67b06\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/z.txt\",\"size\":1}],\"lifecycle\":{\"expiresAt\":null},\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:7387cca69fc4df86c4d42943b0305d06e95688ce41306e9483b7dcad09069349",
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/assets/a.js",
+              "digest": "sha256:3952c415947cf68618915dc023dfccdaac1451d4ffca628eeb9f51a55021cc49",
+              "size": 4,
+              "mediaType": "text/javascript; charset=utf-8"
+            },
+            {
+              "path": "/assets/b.css",
+              "digest": "sha256:7c98040a541657584690ae2a1cc3b42a8b53b159cc60c5d3abbfecbaeac6c94a",
+              "size": 6,
+              "mediaType": "text/css; charset=utf-8"
+            },
+            {
+              "path": "/index.html",
+              "digest": "sha256:79179d7a9ab0e61354b2924a8db81f0cece3165461b7021010156cd79d363aac",
+              "size": 12,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/z.txt",
+              "digest": "sha256:594e519ae499312b29433b7dd8a97ff068defcba9755b6d5d00e84c524d67b06",
+              "size": 1,
+              "mediaType": "text/plain; charset=utf-8"
+            }
+          ],
+          "access": {
+            "visibility": "unlisted"
+          },
+          "lifecycle": {
+            "expiresAt": null
+          }
+        },
+        "blobDigests": [
+          "sha256:3952c415947cf68618915dc023dfccdaac1451d4ffca628eeb9f51a55021cc49",
+          "sha256:594e519ae499312b29433b7dd8a97ff068defcba9755b6d5d00e84c524d67b06",
+          "sha256:79179d7a9ab0e61354b2924a8db81f0cece3165461b7021010156cd79d363aac",
+          "sha256:7c98040a541657584690ae2a1cc3b42a8b53b159cc60c5d3abbfecbaeac6c94a"
+        ]
+      }
+    },
+    {
+      "id": "pack-duplicate-content",
+      "description": "Portable lowercase ASCII path subset; fixture order is intentionally not the expected packed file order.",
+      "input": {
+        "files": [
+          {
+            "path": "b.txt",
+            "contentBase64": "YWJj"
+          },
+          {
+            "path": "index.html",
+            "contentBase64": "YWJj"
+          },
+          {
+            "path": "a.txt",
+            "contentBase64": "YWJj"
+          }
+        ],
+        "symlinks": [],
+        "entrypoint": "/index.html"
+      },
+      "expected": {
+        "canonicalJson": "{\"access\":{\"visibility\":\"unlisted\"},\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/a.txt\",\"size\":3},{\"digest\":\"sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/b.txt\",\"size\":3},{\"digest\":\"sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/index.html\",\"size\":3}],\"lifecycle\":{\"expiresAt\":null},\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:16c45daa66aab61cd7208e233edc9b9e49112c6ce0737d15a5ec34bb0e1bbbde",
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/a.txt",
+              "digest": "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+              "size": 3,
+              "mediaType": "text/plain; charset=utf-8"
+            },
+            {
+              "path": "/b.txt",
+              "digest": "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+              "size": 3,
+              "mediaType": "text/plain; charset=utf-8"
+            },
+            {
+              "path": "/index.html",
+              "digest": "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+              "size": 3,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ],
+          "access": {
+            "visibility": "unlisted"
+          },
+          "lifecycle": {
+            "expiresAt": null
+          }
+        },
+        "blobDigests": [
+          "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        ]
+      }
+    },
+    {
+      "id": "pack-zero-byte",
+      "description": "Portable lowercase ASCII path subset; fixture order is intentionally not the expected packed file order.",
+      "input": {
+        "files": [
+          {
+            "path": "index.html",
+            "contentBase64": ""
+          }
+        ],
+        "symlinks": [],
+        "entrypoint": "/index.html"
+      },
+      "expected": {
+        "canonicalJson": "{\"access\":{\"visibility\":\"unlisted\"},\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/index.html\",\"size\":0}],\"lifecycle\":{\"expiresAt\":null},\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:478c20a5ae23a2deaa5e35400509e18506432434de4978674dc09b7ce5ba133b",
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ],
+          "access": {
+            "visibility": "unlisted"
+          },
+          "lifecycle": {
+            "expiresAt": null
+          }
+        },
+        "blobDigests": [
+          "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        ]
+      }
+    },
+    {
+      "id": "pack-custom-entrypoint",
+      "description": "Portable lowercase ASCII path subset; fixture order is intentionally not the expected packed file order.",
+      "input": {
+        "files": [
+          {
+            "path": "home.html",
+            "contentBase64": "aG9tZQ=="
+          }
+        ],
+        "symlinks": [],
+        "entrypoint": "/home.html"
+      },
+      "expected": {
+        "canonicalJson": "{\"access\":{\"visibility\":\"unlisted\"},\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/home.html\",\"files\":[{\"digest\":\"sha256:4ea140588150773ce3aace786aeef7f4049ce100fa649c94fbbddb960f1da942\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/home.html\",\"size\":4}],\"lifecycle\":{\"expiresAt\":null},\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:a1cc1ca19a45c8a016afe5057df12e5bf88b7e3f31992410419c0f5a2ed7d12b",
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/home.html",
+          "files": [
+            {
+              "path": "/home.html",
+              "digest": "sha256:4ea140588150773ce3aace786aeef7f4049ce100fa649c94fbbddb960f1da942",
+              "size": 4,
+              "mediaType": "text/html; charset=utf-8"
+            }
+          ],
+          "access": {
+            "visibility": "unlisted"
+          },
+          "lifecycle": {
+            "expiresAt": null
+          }
+        },
+        "blobDigests": [
+          "sha256:4ea140588150773ce3aace786aeef7f4049ce100fa649c94fbbddb960f1da942"
+        ]
+      }
+    },
+    {
+      "id": "pack-symlink-file",
+      "description": "Filesystem setup is fully described by relative paths, base64 bytes, and symlink targets.",
+      "input": {
+        "files": [
+          {
+            "path": "index.html",
+            "contentBase64": "b2s="
+          }
+        ],
+        "symlinks": [
+          {
+            "path": "link.html",
+            "target": "index.html"
+          }
+        ],
+        "entrypoint": "/index.html"
+      },
+      "expected": {
+        "errorCategory": "OWA_SYMLINK"
+      }
+    },
+    {
+      "id": "pack-symlink-directory",
+      "description": "Filesystem setup is fully described by relative paths, base64 bytes, and symlink targets.",
+      "input": {
+        "files": [
+          {
+            "path": "index.html",
+            "contentBase64": "b2s="
+          },
+          {
+            "path": "assets/a.txt",
+            "contentBase64": "YQ=="
+          }
+        ],
+        "symlinks": [
+          {
+            "path": "linked-assets",
+            "target": "assets",
+            "targetType": "directory"
+          }
+        ],
+        "entrypoint": "/index.html"
+      },
+      "expected": {
+        "errorCategory": "OWA_SYMLINK"
+      }
+    },
+    {
+      "id": "pack-symlink-dangling",
+      "description": "Filesystem setup is fully described by relative paths, base64 bytes, and symlink targets.",
+      "input": {
+        "files": [
+          {
+            "path": "index.html",
+            "contentBase64": "b2s="
+          }
+        ],
+        "symlinks": [
+          {
+            "path": "dangling",
+            "target": "absent"
+          }
+        ],
+        "entrypoint": "/index.html"
+      },
+      "expected": {
+        "errorCategory": "OWA_SYMLINK"
+      }
+    },
+    {
+      "id": "pack-missing-entrypoint",
+      "description": "Filesystem setup is fully described by relative paths, base64 bytes, and symlink targets.",
+      "input": {
+        "files": [
+          {
+            "path": "other.html",
+            "contentBase64": "b2s="
+          }
+        ],
+        "symlinks": [],
+        "entrypoint": "/index.html"
+      },
+      "expected": {
+        "errorCategory": "OWA_MISSING_ENTRYPOINT"
+      }
+    },
+    {
+      "id": "pack-empty-directory",
+      "description": "Filesystem setup is fully described by relative paths, base64 bytes, and symlink targets.",
+      "input": {
+        "files": [],
+        "symlinks": [],
+        "entrypoint": "/index.html"
+      },
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    }
+  ]
+}

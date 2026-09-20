@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { lstat, readdir, readFile } from 'node:fs/promises';
 import { extname, relative, resolve, posix } from 'node:path';
-import { OWA_MEDIA_TYPE, OWA_SPEC_VERSION, artifactDigest, sha256, validateManifest } from '../../spec/src/index.js';
+import { OWA_MEDIA_TYPE, OWA_SPEC_VERSION, artifactDigest, owaError, sha256, validateManifest } from '../../spec/src/index.js';
 
 function mediaType(path) {
   const ext = extname(path).toLowerCase();
@@ -18,7 +18,7 @@ async function walk(root, dir=root) {
   const out=[];
   for (const name of (await readdir(dir)).sort()) {
     const full=resolve(dir,name); const s=await lstat(full);
-    if (s.isSymbolicLink()) throw new Error(`Symlinks are not supported in artifacts: ${full}`);
+    if (s.isSymbolicLink()) throw owaError('OWA_SYMLINK', `Symlinks are not supported in artifacts: ${full}`);
     if (s.isDirectory()) out.push(...await walk(root,full)); else if (s.isFile()) out.push(full);
   }
   return out;

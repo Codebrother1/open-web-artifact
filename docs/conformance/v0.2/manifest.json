@@ -1,0 +1,1227 @@
+{
+  "format": "owa-conformance-v1",
+  "specVersion": "owa.dev/v1",
+  "operation": "manifest",
+  "notes": [
+    "Each inputJson is a complete independent manifest, including negative vectors; no patch DSL or hidden defaults.",
+    "Success asserts canonicalJson and artifactDigest. Validation checks metadata only, never blob existence, digest bytes or actual size.",
+    "Required-field/object/unknown-key failures use OWA_INVALID_MANIFEST. Invalid scalar annotation values use OWA_INVALID_ANNOTATIONS.",
+    "expiresAt is null or a portable RFC3339 timestamp: valid Gregorian YYYY-MM-DD, T/t, hours 00-23, minutes and seconds 00-59, optional fraction with one or more digits, and mandatory Z/z or signed HH:MM offset (hours 00-23, minutes 00-59). Leap seconds are not supported.",
+    "Date-only, missing-zone and calendar-rollover strings previously accepted by runtime date parsing are schema-invalid and now explicitly reject with OWA_INVALID_EXPIRY; timestamps are validated without normalization.",
+    "New expiry success goldens were computed independently with Python json.dumps(sort_keys=True, separators=(comma, colon), ensure_ascii=False) and hashlib.sha256 over UTF-8; these fixtures contain only string and integer leaves, with ASCII keys, so no floating-point serialization assumptions are involved."
+  ],
+  "vectors": [
+    {
+      "id": "manifest-legacy-basic",
+      "description": "Exact data copied from the existing published basic manifest; legacy files are immutable.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:f6c64c97726aac94c47f997a6875c727f8a889043393bd398fe008e3edeb63b0\",\"size\":10,\"mediaType\":\"text/html; charset=utf-8\"}],\"access\":{\"visibility\":\"unlisted\"},\"lifecycle\":{\"expiresAt\":null},\"annotations\":{\"example.note\":\"portable\",\"example.version\":2}}",
+      "expected": {
+        "canonicalJson": "{\"access\":{\"visibility\":\"unlisted\"},\"annotations\":{\"example.note\":\"portable\",\"example.version\":2},\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:f6c64c97726aac94c47f997a6875c727f8a889043393bd398fe008e3edeb63b0\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/index.html\",\"size\":10}],\"lifecycle\":{\"expiresAt\":null},\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:388a9912105ef49dab9d867b44c98f2c0cb2954139580bf56314b6818c206253"
+      }
+    },
+    {
+      "id": "manifest-legacy-basic-shuffled",
+      "description": "Reversed root, file and annotation insertion order has exactly the published identity.",
+      "inputJson": "{\"annotations\":{\"example.version\":2,\"example.note\":\"portable\"},\"lifecycle\":{\"expiresAt\":null},\"access\":{\"visibility\":\"unlisted\"},\"files\":[{\"mediaType\":\"text/html; charset=utf-8\",\"size\":10,\"digest\":\"sha256:f6c64c97726aac94c47f997a6875c727f8a889043393bd398fe008e3edeb63b0\",\"path\":\"/index.html\"}],\"entrypoint\":\"/index.html\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"specVersion\":\"owa.dev/v1\"}",
+      "expected": {
+        "canonicalJson": "{\"access\":{\"visibility\":\"unlisted\"},\"annotations\":{\"example.note\":\"portable\",\"example.version\":2},\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:f6c64c97726aac94c47f997a6875c727f8a889043393bd398fe008e3edeb63b0\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/index.html\",\"size\":10}],\"lifecycle\":{\"expiresAt\":null},\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:388a9912105ef49dab9d867b44c98f2c0cb2954139580bf56314b6818c206253"
+      }
+    },
+    {
+      "id": "manifest-minimal",
+      "description": "Optional fields may be absent; zero-byte content is valid.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "canonicalJson": "{\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/index.html\",\"size\":0}],\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:89cdfd88a1c004f4a6e286fb05ffa0aef43a7be42e224bd297056a3dd15df16e"
+      }
+    },
+    {
+      "id": "manifest-empty-options",
+      "description": "Every optional object may be empty.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"routing\":{},\"access\":{},\"lifecycle\":{},\"annotations\":{}}",
+      "expected": {
+        "canonicalJson": "{\"access\":{},\"annotations\":{},\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/index.html\",\"size\":0}],\"lifecycle\":{},\"routing\":{},\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:da3367f5de043497d7ad1cff872b5db41a17bcd3dcfabcfd6ea4cdc62eac9d92"
+      }
+    },
+    {
+      "id": "manifest-all-options",
+      "description": "Valid SPA fallback, public visibility, RFC3339 timestamp, and scalar annotations.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"routing\":{\"spaFallback\":\"/index.html\"},\"access\":{\"visibility\":\"public\"},\"lifecycle\":{\"expiresAt\":\"2030-01-02T03:04:05Z\"},\"annotations\":{\"text\":\"portable\",\"yes\":true,\"no\":false,\"nothing\":null}}",
+      "expected": {
+        "canonicalJson": "{\"access\":{\"visibility\":\"public\"},\"annotations\":{\"no\":false,\"nothing\":null,\"text\":\"portable\",\"yes\":true},\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/index.html\",\"size\":0}],\"lifecycle\":{\"expiresAt\":\"2030-01-02T03:04:05Z\"},\"routing\":{\"spaFallback\":\"/index.html\"},\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:eeaeefb78e0bdc691dcd94487dab2ac17e12882a031e5e2e983dcd6615245699"
+      }
+    },
+    {
+      "id": "manifest-same-content-different-paths",
+      "description": "Paths must be unique; content digests need not be. Validation does not inspect content bytes.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"},{\"path\":\"/copy.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "canonicalJson": "{\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/index.html\",\"size\":0},{\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/copy.html\",\"size\":0}],\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:e946f5f565dda90ab3240d9cb09f55f17f76bddc6bcce47ef049c60c55177914"
+      }
+    },
+    {
+      "id": "manifest-file-array-reversed",
+      "description": "Reversing files is valid but changes canonical bytes and artifact identity.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/copy.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"},{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "canonicalJson": "{\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/copy.html\",\"size\":0},{\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/index.html\",\"size\":0}],\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:64b19419187b92507d907fb104cc2079e1e8915751b73c61c0f3d7e082b69bef"
+      }
+    },
+    {
+      "id": "manifest-maximum-size",
+      "description": "Largest allowed safe integer size; manifest validation alone does not check blob contents.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":9007199254740991,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "canonicalJson": "{\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/index.html\",\"size\":9007199254740991}],\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:ee2b84add3b308ed3d7e7aca15c8339951f0732ad73df0863b875a4fca046a18"
+      }
+    },
+    {
+      "id": "manifest-whitespace-media",
+      "description": "Baseline validation accepts any nonempty string media type; MIME syntax is not newly imposed.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\" \"}]}",
+      "expected": {
+        "canonicalJson": "{\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mediaType\":\" \",\"path\":\"/index.html\",\"size\":0}],\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:5a224e5fc325a7dcfdabf160f6545376f735c0a083649212f5df3f79c237ecc3"
+      }
+    },
+    {
+      "id": "manifest-non-mime-media",
+      "description": "Baseline validation accepts any nonempty string media type; MIME syntax is not newly imposed.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"not a MIME type\"}]}",
+      "expected": {
+        "canonicalJson": "{\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mediaType\":\"not a MIME type\",\"path\":\"/index.html\",\"size\":0}],\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:986950bb2d7ddf1ded4727cb79ac630dd44a063044f34870378469c57d95bb3f"
+      }
+    },
+    {
+      "id": "manifest-number-annotations",
+      "description": "Finite binary64 numeric annotations are valid and participate in identity.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"annotations\":{\"negativeZero\":-0.0,\"smallFixed\":1e-06,\"smallExponent\":1e-07,\"largeFixed\":1e+20,\"largeExponent\":1e+21,\"rounded\":333333333.33333329,\"boolean\":true,\"null\":null}}",
+      "expected": {
+        "canonicalJson": "{\"annotations\":{\"boolean\":true,\"largeExponent\":1e+21,\"largeFixed\":100000000000000000000,\"negativeZero\":0,\"null\":null,\"rounded\":333333333.3333333,\"smallExponent\":1e-7,\"smallFixed\":0.000001},\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/index.html\",\"size\":0}],\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:ba452660f909733c87169cc60a0a96f419ea274f256d9e419f34d2e9fc3b56db"
+      }
+    },
+    {
+      "id": "manifest-literal-percent-and-unicode",
+      "description": "Artifact paths are exact strings: no percent decoding or Unicode normalization.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"},{\"path\":\"/%2e%2e/secret\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"},{\"path\":\"/caf\\u00e9.txt\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"},{\"path\":\"/cafe\\u0301.txt\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "canonicalJson": "{\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/index.html\",\"size\":0},{\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/%2e%2e/secret\",\"size\":0},{\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/caf\u00e9.txt\",\"size\":0},{\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/cafe\u0301.txt\",\"size\":0}],\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:4435c4890c7f1f6f6704ffd16d13c932d037b119b929e03735a6de7635701642"
+      }
+    },
+    {
+      "id": "manifest-null",
+      "description": "Manifest must be an object with all required fields.",
+      "inputJson": "null",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-array",
+      "description": "Manifest must be an object with all required fields.",
+      "inputJson": "[]",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-string",
+      "description": "Manifest must be an object with all required fields.",
+      "inputJson": "\"manifest\"",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-number",
+      "description": "Manifest must be an object with all required fields.",
+      "inputJson": "3",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-boolean",
+      "description": "Manifest must be an object with all required fields.",
+      "inputJson": "true",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-empty-object",
+      "description": "Manifest must be an object with all required fields.",
+      "inputJson": "{}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-missing-specVersion",
+      "description": "Missing a required manifest property.",
+      "inputJson": "{\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-missing-artifactType",
+      "description": "Missing a required manifest property.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-missing-entrypoint",
+      "description": "Missing a required manifest property.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-missing-files",
+      "description": "Missing a required manifest property.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\"}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-file-missing-path",
+      "description": "Missing a required file property.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-file-missing-digest",
+      "description": "Missing a required file property.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-file-missing-size",
+      "description": "Missing a required file property.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-file-missing-mediaType",
+      "description": "Missing a required file property.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-specVersion-0",
+      "description": "Present but unsupported required constant.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v2\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_UNSUPPORTED_SPEC_VERSION"
+      }
+    },
+    {
+      "id": "manifest-specVersion-1",
+      "description": "Present but unsupported required constant.",
+      "inputJson": "{\"specVersion\":\"\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_UNSUPPORTED_SPEC_VERSION"
+      }
+    },
+    {
+      "id": "manifest-specVersion-2",
+      "description": "Present but unsupported required constant.",
+      "inputJson": "{\"specVersion\":null,\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_UNSUPPORTED_SPEC_VERSION"
+      }
+    },
+    {
+      "id": "manifest-specVersion-3",
+      "description": "Present but unsupported required constant.",
+      "inputJson": "{\"specVersion\":1,\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_UNSUPPORTED_SPEC_VERSION"
+      }
+    },
+    {
+      "id": "manifest-artifactType-0",
+      "description": "Present but unsupported required constant.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_UNSUPPORTED_ARTIFACT_TYPE"
+      }
+    },
+    {
+      "id": "manifest-artifactType-1",
+      "description": "Present but unsupported required constant.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_UNSUPPORTED_ARTIFACT_TYPE"
+      }
+    },
+    {
+      "id": "manifest-artifactType-2",
+      "description": "Present but unsupported required constant.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":null,\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_UNSUPPORTED_ARTIFACT_TYPE"
+      }
+    },
+    {
+      "id": "manifest-artifactType-3",
+      "description": "Present but unsupported required constant.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":1,\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_UNSUPPORTED_ARTIFACT_TYPE"
+      }
+    },
+    {
+      "id": "manifest-files-empty",
+      "description": "files must be a nonempty array.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-files-null",
+      "description": "files must be a nonempty array.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":null}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-files-object",
+      "description": "files must be a nonempty array.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":{}}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-files-string",
+      "description": "files must be a nonempty array.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":\"files\"}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-file-null",
+      "description": "Every file must be an object.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[null]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-file-array",
+      "description": "Every file must be an object.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[[]]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-file-string",
+      "description": "Every file must be an object.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[\"file\"]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-file-number",
+      "description": "Every file must be an object.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[1]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-file-boolean",
+      "description": "Every file must be an object.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[true]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-duplicate-full-entry",
+      "description": "Exact duplicate file entries are rejected.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"},{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_DUPLICATE_PATH"
+      }
+    },
+    {
+      "id": "manifest-duplicate-path-different-digest",
+      "description": "Duplicate paths remain invalid when digest differs.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"},{\"path\":\"/index.html\",\"digest\":\"sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_DUPLICATE_PATH"
+      }
+    },
+    {
+      "id": "manifest-path-relative",
+      "description": "Artifact file paths must already be normalized absolute file paths.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    },
+    {
+      "id": "manifest-path-dot",
+      "description": "Artifact file paths must already be normalized absolute file paths.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/a/./b\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    },
+    {
+      "id": "manifest-path-dotdot",
+      "description": "Artifact file paths must already be normalized absolute file paths.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/a/../b\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    },
+    {
+      "id": "manifest-path-repeated-slash",
+      "description": "Artifact file paths must already be normalized absolute file paths.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/a//b\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    },
+    {
+      "id": "manifest-path-trailing-slash",
+      "description": "Artifact file paths must already be normalized absolute file paths.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/a/\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    },
+    {
+      "id": "manifest-path-backslash",
+      "description": "Artifact file paths must already be normalized absolute file paths.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/a\\\\b\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    },
+    {
+      "id": "manifest-path-nul",
+      "description": "Artifact file paths must already be normalized absolute file paths.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/a\\u0000b\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    },
+    {
+      "id": "manifest-path-root",
+      "description": "Artifact file paths must already be normalized absolute file paths.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    },
+    {
+      "id": "manifest-path-empty",
+      "description": "Artifact file paths must already be normalized absolute file paths.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    },
+    {
+      "id": "manifest-path-terminal-dot",
+      "description": "Artifact file paths must already be normalized absolute file paths.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/a/.\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    },
+    {
+      "id": "manifest-path-terminal-dotdot",
+      "description": "Artifact file paths must already be normalized absolute file paths.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/a/..\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    },
+    {
+      "id": "manifest-path-null",
+      "description": "Artifact file paths must already be normalized absolute file paths.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":null,\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    },
+    {
+      "id": "manifest-path-number",
+      "description": "Artifact file paths must already be normalized absolute file paths.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":3,\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    },
+    {
+      "id": "manifest-path-array",
+      "description": "Artifact file paths must already be normalized absolute file paths.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":[],\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    },
+    {
+      "id": "manifest-digest-empty",
+      "description": "Digest must be exactly sha256: followed by 64 lowercase hexadecimal characters.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_DIGEST"
+      }
+    },
+    {
+      "id": "manifest-digest-malformed",
+      "description": "Digest must be exactly sha256: followed by 64 lowercase hexadecimal characters.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:xyz\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_DIGEST"
+      }
+    },
+    {
+      "id": "manifest-digest-uppercase",
+      "description": "Digest must be exactly sha256: followed by 64 lowercase hexadecimal characters.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_DIGEST"
+      }
+    },
+    {
+      "id": "manifest-digest-short",
+      "description": "Digest must be exactly sha256: followed by 64 lowercase hexadecimal characters.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_DIGEST"
+      }
+    },
+    {
+      "id": "manifest-digest-long",
+      "description": "Digest must be exactly sha256: followed by 64 lowercase hexadecimal characters.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_DIGEST"
+      }
+    },
+    {
+      "id": "manifest-digest-wrong-algorithm",
+      "description": "Digest must be exactly sha256: followed by 64 lowercase hexadecimal characters.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_DIGEST"
+      }
+    },
+    {
+      "id": "manifest-digest-newline",
+      "description": "Digest must be exactly sha256: followed by 64 lowercase hexadecimal characters.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\\n\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_DIGEST"
+      }
+    },
+    {
+      "id": "manifest-digest-null",
+      "description": "Digest must be exactly sha256: followed by 64 lowercase hexadecimal characters.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":null,\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_DIGEST"
+      }
+    },
+    {
+      "id": "manifest-digest-number",
+      "description": "Digest must be exactly sha256: followed by 64 lowercase hexadecimal characters.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":4,\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_DIGEST"
+      }
+    },
+    {
+      "id": "manifest-size-negative",
+      "description": "Size is a nonnegative safe integer number, not a coercible value.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":-1,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_SIZE"
+      }
+    },
+    {
+      "id": "manifest-size-fraction",
+      "description": "Size is a nonnegative safe integer number, not a coercible value.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0.5,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_SIZE"
+      }
+    },
+    {
+      "id": "manifest-size-string",
+      "description": "Size is a nonnegative safe integer number, not a coercible value.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":\"0\",\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_SIZE"
+      }
+    },
+    {
+      "id": "manifest-size-boolean",
+      "description": "Size is a nonnegative safe integer number, not a coercible value.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":true,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_SIZE"
+      }
+    },
+    {
+      "id": "manifest-size-unsafe",
+      "description": "Size is a nonnegative safe integer number, not a coercible value.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":9007199254740992,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_SIZE"
+      }
+    },
+    {
+      "id": "manifest-size-null",
+      "description": "Size is a nonnegative safe integer number, not a coercible value.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":null,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_SIZE"
+      }
+    },
+    {
+      "id": "manifest-media-empty",
+      "description": "mediaType must be a nonempty string.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MEDIA_TYPE"
+      }
+    },
+    {
+      "id": "manifest-media-null",
+      "description": "mediaType must be a nonempty string.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":null}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MEDIA_TYPE"
+      }
+    },
+    {
+      "id": "manifest-media-number",
+      "description": "mediaType must be a nonempty string.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":1}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MEDIA_TYPE"
+      }
+    },
+    {
+      "id": "manifest-media-boolean",
+      "description": "mediaType must be a nonempty string.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":true}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MEDIA_TYPE"
+      }
+    },
+    {
+      "id": "manifest-media-array",
+      "description": "mediaType must be a nonempty string.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":[]}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MEDIA_TYPE"
+      }
+    },
+    {
+      "id": "manifest-entrypoint-missing",
+      "description": "Entrypoint must exactly match a file path.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/missing.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_MISSING_ENTRYPOINT"
+      }
+    },
+    {
+      "id": "manifest-entrypoint-relative",
+      "description": "Entrypoint must itself be a valid artifact path.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    },
+    {
+      "id": "manifest-fallback-missing",
+      "description": "SPA fallback must exactly match a file path.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"routing\":{\"spaFallback\":\"/missing.html\"}}",
+      "expected": {
+        "errorCategory": "OWA_MISSING_SPA_FALLBACK"
+      }
+    },
+    {
+      "id": "manifest-fallback-empty",
+      "description": "A present spaFallback is validated even when falsey.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"routing\":{\"spaFallback\":\"\"}}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    },
+    {
+      "id": "manifest-fallback-null",
+      "description": "A present spaFallback is validated even when falsey.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"routing\":{\"spaFallback\":null}}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    },
+    {
+      "id": "manifest-fallback-relative",
+      "description": "A present spaFallback is validated even when falsey.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"routing\":{\"spaFallback\":\"index.html\"}}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    },
+    {
+      "id": "manifest-fallback-traversal",
+      "description": "A present spaFallback is validated even when falsey.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"routing\":{\"spaFallback\":\"/a/../index.html\"}}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    },
+    {
+      "id": "manifest-routing-shape-null",
+      "description": "Optional containers must be objects, not null, arrays or scalars.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"routing\":null}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-routing-shape-array",
+      "description": "Optional containers must be objects, not null, arrays or scalars.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"routing\":[]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-routing-shape-string",
+      "description": "Optional containers must be objects, not null, arrays or scalars.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"routing\":\"invalid\"}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-routing-shape-boolean",
+      "description": "Optional containers must be objects, not null, arrays or scalars.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"routing\":false}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-routing-shape-number",
+      "description": "Optional containers must be objects, not null, arrays or scalars.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"routing\":1}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-access-shape-null",
+      "description": "Optional containers must be objects, not null, arrays or scalars.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"access\":null}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-access-shape-array",
+      "description": "Optional containers must be objects, not null, arrays or scalars.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"access\":[]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-access-shape-string",
+      "description": "Optional containers must be objects, not null, arrays or scalars.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"access\":\"invalid\"}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-access-shape-boolean",
+      "description": "Optional containers must be objects, not null, arrays or scalars.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"access\":false}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-access-shape-number",
+      "description": "Optional containers must be objects, not null, arrays or scalars.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"access\":1}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-lifecycle-shape-null",
+      "description": "Optional containers must be objects, not null, arrays or scalars.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"lifecycle\":null}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-lifecycle-shape-array",
+      "description": "Optional containers must be objects, not null, arrays or scalars.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"lifecycle\":[]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-lifecycle-shape-string",
+      "description": "Optional containers must be objects, not null, arrays or scalars.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"lifecycle\":\"invalid\"}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-lifecycle-shape-boolean",
+      "description": "Optional containers must be objects, not null, arrays or scalars.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"lifecycle\":false}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-lifecycle-shape-number",
+      "description": "Optional containers must be objects, not null, arrays or scalars.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"lifecycle\":1}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-annotations-shape-null",
+      "description": "Optional containers must be objects, not null, arrays or scalars.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"annotations\":null}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-annotations-shape-array",
+      "description": "Optional containers must be objects, not null, arrays or scalars.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"annotations\":[]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-annotations-shape-string",
+      "description": "Optional containers must be objects, not null, arrays or scalars.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"annotations\":\"invalid\"}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-annotations-shape-boolean",
+      "description": "Optional containers must be objects, not null, arrays or scalars.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"annotations\":false}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-annotations-shape-number",
+      "description": "Optional containers must be objects, not null, arrays or scalars.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"annotations\":1}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-visibility-private",
+      "description": "Present visibility is public or unlisted only.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"access\":{\"visibility\":\"private\"}}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_VISIBILITY"
+      }
+    },
+    {
+      "id": "manifest-visibility-empty",
+      "description": "Present visibility is public or unlisted only.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"access\":{\"visibility\":\"\"}}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_VISIBILITY"
+      }
+    },
+    {
+      "id": "manifest-visibility-null",
+      "description": "Present visibility is public or unlisted only.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"access\":{\"visibility\":null}}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_VISIBILITY"
+      }
+    },
+    {
+      "id": "manifest-visibility-boolean",
+      "description": "Present visibility is public or unlisted only.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"access\":{\"visibility\":false}}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_VISIBILITY"
+      }
+    },
+    {
+      "id": "manifest-visibility-number",
+      "description": "Present visibility is public or unlisted only.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"access\":{\"visibility\":1}}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_VISIBILITY"
+      }
+    },
+    {
+      "id": "manifest-expiry-invalid",
+      "description": "expiresAt must be null or a valid portable RFC3339 timestamp with an explicit timezone.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"lifecycle\":{\"expiresAt\":\"not-a-date\"}}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_EXPIRY"
+      }
+    },
+    {
+      "id": "manifest-expiry-empty",
+      "description": "expiresAt must be null or a valid portable RFC3339 timestamp with an explicit timezone.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"lifecycle\":{\"expiresAt\":\"\"}}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_EXPIRY"
+      }
+    },
+    {
+      "id": "manifest-expiry-number",
+      "description": "expiresAt must be null or a valid portable RFC3339 timestamp with an explicit timezone.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"lifecycle\":{\"expiresAt\":0}}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_EXPIRY"
+      }
+    },
+    {
+      "id": "manifest-expiry-boolean",
+      "description": "expiresAt must be null or a valid portable RFC3339 timestamp with an explicit timezone.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"lifecycle\":{\"expiresAt\":true}}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_EXPIRY"
+      }
+    },
+    {
+      "id": "manifest-expiry-array",
+      "description": "expiresAt must be null or a valid portable RFC3339 timestamp with an explicit timezone.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"lifecycle\":{\"expiresAt\":[]}}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_EXPIRY"
+      }
+    },
+    {
+      "id": "manifest-expiry-object",
+      "description": "expiresAt must be null or a valid portable RFC3339 timestamp with an explicit timezone.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"lifecycle\":{\"expiresAt\":{}}}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_EXPIRY"
+      }
+    },
+    {
+      "id": "manifest-annotation-array",
+      "description": "Annotation values must be JSON scalars.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"annotations\":{\"bad\":[]}}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_ANNOTATIONS"
+      }
+    },
+    {
+      "id": "manifest-annotation-object",
+      "description": "Annotation values must be JSON scalars.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"annotations\":{\"bad\":{}}}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_ANNOTATIONS"
+      }
+    },
+    {
+      "id": "manifest-unknown-root",
+      "description": "The published schema rejects unknown properties at this object level.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"unexpected\":true}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-unknown-file",
+      "description": "The published schema rejects unknown properties at this object level.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\",\"unexpected\":true}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-unknown-routing",
+      "description": "The published schema rejects unknown properties at this object level.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"routing\":{\"unexpected\":true}}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-unknown-access",
+      "description": "The published schema rejects unknown properties at this object level.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"access\":{\"unexpected\":true}}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-unknown-lifecycle",
+      "description": "The published schema rejects unknown properties at this object level.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"lifecycle\":{\"unexpected\":true}}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "manifest-expiry-utc",
+      "description": "UTC timestamp with mandatory seconds and zone.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"lifecycle\":{\"expiresAt\":\"2030-01-02T03:04:05Z\"}}",
+      "expected": {
+        "canonicalJson": "{\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/index.html\",\"size\":0}],\"lifecycle\":{\"expiresAt\":\"2030-01-02T03:04:05Z\"},\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:e5addb84d5be1aad03d75560689301857e6f08b64b6d17fe74900e2db6711178"
+      }
+    },
+    {
+      "id": "manifest-expiry-positive-offset",
+      "description": "Positive timezone offset is preserved in canonical identity.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"lifecycle\":{\"expiresAt\":\"2030-01-02T03:04:05+05:30\"}}",
+      "expected": {
+        "canonicalJson": "{\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/index.html\",\"size\":0}],\"lifecycle\":{\"expiresAt\":\"2030-01-02T03:04:05+05:30\"},\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:beb231c4f56fe1a3b36c80183c0754221008953db727b8b76f7255ab0f94ea8c"
+      }
+    },
+    {
+      "id": "manifest-expiry-negative-offset",
+      "description": "Negative timezone offset is preserved in canonical identity.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"lifecycle\":{\"expiresAt\":\"2030-01-02T03:04:05-07:00\"}}",
+      "expected": {
+        "canonicalJson": "{\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/index.html\",\"size\":0}],\"lifecycle\":{\"expiresAt\":\"2030-01-02T03:04:05-07:00\"},\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:3382499e72b6ccf1d3227a949d22967eb567b85978d565bc408a7f220d777e2a"
+      }
+    },
+    {
+      "id": "manifest-expiry-fraction",
+      "description": "Fractional seconds accept more than millisecond precision without truncation.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"lifecycle\":{\"expiresAt\":\"2030-01-02T03:04:05.123456789Z\"}}",
+      "expected": {
+        "canonicalJson": "{\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/index.html\",\"size\":0}],\"lifecycle\":{\"expiresAt\":\"2030-01-02T03:04:05.123456789Z\"},\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:5150a9009409666b5d5af9566ca9e8e31c8f5ff7ec6e675628c1788237d9c56f"
+      }
+    },
+    {
+      "id": "manifest-expiry-leapday",
+      "description": "Gregorian leap day and a one-digit fraction are valid.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"lifecycle\":{\"expiresAt\":\"2024-02-29T23:59:59.1Z\"}}",
+      "expected": {
+        "canonicalJson": "{\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/index.html\",\"size\":0}],\"lifecycle\":{\"expiresAt\":\"2024-02-29T23:59:59.1Z\"},\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:ed52b19b058f7ffdf7d3e207f17ddabea3b892003516b79a4dc957dc987845c9"
+      }
+    },
+    {
+      "id": "manifest-expiry-century-leapday",
+      "description": "A century divisible by 400 remains a Gregorian leap year.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"lifecycle\":{\"expiresAt\":\"2000-02-29T00:00:00Z\"}}",
+      "expected": {
+        "canonicalJson": "{\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/index.html\",\"size\":0}],\"lifecycle\":{\"expiresAt\":\"2000-02-29T00:00:00Z\"},\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:fca07f1f3b18763fe117285dc817ae07b5b6946b5b7384aa5d3a81c770181bcb"
+      }
+    },
+    {
+      "id": "manifest-expiry-lowercase",
+      "description": "Lowercase RFC3339 t and z are accepted and retained.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"lifecycle\":{\"expiresAt\":\"2030-01-02t03:04:05z\"}}",
+      "expected": {
+        "canonicalJson": "{\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/index.html\",\"size\":0}],\"lifecycle\":{\"expiresAt\":\"2030-01-02t03:04:05z\"},\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:2cfc65d5d95e3bf012bec4a07a0d59146be01db380de3311fe73dada9beacc7d"
+      }
+    },
+    {
+      "id": "manifest-expiry-maximum-offset",
+      "description": "Offset fields use the portable upper bounds of 23 hours and 59 minutes.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"lifecycle\":{\"expiresAt\":\"2030-01-02T03:04:05+23:59\"}}",
+      "expected": {
+        "canonicalJson": "{\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/index.html\",\"size\":0}],\"lifecycle\":{\"expiresAt\":\"2030-01-02T03:04:05+23:59\"},\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:429b6c93f1c28b673b2bcd2d8593102c2d991dd411ac9eb4b05010a4c69ab47b"
+      }
+    },
+    {
+      "id": "manifest-expiry-date-only",
+      "description": "A date alone lacks the mandatory time and zone, even if runtime date parsing accepts it.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"lifecycle\":{\"expiresAt\":\"2030-01-02\"}}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_EXPIRY"
+      }
+    },
+    {
+      "id": "manifest-expiry-missing-zone",
+      "description": "Local-time timestamps lack the mandatory explicit zone.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"lifecycle\":{\"expiresAt\":\"2030-01-02T03:04:05\"}}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_EXPIRY"
+      }
+    },
+    {
+      "id": "manifest-expiry-impossible-february-day",
+      "description": "Impossible February dates must not roll into March.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"lifecycle\":{\"expiresAt\":\"2024-02-30T03:04:05Z\"}}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_EXPIRY"
+      }
+    },
+    {
+      "id": "manifest-expiry-non-leapday",
+      "description": "February 29 is invalid in a non-leap year.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"lifecycle\":{\"expiresAt\":\"2023-02-29T03:04:05Z\"}}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_EXPIRY"
+      }
+    },
+    {
+      "id": "manifest-expiry-century-non-leapday",
+      "description": "A century not divisible by 400 is not a Gregorian leap year.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"lifecycle\":{\"expiresAt\":\"1900-02-29T03:04:05Z\"}}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_EXPIRY"
+      }
+    },
+    {
+      "id": "manifest-expiry-hour-24",
+      "description": "Hour 24 is invalid rather than rolling over to the following day.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"lifecycle\":{\"expiresAt\":\"2030-01-02T24:00:00Z\"}}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_EXPIRY"
+      }
+    },
+    {
+      "id": "manifest-expiry-minute-60",
+      "description": "Minutes are limited to 00-59.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"lifecycle\":{\"expiresAt\":\"2030-01-02T03:60:00Z\"}}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_EXPIRY"
+      }
+    },
+    {
+      "id": "manifest-expiry-second-60",
+      "description": "Leap seconds are not supported; seconds are limited to 00-59.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"lifecycle\":{\"expiresAt\":\"2016-12-31T23:59:60Z\"}}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_EXPIRY"
+      }
+    },
+    {
+      "id": "manifest-expiry-offset-hour-24",
+      "description": "Offset hours are limited to 00-23.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"lifecycle\":{\"expiresAt\":\"2030-01-02T03:04:05+24:00\"}}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_EXPIRY"
+      }
+    },
+    {
+      "id": "manifest-expiry-offset-minute-60",
+      "description": "Offset minutes are limited to 00-59.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"lifecycle\":{\"expiresAt\":\"2030-01-02T03:04:05-00:60\"}}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_EXPIRY"
+      }
+    },
+    {
+      "id": "manifest-expiry-empty-fraction",
+      "description": "A decimal point requires at least one fractional digit.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"lifecycle\":{\"expiresAt\":\"2030-01-02T03:04:05.Z\"}}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_EXPIRY"
+      }
+    },
+    {
+      "id": "manifest-expiry-trailing-lf",
+      "description": "A trailing LF is not part of RFC3339 and cannot be ignored by an end anchor.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"lifecycle\":{\"expiresAt\":\"2030-01-02T03:04:05Z\\n\"}}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_EXPIRY"
+      }
+    },
+    {
+      "id": "manifest-specVersion-shadowed-coercion",
+      "description": "Wrong JSON type must retain the field category, regardless of object member names.",
+      "inputJson": "{\"specVersion\":{\"toString\":null},\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_UNSUPPORTED_SPEC_VERSION"
+      }
+    },
+    {
+      "id": "manifest-artifactType-shadowed-coercion",
+      "description": "Wrong JSON type must retain the field category, regardless of object member names.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":{\"toString\":null},\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_UNSUPPORTED_ARTIFACT_TYPE"
+      }
+    },
+    {
+      "id": "manifest-entrypoint-shadowed-coercion",
+      "description": "Wrong JSON type must retain the field category, regardless of object member names.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":{\"toString\":null},\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    },
+    {
+      "id": "manifest-file-path-shadowed-coercion",
+      "description": "Wrong JSON type must retain the field category, regardless of object member names.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":{\"toString\":null},\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_PATH"
+      }
+    },
+    {
+      "id": "manifest-visibility-shadowed-coercion",
+      "description": "Wrong JSON type must retain the field category, regardless of object member names.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html; charset=utf-8\"}],\"access\":{\"visibility\":{\"toString\":null}}}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_VISIBILITY"
+      }
+    }
+  ]
+}

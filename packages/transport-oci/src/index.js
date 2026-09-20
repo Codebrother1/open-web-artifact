@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { artifactDigest, canonicalJson, OWA_MEDIA_TYPE, sha256, validateManifest } from '../../spec/src/index.js';
+import { artifactDigest, canonicalJson, OWA_MEDIA_TYPE, owaError, sha256, validateManifest } from '../../spec/src/index.js';
 
 export const OCI_IMAGE_MANIFEST = 'application/vnd.oci.image.manifest.v1+json';
 export const OCI_IMAGE_INDEX = 'application/vnd.oci.image.index.v1+json';
@@ -8,8 +8,8 @@ export const OCI_LAYOUT_VERSION = '1.0.0';
 
 function bytes(value) { return Buffer.isBuffer(value) ? value : Buffer.from(value); }
 function digestPath(root,digest){const [algorithm,hex]=digest.split(':');return join(root,'blobs',algorithm,hex);}
-async function writeBlob(root,digest,data){const body=bytes(data);if(sha256(body)!==digest)throw new Error(`Blob bytes do not match ${digest}`);const path=digestPath(root,digest);await mkdir(join(root,'blobs','sha256'),{recursive:true});await writeFile(path,body);}
-async function readVerifiedBlob(root,digest,size=null){const body=await readFile(digestPath(root,digest));if(sha256(body)!==digest)throw new Error(`OCI blob digest mismatch: ${digest}`);if(size!=null&&body.byteLength!==size)throw new Error(`OCI blob size mismatch: ${digest}`);return body;}
+async function writeBlob(root,digest,data){const body=bytes(data);if(sha256(body)!==digest)throw owaError('OWA_CONTENT_DIGEST_MISMATCH', `Blob bytes do not match ${digest}`);const path=digestPath(root,digest);await mkdir(join(root,'blobs','sha256'),{recursive:true});await writeFile(path,body);}
+async function readVerifiedBlob(root,digest,size=null){const body=await readFile(digestPath(root,digest));if(sha256(body)!==digest)throw owaError('OWA_CONTENT_DIGEST_MISMATCH', `OCI blob digest mismatch: ${digest}`);if(size!=null&&body.byteLength!==size)throw owaError('OWA_CONTENT_SIZE_MISMATCH', `OCI blob size mismatch: ${digest}`);return body;}
 async function sourceGet(source,digest){if(source instanceof Map){const value=source.get(digest);if(!value)throw new Error(`Source blob missing: ${digest}`);return value;}return source.get(digest);}
 
 export async function writeOciLayout({manifest,blobs,output,ref='latest'}){
@@ -25,7 +25,7 @@ export async function writeOciLayout({manifest,blobs,output,ref='latest'}){
   const layers=[];
   for(const file of manifest.files){
     const body=await sourceGet(blobs,file.digest);
-    if(body.byteLength!==file.size)throw new Error(`Source blob size mismatch for ${file.path}`);
+    if(body.byteLength!==file.size)throw owaError('OWA_CONTENT_SIZE_MISMATCH', `Source blob size mismatch for ${file.path}`);
     await writeBlob(root,file.digest,body);
     layers.push({
       mediaType:file.mediaType,
@@ -84,7 +84,7 @@ export async function readOciLayout({input,ref='latest'}){
   const blobMap=new Map();
   for(const file of manifest.files){
     const layer=layerByDigest.get(file.digest);if(!layer)throw new Error(`OCI layer missing for ${file.path}`);
-    if(layer.size!==file.size)throw new Error(`OCI layer size mismatch for ${file.path}`);
+    if(layer.size!==file.size)throw owaError('OWA_CONTENT_SIZE_MISMATCH', `OCI layer size mismatch for ${file.path}`);
     if(layer.annotations?.['dev.openwebartifact.path']&&layer.annotations['dev.openwebartifact.path']!==file.path)throw new Error(`OCI layer path mismatch for ${file.path}`);
     blobMap.set(file.digest,new Uint8Array(await readVerifiedBlob(root,file.digest,file.size)));
   }

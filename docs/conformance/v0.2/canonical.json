@@ -1,0 +1,261 @@
+{
+  "format": "owa-conformance-v1",
+  "specVersion": "owa.dev/v1",
+  "operation": "canonical",
+  "notes": [
+    "inputJson is parsed as JSON using IEEE-754 binary64 numbers, then canonicalized. This pins reference behavior, not RFC 8785/JCS.",
+    "canonicalJson is the exact Unicode string whose UTF-8 bytes are hashed, with no added newline. digest is an independent static SHA-256 golden.",
+    "Unpaired surrogate escape vectors pin the existing reference behavior; implementations whose JSON parser forbids them should report that interoperability limitation rather than silently replace characters."
+  ],
+  "vectors": [
+    {
+      "id": "canonical-numeric-keys",
+      "description": "Numeric-looking keys use code-point order, not integer enumeration order.",
+      "inputJson": "{\"2\":\"two\",\"10\":\"ten\",\"1\":\"one\",\"02\":\"zero-two\"}",
+      "expected": {
+        "canonicalJson": "{\"02\":\"zero-two\",\"1\":\"one\",\"10\":\"ten\",\"2\":\"two\"}",
+        "digest": "sha256:a617feb075c704be37b1680b70175ae90dc974c06d323808a3132998230aacda"
+      }
+    },
+    {
+      "id": "canonical-supplementary-before-bmp-input",
+      "description": "U+E000 sorts before U+1F600; UTF-16 code-unit sorting gives a different result.",
+      "inputJson": "{\"\\ud83d\\ude00\":1,\"\\ue000\":2,\"a\":3}",
+      "expected": {
+        "canonicalJson": "{\"a\":3,\"\ue000\":2,\"\ud83d\ude00\":1}",
+        "digest": "sha256:f3d4db98c3d18f7f8d405f091f7e34be7db621fc83961988c21370340001b0d2"
+      }
+    },
+    {
+      "id": "canonical-prefix-keys",
+      "description": "An object key prefix sorts before the longer key; empty key first.",
+      "inputJson": "{\"aa\":4,\"a\":2,\"\":1,\"a\\u0000\":3}",
+      "expected": {
+        "canonicalJson": "{\"\":1,\"a\":2,\"a\\u0000\":3,\"aa\":4}",
+        "digest": "sha256:3c8c2752f465a6d222a992e1bacb408686168f5fd56cb1659b29152f6eed6c95"
+      }
+    },
+    {
+      "id": "canonical-nested-array-order",
+      "description": "Sort nested objects but never reorder arrays.",
+      "inputJson": "{\"z\":[3,1,2,{\"b\":false,\"a\":null}],\"a\":{\"y\":\"last\",\"x\":\"first\"}}",
+      "expected": {
+        "canonicalJson": "{\"a\":{\"x\":\"first\",\"y\":\"last\"},\"z\":[3,1,2,{\"a\":null,\"b\":false}]}",
+        "digest": "sha256:d10c8dbff3151c202c016f855ef577438b5f825b338d40512e5c75555a8620fe"
+      }
+    },
+    {
+      "id": "canonical-unicode-no-normalization",
+      "description": "Composed and decomposed keys and values remain distinct.",
+      "inputJson": "{\"\\u00e9\":\"\\u00e9\",\"e\\u0301\":\"e\\u0301\"}",
+      "expected": {
+        "canonicalJson": "{\"e\u0301\":\"e\u0301\",\"\u00e9\":\"\u00e9\"}",
+        "digest": "sha256:2b8599359615227d4bffe298511d6d9520d9cf98c59adf9541e6e023e41ffe7b"
+      }
+    },
+    {
+      "id": "canonical-quotes-controls-slash",
+      "description": "Normal JSON escapes quotes, backslash, and controls; solidus is not escaped.",
+      "inputJson": "\"\\\"\\\\\\/\\b\\f\\n\\r\\t\\u0000\\u001f\"",
+      "expected": {
+        "canonicalJson": "\"\\\"\\\\/\\b\\f\\n\\r\\t\\u0000\\u001f\"",
+        "digest": "sha256:c5b64de3af33da6a91c5637925ef228492bc3a984f636ce99bc0e6621107f0f6"
+      }
+    },
+    {
+      "id": "canonical-utf8-line-separators",
+      "description": "U+2028, U+2029 and non-ASCII characters remain literal UTF-8 bytes.",
+      "inputJson": "\"caf\\u00e9 \\u4e2d \\ud83d\\ude00 \\u2028\\u2029\"",
+      "expected": {
+        "canonicalJson": "\"caf\u00e9 \u4e2d \ud83d\ude00 \u2028\u2029\"",
+        "digest": "sha256:0462264f344ca948171ae860dabf141bfc85bfd5bd1b52fdd5cf0734103fd235"
+      }
+    },
+    {
+      "id": "canonical-surrogate-pair",
+      "description": "A paired JSON surrogate escape becomes the supplementary character.",
+      "inputJson": "\"\\ud83d\\ude00\"",
+      "expected": {
+        "canonicalJson": "\"\ud83d\ude00\"",
+        "digest": "sha256:7a0c50b92434b015545fe93ab723db2d4b2cdd14a441405624a9ce8be29f1d5a"
+      }
+    },
+    {
+      "id": "canonical-unpaired-high-surrogate",
+      "description": "Reference JSON escaping preserves an unpaired high surrogate as lowercase ASCII escape.",
+      "inputJson": "\"\\uD800\"",
+      "expected": {
+        "canonicalJson": "\"\\ud800\"",
+        "digest": "sha256:8c0c59dd0d275aadcd462a5fe12eb352cbdfeaf961eae4f85a4660521df7d2f5"
+      }
+    },
+    {
+      "id": "canonical-unpaired-low-surrogate",
+      "description": "Reference JSON escaping preserves an unpaired low surrogate as lowercase ASCII escape.",
+      "inputJson": "\"\\uDC00\"",
+      "expected": {
+        "canonicalJson": "\"\\udc00\"",
+        "digest": "sha256:353c7370beca95e64c258c908edac60c2ab30d355ca1b5b7fc31c5bce4a4c65a"
+      }
+    },
+    {
+      "id": "canonical-unpaired-surrogate-key",
+      "description": "Unpaired surrogate key sorts by its reference code-point value.",
+      "inputJson": "{\"\\ue000\":2,\"\\ud800\":1}",
+      "expected": {
+        "canonicalJson": "{\"\\ud800\":1,\"\ue000\":2}",
+        "digest": "sha256:471a5b08a3005d5de84e554599660bc7922c8c7aebfe16684cc1354c6150f2ad"
+      }
+    },
+    {
+      "id": "canonical-negative-zero",
+      "description": "Exact reference binary64/JSON serialization; no additional whitespace or newline.",
+      "inputJson": "-0",
+      "expected": {
+        "canonicalJson": "0",
+        "digest": "sha256:5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+      }
+    },
+    {
+      "id": "canonical-negative-zero-fraction",
+      "description": "Exact reference binary64/JSON serialization; no additional whitespace or newline.",
+      "inputJson": "-0.0",
+      "expected": {
+        "canonicalJson": "0",
+        "digest": "sha256:5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+      }
+    },
+    {
+      "id": "canonical-small-fixed",
+      "description": "Exact reference binary64/JSON serialization; no additional whitespace or newline.",
+      "inputJson": "1e-6",
+      "expected": {
+        "canonicalJson": "0.000001",
+        "digest": "sha256:159fb29a827ad04b260aa6c8ab6d8637f8f2b38af5c4f3cb49d6a21205e040f8"
+      }
+    },
+    {
+      "id": "canonical-small-exponent",
+      "description": "Exact reference binary64/JSON serialization; no additional whitespace or newline.",
+      "inputJson": "1e-7",
+      "expected": {
+        "canonicalJson": "1e-7",
+        "digest": "sha256:5b33e02f2c5103a05d32f6ba9cb058294452bfbf393967f68bb30c1bdcbbab22"
+      }
+    },
+    {
+      "id": "canonical-large-fixed",
+      "description": "Exact reference binary64/JSON serialization; no additional whitespace or newline.",
+      "inputJson": "1e20",
+      "expected": {
+        "canonicalJson": "100000000000000000000",
+        "digest": "sha256:c344e9487bfbd5c4e03c9fb90d62a5dde5e00b54d55c46e9f4a803aea162b80c"
+      }
+    },
+    {
+      "id": "canonical-large-exponent",
+      "description": "Exact reference binary64/JSON serialization; no additional whitespace or newline.",
+      "inputJson": "1e21",
+      "expected": {
+        "canonicalJson": "1e+21",
+        "digest": "sha256:241c4643fa70b1dcde1205b71be4e3bebb17e9f880c8e1a33d0ead6c27271d3c"
+      }
+    },
+    {
+      "id": "canonical-binary64-rounding",
+      "description": "Exact reference binary64/JSON serialization; no additional whitespace or newline.",
+      "inputJson": "333333333.33333329",
+      "expected": {
+        "canonicalJson": "333333333.3333333",
+        "digest": "sha256:6bd9be1c141028789cc35db62f1b43e80d5d4ee24d6d542e775deb16799ff4c7"
+      }
+    },
+    {
+      "id": "canonical-binary64-integer-rounding",
+      "description": "Exact reference binary64/JSON serialization; no additional whitespace or newline.",
+      "inputJson": "9007199254740993",
+      "expected": {
+        "canonicalJson": "9007199254740992",
+        "digest": "sha256:c681da39d7273a6a24c15c9cac3a75526ff2ecf8ba4ee60346a0c70c8163bdb2"
+      }
+    },
+    {
+      "id": "canonical-binary64-decimal",
+      "description": "Exact reference binary64/JSON serialization; no additional whitespace or newline.",
+      "inputJson": "0.100000000000000005",
+      "expected": {
+        "canonicalJson": "0.1",
+        "digest": "sha256:14be4b45f18e0d8c67b4f719b5144eee88497e413709d11d85b096d8e2346310"
+      }
+    },
+    {
+      "id": "canonical-true",
+      "description": "Exact reference binary64/JSON serialization; no additional whitespace or newline.",
+      "inputJson": "true",
+      "expected": {
+        "canonicalJson": "true",
+        "digest": "sha256:b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b"
+      }
+    },
+    {
+      "id": "canonical-false",
+      "description": "Exact reference binary64/JSON serialization; no additional whitespace or newline.",
+      "inputJson": "false",
+      "expected": {
+        "canonicalJson": "false",
+        "digest": "sha256:fcbcf165908dd18a9e49f7ff27810176db8e9f63b4352213741664245224f8aa"
+      }
+    },
+    {
+      "id": "canonical-null",
+      "description": "Exact reference binary64/JSON serialization; no additional whitespace or newline.",
+      "inputJson": "null",
+      "expected": {
+        "canonicalJson": "null",
+        "digest": "sha256:74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+      }
+    },
+    {
+      "id": "canonical-empty-array",
+      "description": "Exact reference binary64/JSON serialization; no additional whitespace or newline.",
+      "inputJson": "[]",
+      "expected": {
+        "canonicalJson": "[]",
+        "digest": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      }
+    },
+    {
+      "id": "canonical-empty-object",
+      "description": "Exact reference binary64/JSON serialization; no additional whitespace or newline.",
+      "inputJson": "{}",
+      "expected": {
+        "canonicalJson": "{}",
+        "digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      }
+    },
+    {
+      "id": "canonical-positive-overflow",
+      "description": "Syntactically valid JSON number overflows binary64; canonicalization rejects the resulting non-finite value.",
+      "inputJson": "1e400",
+      "expected": {
+        "errorCategory": "OWA_INVALID_JSON_VALUE"
+      }
+    },
+    {
+      "id": "canonical-negative-overflow",
+      "description": "Syntactically valid JSON number overflows binary64; canonicalization rejects the resulting non-finite value.",
+      "inputJson": "-1e400",
+      "expected": {
+        "errorCategory": "OWA_INVALID_JSON_VALUE"
+      }
+    },
+    {
+      "id": "canonical-nested-overflow",
+      "description": "Syntactically valid JSON number overflows binary64; canonicalization rejects the resulting non-finite value.",
+      "inputJson": "{\"value\":1e400}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_JSON_VALUE"
+      }
+    }
+  ]
+}
