@@ -7,9 +7,27 @@ install, public artifact host, or production server is required. Node.js 22+ is
 required, as for the rest of the repository.
 
 ```sh
-npm test                  # existing offline unit/conformance tests only
-npm run test:integration  # real services; unconfigured cases explicitly skip
+npm test                          # offline unit/conformance suite, including auth
+npm run test:auth                 # token, HTTP, CLI, executable-startup auth tests
+npm run test:integration:harness  # offline request timeout/cancellation/cleanup checks
+npm run test:integration          # real services; unconfigured cases explicitly skip
 ```
+
+The live suite explicitly constructs `createArtifactServer` with
+`auth: { mode: 'dev' }` and binds it to `127.0.0.1`. Its direct-loopback,
+tokenless control requests are intentional storage interoperability coverage,
+not required-auth deployment coverage. It does not need `OWA_AUTH_SECRET` or
+`OWA_TOKEN`; it is not an invitation to expose a dev server through a proxy.
+The pre-existing offline HTTP conformance fixture also explicitly selects dev
+mode. Required-mode authorization, grant issuance, credential routing, and
+executable fail-closed startup have separate offline auth tests.
+
+Normal `npm start` / `node packages/server/src/index.js` now defaults to required
+auth, with a minimum 32-UTF-8-byte `OWA_AUTH_SECRET`; absent auth configuration
+fails startup, not open access. Only explicit `OWA_AUTH_MODE=dev`, `--dev`, or
+`npm run dev:server` selects the executable's loopback dev mode. See
+[the auth guide](auth.md) for token creation, capabilities, TLS/proxy setup,
+`OWA_PUBLIC_BASE_URL`, and the boundary between auth and public artifact serving.
 
 A skipped case is **not evidence of interoperability**. When all required
 variables for a case are present, bad credentials, unreachable services, failed
@@ -27,7 +45,8 @@ Partially configured cases skip with the names of the missing variables.
 Each enabled case starts an ephemeral artifactd on loopback with the real S3 blob
 adapter and fresh local metadata, then tests:
 
-1. Commit before upload fails without creating a site/release.
+1. Commit before upload returns HTTP 500 with the fixed `OWA_BLOB_MISSING` code,
+   without creating a site/release or exposing provider error bodies.
 2. HTTP plan returns three missing blobs for four files (two files share bytes).
 3. The publisher follows the returned SigV4 PUT URLs **directly to storage**.
    Assertions check bucket placement in the path or hostname, signing parameters,
@@ -43,9 +62,14 @@ adapter and fresh local metadata, then tests:
    Earlier remote release records must remain unchanged after later commits.
 
 OWA digest semantics are unchanged: the artifact identity is still
-`sha256(UTF8(canonical-json(manifest)))`. No manifest, release, HTTP protocol, or
-canonicalization changes are made by this suite. Provider setup stays here,
-outside the OWA specification.
+`sha256(UTF8(canonical-json(manifest)))`. This suite does not change manifest
+schema, release records, canonicalization, or direct-to-storage publishing.
+The separate [auth HTTP overlay](auth.md) does add bearer checks, scoped local
+filesystem grant fields, and safe error codes; these are wire additions, not
+artifact/spec changes. S3/R2 grants retain their storage-only SigV4 shape, without
+an OWA bearer marker or forwarded OWA Authorization header. Storage services do
+not interpret OWA capabilities. Provider setup stays here, outside the portable
+OWA specification.
 
 ## Exact environment variables
 
@@ -255,9 +279,13 @@ No dependency install step is needed.
   policy for `owa-integration/` on the dedicated test bucket. Live requests can
   incur charges.
 - Metadata remains local by design. These tests do not claim distributed metadata,
-  public/browser CORS behavior, production security hardening, multipart uploads,
-  or compatibility with providers/addressing combinations not actually run.
+  required-auth/TLS deployment validation, public/browser CORS behavior,
+  production security hardening, multipart uploads, or compatibility with
+  providers/addressing combinations not actually run. The auth layer does not
+  implement issue 3 public-asset/service-worker isolation or tenant-private CAS.
+- The offline `test:integration:harness` checks cancellation unwinding before
+  cleanup, fresh cleanup deadlines, fetch restoration, and safe network errors.
+  It needs no live endpoint and is separate from `npm test` and the live matrix.
 - Record Node and MinIO versions, which matrix cases passed/skipped, and any
   inability to obtain service binaries or credentials with the test evidence.
-  Passing conformance or test-harness checks alone is not live MinIO/R2 proof.
- checks alone is not live MinIO/R2 proof.
+  Passing conformance, auth, or test-harness checks alone is not live MinIO/R2 proof.

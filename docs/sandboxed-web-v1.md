@@ -4,9 +4,11 @@
 
 This named host response policy is separate from the [OWA v0.2 artifact
 contract](spec-v0.2.md). Its [threat model](sandboxed-web-v1-threat-model.md) was
-written before implementation. The key words MUST, MUST NOT, SHOULD and MAY in
-this document describe this profile, not new manifest fields or publishing
-operations.
+written before the standalone profile implementation. As of the 2026-09-20
+composition onto merged auth main (`a6cbc08`), the reference gateway combines
+this response policy with the separate [HTTP capability auth overlay](auth.md).
+The key words MUST, MUST NOT, SHOULD and MAY in this document describe this
+profile, not new manifest fields or publishing operations.
 
 The profile is **static, deny-by-default and script-disabled**. It intentionally
 breaks interactive applications and even same-artifact external assets. Inline
@@ -60,8 +62,10 @@ need not import JavaScript: this document is the independent wire contract.
 HTTP header names are case-insensitive. Ordinary framing headers may be added;
 they do not replace these policy fields.
 
-The reference server installs the baseline before route dispatch and its error
-handler. Asset GET and HEAD share status, type, disposition, length and ETag;
+The reference server installs the baseline before route dispatch, auth checks
+and its error handler. Auth failures retain the profile headers, `no-store` and,
+for 401, the existing `WWW-Authenticate: Bearer realm="owa"` challenge. Asset GET
+and HEAD share status, type, disposition, length and ETag;
 HEAD has no response body. Its current GET `/health` is **200 JSON**, while a
 successful local signed PUT upload is **204**. This does not introduce a HEAD
 health/control endpoint or change baseline method routing. Parser-level failures
@@ -280,16 +284,18 @@ deployment requirements, not capabilities enforced by the current prototype.
 (the hostname differs). This alone does not establish independent cookie jars
 or all browser "site" boundaries. The prototype also accepts `?site=a` and
 `?site=b` on the **same** origin, and dispatches control/API routes on **every**
-host before artifact routing. `.localhost` host selection takes precedence over
-the query selector. Neither the CSP nor the profile marker disables those routes.
-Do not describe the reference development server as enforcing content/control
-separation or production multi-tenant isolation.
+host before artifact routing. Those routes have the separate auth overlay's
+capability and identifier checks; they are not removed from content hosts.
+Artifact GET/HEAD and health remain public. `.localhost` host selection takes
+precedence over the query selector. Neither the CSP nor the profile marker
+disables those routes. Do not describe the reference development server as
+enforcing content/control separation or production multi-tenant isolation.
 
 The minimum future architectural work is explicit Host-to-site binding, a
 content-only listener/origin separated from control/admin/API listeners, and
-removal of the shared-origin `?site=` selector on content delivery. This issue
-documents that requirement; it does **not** implement host management,
-authentication, authorization or a new routing architecture.
+removal of the shared-origin `?site=` selector on content delivery. This profile
+documents that requirement; composing it with the existing auth overlay does
+**not** implement host management or a new routing architecture.
 
 ## Raw HTTP request targets and the unchanged resolver
 
@@ -302,13 +308,17 @@ headers. It splits at the first **literal** `?` to obtain the raw path. Encoded
 query/fragment delimiters. Repeated leading slashes remain resolver input, not a
 new artifact host selector.
 
-Before an artifact-serving metadata lookup, the selected site value MUST be a
-nonempty single component: not `.` or `..`, and containing no `/`, backslash or
-NUL. Invalid selectors return 404 with the profile headers before the metadata
-store is called. Apply this check to the selected Host/query value, with no
-additional decoding: query parameters have already been decoded once. A literal
-percent-looking metadata key is not a path separator. This is a serving-boundary
-check, not a new slug schema, domain manager, or authentication system.
+Before an artifact-serving metadata lookup, the selected site value MUST satisfy
+the existing auth `isSiteScope` grammar: 1–63 characters, starting with a lowercase
+ASCII letter or digit, followed only by lowercase ASCII letters, digits, `_` or
+`-` (`[a-z0-9][a-z0-9_-]{0,62}`, whole string). Uppercase, Unicode, separators,
+controls and literal percent-looking names are rejected, not repaired. Invalid
+selectors return 404 with the profile headers before the metadata store is called.
+Apply this check to the selected Host/query value with no additional decoding:
+query parameters have already been decoded once. Thus `?site=%61` selects `a`,
+but `?site=%2561` is rejected rather than decoded a second time. This host scope
+rule is distinct from the unchanged artifact-path grammar; it is not a new
+manifest field or private-artifact access control.
 
 The adapter passes the raw artifact path to the **unchanged** core `resolveRequestPath`.
 The [v0.2 algorithm](spec-v0.2.md#safe-request-path-resolution) still performs one
@@ -321,19 +331,22 @@ fallback. `/a%3Fb%23c.txt` can address literal artifact path `/a?b#c.txt`;
 **Control routing retains the baseline WHATWG-parsed pathname.** For example,
 GET `/discard/../health` still dispatches to GET `/health`. Publish, upload,
 activate and release-list route dispatch is not replaced with a raw-path
-publishing protocol. This security change applies to gateway artifact resolution;
-it is not a claim that every control-route alias is newly rejected. The baseline
-control-plane selectors also lack general identifier confinement (for example,
-an encoded slash can reach a metadata lookup); correcting that separate
-control-plane boundary is not implemented here. Do not expose this unauthenticated
-prototype's control endpoints to untrusted users. Content-only origin separation
-and the separately reviewed control-plane boundary are still required.
+publishing protocol. The raw-path hook applies to gateway artifact resolution;
+it is not a claim that every control-route alias is newly rejected. The composed
+control plane already validates decoded site scopes against `isSiteScope` and
+activation release IDs against `r_` plus 20 lowercase hexadecimal digits, and
+requires the [auth overlay's capabilities](auth.md#capability-matrix) before
+protected storage work. Encoded slashes and percent-looking scopes fail the site
+grammar, rather than reaching metadata as unconstrained selectors. Required auth
+remains the default; tokenless control access is only explicit direct-loopback
+dev mode. Content-only origin separation is still future architectural work.
 
-Storage/metadata remains trusted. A malicious stored site index, release ID or
-blob digest can make the existing filesystem adapter resolve outside its intended
-namespace; the serving selector check is not a malicious-storage sandbox and
-cannot undo an index's internal lookup. Valid manifest publication already
-rejects malformed blob digests. No storage redesign is hidden in this profile.
+Storage/metadata remains trusted. The composed gateway checks returned site
+records for the requested slug and `s_` plus 20 lowercase hexadecimal digits,
+and active release IDs before retrieval. These checks do not undo a malicious
+index's internal lookup or validate all stored manifest/blob metadata; tampered
+storage is not made safe. Valid manifest publication already rejects malformed
+blob digests. No storage redesign is hidden in this profile.
 
 The 44 published portable request vectors remain unchanged and are replayed as
 **direct resolver arguments**, not as full HTTP targets. Direct arguments do not

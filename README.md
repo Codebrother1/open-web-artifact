@@ -22,6 +22,7 @@ The prototype now proves:
 - ORAS-compatible OCI layouts
 - HTTP serving gateway
 - local and remote CLI workflows
+- required-by-default, site- and capability-scoped HTTP bearer authentication
 - conformance tests, including the published AWS SigV4 test vector
 
 Everything in the reference implementation currently uses Node.js built-ins. There are **zero third-party runtime dependencies**.
@@ -62,7 +63,11 @@ The important separation is that **file bytes do not need to pass through the ar
 
 ## Quick start: local mode
 
-Requires Node.js 22+.
+Requires Node.js 22+. This is **explicit local development**, not a deployment
+configuration. The local CLI uses host filesystem permissions, outside HTTP auth;
+`npm run dev:server` opts into tokenless, direct-loopback-only HTTP operations.
+It always binds `127.0.0.1`, regardless of `HOST`. Never expose dev mode through a
+proxy or use it in production.
 
 ```bash
 npm test
@@ -91,13 +96,7 @@ npm run artifact -- activate <release-id> --site hello
 
 ## Remote two-phase publishing
 
-Start the server:
-
-```bash
-npm run dev:server
-```
-
-Then publish through its HTTP protocol:
+For the local development server above:
 
 ```bash
 npm run artifact -- publish demo \
@@ -109,17 +108,69 @@ The client performs:
 
 ```text
 1. pack directory + hash files
-2. POST /publish/plan
+2. POST /v1/sites/<site>/publish/plan
 3. upload only missing blobs using returned PUT URLs
-4. POST /publish/commit with the manifest only
+4. POST /v1/sites/<site>/publish/commit with manifest/digest (not file bytes)
 5. server verifies all blobs exist and creates an immutable release
 ```
 
-Publishing the identical directory again should upload **zero** blobs.
+Publishing the identical directory again should upload **zero** blobs. Commit
+still activates by default. Remote `--no-activate` sends literal `activate: false`
+and preserves the existing active pointer.
+
+### Authenticated deployment workflow
+
+`npm start` and `node packages/server/src/index.js` default to required auth, even
+when no auth environment variables are set. Missing or short `OWA_AUTH_SECRET`
+fails startup before storage/listening; it never silently enables dev mode.
+
+Have your approved secret manager inject `OWA_AUTH_SECRET` into the server
+process. It must be at least 32 UTF-8 bytes; use a high-entropy key generated from
+at least 32 random bytes, unique to this deployment. Then, behind a trusted TLS
+edge:
+
+```bash
+export OWA_AUTH_MODE=required
+export OWA_PUBLIC_BASE_URL=https://artifacts.example.com
+npm start
+```
+
+The listener defaults to `HOST=127.0.0.1` in required mode too. Set `HOST` only as
+needed for a protected backend reachable by the trusted TLS edge. Set
+`OWA_PUBLIC_BASE_URL` to that edge's public origin so filesystem upload grants
+use the same HTTPS origin as the CLI; forwarding headers are not used to derive
+it. TLS and secret-safe proxy logging are operator responsibilities.
+
+Operators create short-lived tokens with the `createToken` library, not an HTTP
+mint endpoint or CLI mint command. See [the auth guide](docs/auth.md) for an
+in-memory creation example, exact wire format, capability matrix, and deployment
+limits. Provision a token for site `hello` with `plan`, `upload`, and `commit`
+through approved secret injection as `OWA_TOKEN` in the publisher process; do
+not put tokens in command arguments, plaintext files, URLs, or terminal output.
+Then run:
+
+```bash
+npm run artifact -- publish demo \
+  --site hello \
+  --server https://artifacts.example.com \
+  --no-activate
+```
+
+Omit `--no-activate` only with an additional `activate` capability. A token with
+literally only `commit` cannot run the CLI's plan/upload workflow. Release listing
+requires `read`; explicit activation requires `activate`. The client sends OWA
+credentials only to control requests and validated, marked same-origin filesystem
+uploads, never to ordinary S3/R2 presigned uploads (even same-origin ones).
+
+This auth layer adds HTTP authorization checks, local upload-grant fields, and
+safe error codes. It does **not** change the manifest schema, artifact identity,
+immutable release format, or direct-to-object-storage publishing model.
 
 ## S3 / Cloudflare R2 backend
 
-Configure `artifactd` with environment variables:
+Configure `artifactd` with environment variables. The following is a local dev
+example; inject storage credentials using your secret manager. For a deployment,
+use the required-auth/TLS setup above and `npm start`, not `dev:server`.
 
 ```bash
 export OWA_STORAGE=s3
@@ -146,9 +197,13 @@ The S3 signer is implemented directly with Node's cryptographic primitives and i
 
 ### Live storage integration tests
 
-`npm test` remains the offline unit/conformance suite. Run the separate live-service
-matrix with `npm run test:integration`. It covers MinIO path-style, optional MinIO
-virtual-host addressing, and Cloudflare R2 path-style. Cases skip when their
+`npm test` is the offline unit/conformance suite, including auth. Use
+`npm run test:auth` for just auth coverage and `npm run test:integration:harness`
+for offline live-harness checks. Run the separate live-service matrix with
+`npm run test:integration`. Its loopback server explicitly selects dev auth; it
+is storage interoperability coverage, not live auth/TLS validation. It covers
+MinIO path-style, optional MinIO virtual-host addressing, and Cloudflare R2
+path-style. Cases skip when their
 explicit test endpoint or credentials are absent; configured service failures fail.
 
 See [the integration test guide](docs/integration-tests.md) for exact environment
@@ -214,31 +269,55 @@ docs/
   spec-v0.1.md
   spec-v0.2.md
   manifest.schema.json
+  auth.md
+  integration-tests.md
   test-vectors/
 ```
 
 ## Security / production status
 
-This is a protocol prototype, **not a production multi-tenant hosting service yet**. v0.2 intentionally does not include user authentication, tenant authorization, quotas, garbage collection, custom-domain verification, or malware moderation.
+This is a protocol prototype, **not a production multi-tenant hosting service yet**.
+The [HTTP auth overlay](docs/auth.md) enforces exact site/capability boundaries
+for publishing, activation, and release inspection. It remains required by default;
+only explicit direct-loopback dev mode is tokenless. Tokens do not provide full
+tenant/storage isolation, per-token revocation, or replay prevention. Signing-key
+rotation invalidates all tokens; deployment keys must not be reused.
 
-The gateway applies [`sandboxed-web-v1`](docs/sandboxed-web-v1.md), a deny-by-default **static-preview** response policy. It deliberately disables all JavaScript (inline, external and same-artifact), external stylesheets, and network images/fonts/media; only inline CSS and `data:` images are allowed. Existing interactive sites and remote-asset-dependent pages will not work as ordinary web apps. Artifact bytes and identity are unchanged; unknown or invalid MIME metadata is served as an octet-stream attachment. Every application response carries the profile's security, no-store and advisory noindex headers, including assets, control responses and errors. Public and unlisted URLs remain accessible; this is neither authentication nor sanitization.
+The gateway also applies [`sandboxed-web-v1`](docs/sandboxed-web-v1.md), a
+**script-disabled static-preview** response policy: bare CSP sandbox, deny-by-default
+sources, inline CSS and data images only, no-store and advisory noindex headers.
+All application responses receive the profile, including auth denials, control
+JSON, health, uploads, errors and artifact GET/HEAD. Auth challenges and capabilities
+are preserved; unknown/invalid artifact MIME is an octet-stream attachment without
+rewriting bytes. The profile does not make interactive apps work or enable scripts.
 
-A production deployment of this profile requires clean, cookieless, content-only one-site origins separate from control/admin/API services. **The prototype does not enforce that topology:** `.localhost` hostnames have distinct URL origins, but `?site=` can share an origin and API routes are exposed on every host. No-store does not erase existing browser caches, service workers or saved copies. This response policy is not a claim that the full platform is secure.
+Health and artifact GET/HEAD remain public; `read` protects control-plane metadata,
+not public artifact access. Shared CAS deduplication is not tenant-private storage,
+and commit still checks blob existence rather than ownership. Local operator CLI
+access remains gated by filesystem permissions; storage and metadata are trusted.
 
-Read the [pre-implementation threat model](docs/sandboxed-web-v1-threat-model.md), the [exact profile and deployment contract](docs/sandboxed-web-v1.md), and the [optional manual browser-validation guide](docs/sandboxed-web-v1-browser-validation.md). The deterministic tests verify HTTP policy and byte preservation, not browser enforcement; no browser automation is implemented and the manual report is initially **not run**.
+A production deployment needs clean, cookieless, content-only per-site origins
+separate from control/admin/API services. **The prototype does not enforce that
+topology:** `?site=` can share an origin and protected APIs exist on all hosts.
+No-store does not erase existing service workers, caches or saved copies. TLS,
+secret custody, safe proxy logging, quotas, garbage collection and broader isolation
+remain operator responsibilities or future work.
 
-The remaining production controls should be added as explicit protocol/security layers rather than hidden assumptions in the storage implementation.
+Read the [threat model](docs/sandboxed-web-v1-threat-model.md),
+[profile contract](docs/sandboxed-web-v1.md), [auth guide](docs/auth.md), and
+[optional browser guide](docs/sandboxed-web-v1-browser-validation.md).
+Combined deterministic tests prove HTTP/auth policy and byte preservation, not
+browser enforcement; browser validation remains **not run**.
 
 ## Next milestones
 
 1. Formal canonicalization compatibility suite across at least two languages.
-2. Live integration tests against R2 and MinIO/S3.
-3. Authentication and capability-scoped publish tokens.
-4. Production content/control origin isolation and separately reviewed interactive security profiles.
-5. Garbage collection and retention semantics for unreferenced blobs.
-6. OCI registry import/export convenience commands on top of ORAS.
-7. MCP adapter as a thin client over the HTTP protocol.
-8. Optional static capabilities (data/forms/secret proxy) only after the base lifecycle is stable.
+2. Broader live integration evidence against R2 and MinIO/S3.
+3. Production content/control origin isolation and separately reviewed interactive security profiles.
+4. Garbage collection and retention semantics for unreferenced blobs.
+5. OCI registry import/export convenience commands on top of ORAS.
+6. MCP adapter as a thin client over the HTTP protocol.
+7. Optional static capabilities (data/forms/secret proxy) only after the base lifecycle is stable.
 
 ## License
 

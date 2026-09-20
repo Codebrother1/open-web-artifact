@@ -27,8 +27,11 @@ parent-domain secrets. This topology is required by the full profile, but is
 supply that separation; this guide adds no routing architecture.
 
 The commands below use an isolated local prototype for response-policy
-observation only. Bind or firewall it to an isolated machine/loopback environment;
-the normal development command is not a production access-control boundary.
+observation only. `npm run dev:server` explicitly selects `--dev` and binds
+`127.0.0.1`, regardless of `HOST`. Keep it direct-loopback-only; never expose dev
+mode through a proxy. Normal startup instead requires auth configuration; see
+[auth startup and deployment](auth.md#startup-and-deployment). Neither mode
+implements the content-only topology above.
 Record browser name, full version/build, engine, OS, server revision, exact test
 URL, origin setup, proxy settings and whether a controlled network endpoint was
 used. Repeat at least once in each browser/version the operator intends to
@@ -46,10 +49,12 @@ directory packer's extension-based MIME inference.
 This optional setup uses Node built-ins and existing repository publication/store
 APIs only. It writes generated files and local store state **outside the
 repository**, publishes through the existing local `commitManifest` operation,
-and then uses the existing development server. It does not create a new protocol,
-modify fixtures/schema/code, or import the security-profile helper to generate
-expected results. Run the shell commands in one terminal so the environment
-variables are retained. The snippet itself has not been run as browser evidence.
+and then uses the explicit local development server. Direct `commitManifest` and
+store access are trusted-operator paths governed by filesystem permissions, not
+HTTP bearer authorization. This setup does not create a new protocol, modify
+fixtures/schema/code, or import the security-profile helper to generate expected
+results. Run the shell commands in one terminal so the environment variables are
+retained. The snippet itself has not been run as browser evidence.
 
 ```bash
 export OWA_BROWSER_WORK="$(mktemp -d "${TMPDIR:-/tmp}/owa-browser-review.XXXXXX")"
@@ -128,11 +133,20 @@ public host. Changing `PORT` also changes all example URLs and the origin.
 selectors and relative asset URLs need their own selector. Do not use it to
 claim isolation. `a.localhost` and `b.localhost` are distinct URL origins, not an
 automatic guarantee about all cookie/site boundaries. API routes remain reachable
-on every prototype host. The local example is not a production-topology test.
+on every prototype host, with the auth overlay's identifier and authorization
+checks (or explicit direct-loopback dev checks), not content-only separation.
+The local example is not a production-topology test.
 
 ## 3. Establish HTTP evidence first (not browser proof)
 
-In another terminal, inspect responses independently of browser behavior:
+In another terminal, inspect responses independently of browser behavior.
+Artifact GET/HEAD and GET `/health` below are public in both required and dev
+modes; no auth tokens are needed. Successful protected control probes instead
+need a valid bearer with the required site/capabilities or explicitly selected
+direct-loopback dev mode; see the [capability matrix](auth.md#capability-matrix).
+In required mode, a missing-bearer control response should retain the profile
+headers, `no-store` and the 401 `WWW-Authenticate` challenge. Do not record or
+paste bearer credentials into the report.
 
 ```bash
 curl --noproxy '*' --resolve security.localhost:7331:127.0.0.1 -sS -D - -o /dev/null http://security.localhost:7331/

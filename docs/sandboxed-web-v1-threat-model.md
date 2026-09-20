@@ -1,26 +1,36 @@
 # sandboxed-web-v1: threat model before implementation
 
-This threat model is recorded before implementing the profile. The target is an
-untrusted, agent-generated static HTML document and its stored assets, not a
-server-side application or an authenticated private-content system. The author
-can choose every byte, path and manifest media type, including misleading types,
-malicious markup, CSS, JavaScript, SVG and links. The host controls HTTP response
-policy and storage access; the browser is expected to enforce CSP and sandboxing.
+This threat model was recorded before the standalone profile implementation.
+The target is an untrusted, agent-generated static HTML document and its stored
+assets, not a server-side application or an authenticated private-content system.
+The author can choose every byte, path and manifest media type, including
+misleading types, malicious markup, CSS, JavaScript, SVG and links. The host
+controls HTTP response policy and storage access; the browser is expected to
+enforce CSP and sandboxing.
+
+**Composition note (2026-09-20):** the profile is now composed onto merged auth
+main (`a6cbc08`). The separate [HTTP capability auth overlay](auth.md) protects
+control routes; artifact GET/HEAD and health remain public. This note updates the
+current deployment assumptions, not the chronology of the initial threat model
+or a claim that auth design preceded the standalone profile.
 
 ## Trust and deployment boundaries
 
 - Trust the host, its metadata/storage, the TLS connection/edge, and a modern
   conforming browser. The artifact author is untrusted. This does not address
   browser parser/decoder vulnerabilities, malicious extensions or a compromised
-  host. No attacker-supplied code is executed on the server.
+  host. No attacker-supplied code is executed on the server. The composed control
+  plane also relies on [auth's operator/key/clock assumptions](auth.md#limits-and-trust-boundary);
+  identifier checks do not make pre-existing malicious metadata trustworthy.
 - Use a fresh, cookieless content origin for each site and a separate
   control-plane/admin/API origin, preferably on a separate registrable domain.
   Do not set parent-domain credentials on content hosts. One site per hostname
   gives URL-origin separation, not automatically separate cookie/site boundaries.
 - The current reference gateway does NOT enforce this deployment topology.
   `a.localhost` and `b.localhost` are distinct URL origins, but the `?site=` fallback
-  multiplexes sites on one origin and control routes exist on every host. This is
-  a prototype/development convenience, not an isolation guarantee.
+  multiplexes sites on one origin and control routes exist on every host. Those
+  routes are now auth-protected and identifier-checked, not absent from content
+  hosts. This is a prototype/development convenience, not an isolation guarantee.
 - Bare CSP `sandbox` gives protected documents an opaque origin. It does not
   rewrite the request URL, strip incoming cookies, create cookie jars, make all
   requests credential-free, or remove APIs from an origin. Headers cannot repair
@@ -64,8 +74,10 @@ become immutable cache keys merely because their underlying blobs are hashed.
 
 The minimum future architectural change for stronger isolation is a content-only
 listener/origin with an explicit host-to-site binding and no shared-origin query
-selector, separate from control/admin APIs. This issue documents that proposal;
-it does not implement origin management, authentication, or a new routing model.
+selector, separate from control/admin APIs. This profile documents that proposal;
+it does not implement origin management or a new routing model. The separately
+merged auth overlay protects the existing control plane, not private artifact
+retrieval or this proposed content-only topology.
 
 ## Evidence requirements
 

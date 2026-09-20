@@ -105,7 +105,7 @@ async function withGateway(run, { metadata: suppliedMetadata } = {}) {
   const metadata = suppliedMetadata ?? new FilesystemMetadataStore(root);
   let server;
   try {
-    server = createArtifactServer({ blobs, metadata, uploadSecret: 'fixed-local-security-test-secret' });
+    server = createArtifactServer({ blobs, metadata, uploadSecret: 'fixed-local-security-test-secret', auth: { mode: 'dev' } });
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     return await run({ root, blobs, metadata, server, port: server.address().port });
@@ -118,9 +118,9 @@ async function withGateway(run, { metadata: suppliedMetadata } = {}) {
   }
 }
 
-async function seed(env, artifact, { slug = 'security', releaseId = 'r_fixture', storeBlobs = true } = {}) {
+async function seed(env, artifact, { slug = 'security', releaseId = `r_${'1'.repeat(20)}`, storeBlobs = true } = {}) {
   if (storeBlobs) for (const [hash, bytes] of artifact.blobs) await env.blobs.put(hash, bytes);
-  const site = { id: `s_${slug}`, slug, activeReleaseId: releaseId, createdAt: FIXED_TIME };
+  const site = { id: `s_${digest(Buffer.from(slug)).slice(7, 27)}`, slug, activeReleaseId: releaseId, createdAt: FIXED_TIME };
   const release = { id: releaseId, artifactDigest: artifact.artifactDigest, createdAt: FIXED_TIME, manifest: artifact.manifest };
   await env.metadata.saveSite(site);
   await env.metadata.saveRelease(site.id, release);
@@ -316,30 +316,30 @@ test('HTTP target framing, query selection, host selection, and baseline control
 
 test('gateway site selectors cannot traverse the filesystem metadata namespace', async () => {
   await withGateway(async env => {
-    await seed(env, makeArtifact(fixture.pathFiles));
+    const { site } = await seed(env, makeArtifact(fixture.pathFiles));
     const getSite = env.metadata.getSite.bind(env.metadata); let lookups = 0;
     env.metadata.getSite = async slug => { lookups++; return getSite(slug); };
-    for (const query of ['../sites/s_security/site', '..%2Fsites%2Fs_security%2Fsite',
-      '..%5Csites%5Cs_security%5Csite', '.', '..', '%00', 'security%00']) {
+    for (const query of [`../sites/${site.id}/site`, `..%2Fsites%2F${site.id}%2Fsite`,
+      `..%5Csites%5C${site.id}%5Csite`, '.', '..', '%00', 'security%00']) {
       await assertErrorPair(env, `/?site=${query}`, 404, {
         headers: { host: 'localhost' }, error: 'site or active release not found'
       });
     }
-    for (const host of ['../sites/s_security/site.localhost', '..localhost', '...localhost']) {
+    for (const host of [`../sites/${site.id}/site.localhost`, '..localhost', '...localhost']) {
       await assertErrorPair(env, '/', 404, { headers: { host }, error: 'site or active release not found' });
     }
     assert.equal(lookups, 0, 'unsafe query/Host selectors are rejected before getSite, not after a filesystem read');
   });
 });
 
-test('gateway selector validation does not recursively decode percent-looking metadata keys', async () => {
+test('gateway retains the auth boundary: Unicode and percent-looking selectors are rejected before metadata', async () => {
   const seen = [];
   const metadata = { async getSite(slug) { seen.push(slug); return null; } };
   await withGateway(async env => {
     await assertErrorPair(env, '/?site=%252e%252e%252fsafe', 404, { headers: { host: 'localhost' } });
     await assertErrorPair(env, '/?site=caf%C3%A9', 404, { headers: { host: 'localhost' } });
   }, { metadata });
-  assert.deepEqual(seen, ['%2e%2e%2fsafe', '%2e%2e%2fsafe', 'café', 'café']);
+  assert.deepEqual(seen, [], 'the stronger shared site-scope grammar must not be broadened by the profile');
 });
 
 test('GET/HEAD errors 404, 410 and 500 receive the SAME profile and no-store baseline', async t => {
@@ -365,7 +365,7 @@ test('GET/HEAD errors 404, 410 and 500 receive the SAME profile and no-store bas
   });
 });
 
-test('unauthenticated health and plan/upload/commit/activate/list control responses all carry policy', async t => {
+test('explicit loopback dev health and plan/upload/commit/activate/list responses all carry policy', async t => {
   const artifact = makeArtifact([
     { path: '/index.html', ...fixture.samples.html },
     { path: '/probe.js', ...fixture.samples.javascript }
@@ -376,7 +376,7 @@ test('unauthenticated health and plan/upload/commit/activate/list control respon
     assert.equal(health.status, 200);
     assertPolicy(health, 'health');
     const planBody = { manifest: artifact.manifest, artifactDigest: artifact.artifactDigest };
-    // This is the existing publishing protocol, with no issue-2 authentication.
+    // The legacy tokenless flow opts into loopback dev explicitly; required mode stays fail-closed.
     const planResponse = await jsonRequest(env, '/v1/sites/security/publish/plan', planBody);
     assert.equal(planResponse.status, 200);
     assertPolicy(planResponse, 'plan');
@@ -468,19 +468,21 @@ test('no-store prevents a compliant cache from hiding active-release, visibility
   const unlistedB = makeArtifact([{ path: '/index.html', text: '<h1>same bytes</h1>\n', mediaType: 'text/html' }], { visibility: 'unlisted' });
   const publicC = makeArtifact([{ path: '/index.html', text: '<h1>new activation</h1>\n', mediaType: 'text/html' }]);
   const artifacts = [publicA, unlistedB, publicC];
-  const releases = new Map(artifacts.map((artifact, index) => [`r_${index}`, deepFreeze({
-    id: `r_${index}`, artifactDigest: artifact.artifactDigest, manifest: artifact.manifest, createdAt: FIXED_TIME
+  const releaseId = index => `r_${String(index).padStart(20, '0')}`;
+  const siteId = `s_${'c'.repeat(20)}`;
+  const releases = new Map(artifacts.map((artifact, index) => [releaseId(index), deepFreeze({
+    id: releaseId(index), artifactDigest: artifact.artifactDigest, manifest: artifact.manifest, createdAt: FIXED_TIME
   })]));
   const before = [...releases.values()].map(release => canonicalJson(release));
   assert.notEqual(publicA.artifactDigest, unlistedB.artifactDigest, 'visibility belongs to a different immutable manifest');
   assert.equal(publicA.manifest.files[0].digest, unlistedB.manifest.files[0].digest, 'unchanged bytes deliberately share an ETag');
-  let activeReleaseId = 'r_0', siteAvailable = true, metadataReads = 0;
+  let activeReleaseId = releaseId(0), siteAvailable = true, metadataReads = 0;
   const metadata = {
     async getSite(slug) {
       metadataReads++;
-      return siteAvailable && slug === 'security' ? { id: 's_cache', slug, activeReleaseId, createdAt: FIXED_TIME } : null;
+      return siteAvailable && slug === 'security' ? { id: siteId, slug, activeReleaseId, createdAt: FIXED_TIME } : null;
     },
-    async getRelease(siteId, releaseId) { return siteId === 's_cache' ? releases.get(releaseId) ?? null : null; }
+    async getRelease(requestedSiteId, requestedReleaseId) { return requestedSiteId === siteId ? releases.get(requestedReleaseId) ?? null : null; }
   };
   await withGateway(async env => {
     for (const artifact of artifacts) for (const [hash, bytes] of artifact.blobs) await env.blobs.put(hash, bytes);
@@ -501,13 +503,13 @@ test('no-store prevents a compliant cache from hiding active-release, visibility
       assert.equal(first.status, 200);
       assertPolicy(first, 'public A');
       assert.deepEqual(first.body, publicA.blobs.get(publicA.manifest.files[0].digest));
-      activeReleaseId = 'r_1';
+      activeReleaseId = releaseId(1);
       const second = await compliantCacheGet({ 'if-none-match': first.headers.etag });
       assert.equal(second.status, 200, 'unlisted remains public-by-URL; conditional request is not 304');
       assertPolicy(second, 'unlisted B');
       assert.equal(second.headers.etag, first.headers.etag);
       assert.equal(networkRequests, 2, 'same-byte visibility transition must reach server');
-      activeReleaseId = 'r_2';
+      activeReleaseId = releaseId(2);
       const third = await compliantCacheGet({ 'if-none-match': first.headers.etag, 'if-modified-since': 'Fri, 01 Jan 2100 00:00:00 GMT' });
       assert.equal(third.status, 200);
       assertPolicy(third, 'public C');
