@@ -1,0 +1,202 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { once } from 'node:events';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { packDirectory, publishDirectory } from '../../core/src/index.js';
+import { artifactDigest, canonicalJson, sha256 } from '../../spec/src/index.js';
+import { FilesystemBlobStore, FilesystemMetadataStore } from '../../storage-filesystem/src/index.js';
+import { S3BlobStore } from '../../storage-s3/src/index.js';
+import { createArtifactServer } from '../../server/src/index.js';
+import { withRequestLimits } from './requests.js';
+
+// These explicit opt-in variables never fall back to artifactd's OWA_S3_* settings.
+const cases = [
+  { name: 'MinIO path-style', provider: 'MINIO', style: 'path', endpoint: 'ENDPOINT', region: 'us-east-1' },
+  { name: 'MinIO virtual-host', provider: 'MINIO', style: 'virtual', endpoint: 'VIRTUAL_ENDPOINT', region: 'us-east-1' },
+  { name: 'Cloudflare R2 path-style', provider: 'R2', style: 'path', endpoint: 'ENDPOINT', region: 'auto' }
+];
+
+function configuration(entry) {
+  const prefix = `OWA_TEST_${entry.provider}_`;
+  const required = [entry.endpoint, 'BUCKET', 'ACCESS_KEY_ID', 'SECRET_ACCESS_KEY'];
+  const missing = required.filter(key => !process.env[prefix + key]);
+  if (missing.length) return { skip: `set ${missing.map(key => prefix + key).join(', ')}` };
+  return { options: {
+    endpoint: process.env[prefix + entry.endpoint],
+    bucket: process.env[prefix + 'BUCKET'],
+    region: process.env[prefix + 'REGION'] || entry.region,
+    accessKeyId: process.env[prefix + 'ACCESS_KEY_ID'],
+    secretAccessKey: process.env[prefix + 'SECRET_ACCESS_KEY'],
+    sessionToken: process.env[prefix + 'SESSION_TOKEN'] || null,
+    addressingStyle: entry.style,
+    prefix: `owa-integration/${entry.provider.toLowerCase()}/${entry.style}/${randomUUID()}`
+  } };
+}
+
+function validateEndpoint(options) {
+  let url;
+  try { url = new URL(options.endpoint); } catch { throw new Error('Integration endpoint must be an absolute HTTP(S) URL'); }
+  assert.ok(['http:', 'https:'].includes(url.protocol), 'Integration endpoint must use HTTP(S)');
+  assert.ok(!url.username && !url.password && !url.search && !url.hash && url.pathname === '/',
+    'Integration endpoint must be an origin, without credentials, path, query, or fragment');
+}
+
+async function post(base, slug, operation, packed, status) {
+  const res = await fetch(`${base}/v1/sites/${slug}/publish/${operation}`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ manifest: packed.manifest, artifactDigest: packed.artifactDigest, activate: true })
+  });
+  // Do not print provider error bodies: they can echo signed URLs or credentials.
+  assert.equal(res.status, status, `${operation} HTTP status`);
+  return res.json();
+}
+
+function verifyUpload(upload, packed, store) {
+  assert.equal(upload.method, 'PUT');
+  assert.ok(packed.blobs.has(upload.digest), 'Plan must request a manifest blob');
+  const url = new URL(upload.url);
+  const endpoint = new URL(store.endpoint);
+  assert.equal(url.protocol, endpoint.protocol);
+  assert.equal(url.port, endpoint.port);
+  // Assert the addressing shape independently of S3BlobStore.urlForKey().
+  const key = `${store.prefix}/blobs/sha256/${upload.digest.slice('sha256:'.length)}`;
+  assert.equal(url.hostname, store.addressingStyle === 'path' ? endpoint.hostname : `${store.bucket}.${endpoint.hostname}`);
+  assert.equal(url.pathname, store.addressingStyle === 'path' ? `/${store.bucket}/${key}` : `/${key}`);
+  assert.equal(url.searchParams.get('X-Amz-Algorithm'), 'AWS4-HMAC-SHA256');
+  assert.equal(url.searchParams.get('X-Amz-SignedHeaders'), 'host');
+  assert.match(url.searchParams.get('X-Amz-Signature'), /^[0-9a-f]{64}$/);
+  assert.equal(url.searchParams.get('X-Amz-Expires'), String(upload.expiresIn));
+  // Boolean assertions keep credential values out of failure diagnostics.
+  assert.ok(url.searchParams.get('X-Amz-Credential')?.startsWith(`${store.accessKeyId}/`), 'Credential ID must match configuration');
+  assert.ok(url.searchParams.get('X-Amz-Credential')?.endsWith(`/${store.region}/s3/aws4_request`), 'Credential scope must match region');
+  if (store.sessionToken) assert.ok(url.searchParams.get('X-Amz-Security-Token') === store.sessionToken, 'Session token must be signed');
+}
+
+async function verifyServed(base, slug, packed) {
+  for (const file of packed.manifest.files) {
+    const path = file.path === packed.manifest.entrypoint ? '/' : file.path;
+    const res = await fetch(`${base}${path}?site=${slug}`);
+    assert.equal(res.status, 200, `Serve ${path} HTTP status`);
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    assert.deepEqual(bytes, packed.blobs.get(file.digest), `Serve ${path} bytes`);
+    assert.equal(sha256(bytes), file.digest);
+    assert.equal(res.headers.get('content-type'), file.mediaType);
+    assert.equal(res.headers.get('etag'), `"${file.digest}"`);
+  }
+}
+
+for (const entry of cases) {
+  const { skip, options } = configuration(entry);
+  test(`${entry.name}: plan -> presigned PUT -> commit -> serve`, { skip }, async t => {
+    validateEndpoint(options);
+    const store = new S3BlobStore(options);
+    const attempted = new Set();
+    const root = await mkdtemp(join(tmpdir(), 'owa-live-s3-'));
+    let server;
+    t.diagnostic(`Isolated object prefix: ${store.prefix}`);
+
+    async function cleanup() {
+      const errors = [];
+      try {
+        if (server?.listening) {
+          const closed = once(server, 'close');
+          server.close();
+          server.closeAllConnections();
+          await closed;
+        }
+        // Delete only this run's attempted uploads, never list or empty a bucket.
+        for (const digest of attempted) {
+          try {
+            const res = await store.signedFetch('DELETE', store.key(digest));
+            await res.arrayBuffer();
+            assert.ok(res.ok || res.status === 404, `Cleanup DELETE HTTP status ${res.status}`);
+            assert.equal(await store.has(digest), false, 'Cleanup must remove the test blob');
+          } catch {
+            errors.push(new Error(`Cleanup failed for ${store.key(digest)}; remove this run's prefix manually`));
+          }
+        }
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+      if (errors.length) throw new AggregateError(errors, 'Integration object cleanup failed');
+    }
+
+    // Sequential requests still use real fetch, including adapter HEAD/GET/DELETE.
+    await withRequestLimits({ signal: t.signal, cleanup, run: async () => {
+      const directory = join(root, 'site');
+      await mkdir(join(directory, 'assets'), { recursive: true });
+      await writeFile(join(directory, 'index.html'), '<h1>OWA integration v1</h1>');
+      await writeFile(join(directory, 'assets', 'app.js'), 'console.log("owa integration");\n');
+      await writeFile(join(directory, 'assets', 'copy.js'), 'console.log("owa integration");\n');
+      await writeFile(join(directory, 'assets', 'bytes.bin'), Buffer.from([0, 1, 127, 128, 254, 255]));
+      const localBlobs = new FilesystemBlobStore(join(root, 'local'));
+      const localMetadata = new FilesystemMetadataStore(join(root, 'local'));
+      const remoteMetadata = new FilesystemMetadataStore(join(root, 'remote'));
+      server = createArtifactServer({ blobs: store, metadata: remoteMetadata });
+      server.listen(0, '127.0.0.1');
+      await once(server, 'listening');
+      const base = `http://127.0.0.1:${server.address().port}`;
+      const slug = 'integration';
+      const first = await packDirectory(directory);
+      assert.equal(first.manifest.files.length, 4);
+      assert.equal(first.blobs.size, 3, 'Duplicate files share a blob');
+      const releases = [];
+
+      async function publish(packed, expectedUploads, expectedReused, expectedDigests) {
+        const plan = await post(base, slug, 'plan', packed, 200);
+        assert.equal(plan.artifactDigest, packed.artifactDigest);
+        assert.equal(plan.uploads.length, expectedUploads);
+        assert.equal(plan.reused, expectedReused);
+        assert.deepEqual(plan.uploads.map(u => u.digest).sort(), [...expectedDigests].sort());
+        let uploaded = 0;
+        for (const upload of plan.uploads) {
+          verifyUpload(upload, packed, store);
+          attempted.add(upload.digest); // Also clean up a PUT whose response is lost.
+          const put = await fetch(upload.url, { method: upload.method, body: Buffer.from(packed.blobs.get(upload.digest)) });
+          await put.arrayBuffer();
+          assert.ok(put.ok, `Direct PUT HTTP status ${put.status}`);
+          uploaded++;
+        }
+        assert.equal(uploaded, expectedUploads, 'Actual direct upload count');
+        const commit = await post(base, slug, 'commit', packed, 201);
+        assert.equal(commit.artifactDigest, packed.artifactDigest);
+        assert.equal(commit.activeReleaseId, commit.releaseId);
+        assert.ok(!releases.some(r => r.id === commit.releaseId), 'Each commit creates an immutable release');
+
+        const local = await publishDirectory({ directory, slug, blobs: localBlobs, metadata: localMetadata });
+        assert.equal(local.uploaded, expectedUploads);
+        assert.equal(local.reused, expectedReused);
+        assert.equal(local.release.artifactDigest, commit.artifactDigest, 'Filesystem and S3 artifact identities match');
+        const site = await remoteMetadata.getSite(slug);
+        const remote = await remoteMetadata.getRelease(site.id, commit.releaseId);
+        assert.equal(artifactDigest(remote.manifest), commit.artifactDigest);
+        assert.equal(canonicalJson(remote.manifest), canonicalJson(local.release.manifest));
+        assert.deepEqual(remote.manifest, packed.manifest);
+        releases.push(remote);
+        // Later commits must not mutate earlier release manifests or identities.
+        for (const release of releases) assert.deepEqual(await remoteMetadata.getRelease(site.id, release.id), release);
+        await verifyServed(base, slug, packed);
+        t.diagnostic(`${expectedUploads} uploaded, ${expectedReused} reused; filesystem/S3 identity ${commit.artifactDigest}`);
+      }
+
+      // Commit must fail before missing blobs have reached the object store.
+      const missing = await post(base, slug, 'commit', first, 500);
+      assert.ok(typeof missing.error === 'string' && missing.error.startsWith('Missing blob '),
+        'Commit must reject a missing blob (provider error body omitted)');
+      assert.equal(await remoteMetadata.getSite(slug), null);
+      await publish(first, 3, 0, first.blobs.keys());
+      const identical = await packDirectory(directory);
+      assert.equal(identical.artifactDigest, first.artifactDigest);
+      await publish(identical, 0, 3, []);
+      await writeFile(join(directory, 'index.html'), '<h1>OWA integration v2</h1>');
+      const changed = await packDirectory(directory);
+      assert.notEqual(changed.artifactDigest, first.artifactDigest);
+      const newDigests = [...changed.blobs.keys()].filter(digest => !first.blobs.has(digest));
+      assert.equal(newDigests.length, 1);
+      await publish(changed, 1, 2, newDigests);
+    } });
+  });
+}

@@ -144,6 +144,16 @@ export OWA_S3_ADDRESSING_STYLE='virtual'
 
 The S3 signer is implemented directly with Node's cryptographic primitives and is checked against Amazon's published Signature V4 presign test vector.
 
+### Live storage integration tests
+
+`npm test` remains the offline unit/conformance suite. Run the separate live-service
+matrix with `npm run test:integration`. It covers MinIO path-style, optional MinIO
+virtual-host addressing, and Cloudflare R2 path-style. Cases skip when their
+explicit test endpoint or credentials are absent; configured service failures fail.
+
+See [the integration test guide](docs/integration-tests.md) for exact environment
+variables, local MinIO setup, CI examples, isolation/cleanup, and live-test limitations.
+
 ## OCI / ORAS transport
 
 Export the exact same OWA artifact as an OCI image layout:
