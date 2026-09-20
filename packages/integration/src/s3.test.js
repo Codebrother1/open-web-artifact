@@ -135,7 +135,7 @@ for (const entry of cases) {
       const localBlobs = new FilesystemBlobStore(join(root, 'local'));
       const localMetadata = new FilesystemMetadataStore(join(root, 'local'));
       const remoteMetadata = new FilesystemMetadataStore(join(root, 'remote'));
-      server = createArtifactServer({ blobs: store, metadata: remoteMetadata });
+      server = createArtifactServer({ blobs: store, metadata: remoteMetadata, auth: { mode: 'dev' } });
       server.listen(0, '127.0.0.1');
       await once(server, 'listening');
       const base = `http://127.0.0.1:${server.address().port}`;
@@ -184,8 +184,8 @@ for (const entry of cases) {
 
       // Commit must fail before missing blobs have reached the object store.
       const missing = await post(base, slug, 'commit', first, 500);
-      assert.ok(typeof missing.error === 'string' && missing.error.startsWith('Missing blob '),
-        'Commit must reject a missing blob (provider error body omitted)');
+      assert.equal(missing.code, 'OWA_BLOB_MISSING',
+        'Commit must reject a missing blob without exposing provider error bodies');
       assert.equal(await remoteMetadata.getSite(slug), null);
       await publish(first, 3, 0, first.blobs.keys());
       const identical = await packDirectory(directory);

@@ -91,7 +91,7 @@ test('HTTP plan -> upload -> commit publishes without sending file bytes in comm
   await writeFile(join(siteDir, 'app.js'), 'console.log("ok")');
   const packed = await packDirectory(siteDir);
   const blobs = new FilesystemBlobStore(dataDir), metadata = new FilesystemMetadataStore(dataDir);
-  const server = createArtifactServer({ blobs, metadata, uploadSecret: 'test-secret' });
+  const server = createArtifactServer({ blobs, metadata, uploadSecret: 'test-secret', auth: { mode: 'dev' } });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const address = server.address();
