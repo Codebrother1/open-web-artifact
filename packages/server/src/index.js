@@ -8,6 +8,7 @@ import { S3BlobStore } from '../../storage-s3/src/index.js';
 import { activateRelease, commitManifest, planManifest, resolveRequestPath } from '../../core/src/index.js';
 import { sha256 } from '../../spec/src/index.js';
 import { AuthError, createAuthorizer, isSiteScope } from './auth.js';
+import { artifactHeaders, securityHeaders } from './security-profile.js';
 
 function json(res,status,body){res.writeHead(status,{'content-type':'application/json; charset=utf-8'});res.end(JSON.stringify(body,null,2));}
 async function readJson(req){let raw='';for await(const c of req)raw+=c;return JSON.parse(raw||'{}');}
@@ -77,9 +78,17 @@ export function createArtifactServer({blobs,metadata,uploadSecret=randomBytes(32
     const expiresIn = Math.min(900, remaining);
     return { expiresIn, expires: issuedAt + expiresIn };
   }
-  return createServer(async(req,res)=>{try{
+  return createServer(async(req,res)=>{
+    // Install the profile before every route and auth failure. Auth's challenge
+    // and no-store fields are added normally; this never replaces all headers.
+    for (const [name,value] of Object.entries(securityHeaders())) res.setHeader(name,value);
+    try{
+    const target=req.url??'/';
+    if(!target.startsWith('/')||target.includes('#'))return json(res,400,{error:'Invalid request target'});
+    const queryIndex=target.indexOf('?');
+    const rawPath=queryIndex<0?target:target.slice(0,queryIndex);
     const base=`http://${req.headers.host??'localhost'}`;
-    const url=new URL(req.url??'/',base);
+    const url=new URL(target,base);
     if(req.method==='GET'&&url.pathname==='/health')return json(res,200,{ok:true,spec:'owa.dev/v1'});
 
     const planMatch=url.pathname.match(/^\/v1\/sites\/([^/]+)\/publish\/plan$/);
@@ -171,9 +180,11 @@ export function createArtifactServer({blobs,metadata,uploadSecret=randomBytes(32
       if (!/^r_[0-9a-f]{20}(?![\s\S])/.test(site.activeReleaseId)) throw new Error('Invalid active release');
       const release=await metadata.getRelease(site.id,site.activeReleaseId);if(!release)return json(res,404,{error:'release not found'});
       if(release.manifest.lifecycle?.expiresAt&&new Date(release.manifest.lifecycle.expiresAt)<=new Date())return json(res,410,{error:'artifact expired'});
-      const file=resolveRequestPath(release.manifest,url.pathname);if(!file)return json(res,404,{error:'file not found'});
+      // Preserve the raw artifact pathname for the unchanged decode-once resolver;
+      // WHATWG URL parsing must not erase traversal before its checks.
+      const file=resolveRequestPath(release.manifest,rawPath);if(!file)return json(res,404,{error:'file not found'});
       const body=await blobs.get(file.digest);
-      res.writeHead(200,{'content-type':file.mediaType,'content-length':String(body.byteLength),'etag':`"${file.digest}"`,'x-content-type-options':'nosniff','referrer-policy':'no-referrer','content-security-policy':"default-src 'self' data: blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"});
+      res.writeHead(200,{...artifactHeaders(file.mediaType),'content-length':String(body.byteLength),'etag':`"${file.digest}"`});
       return res.end(req.method==='HEAD'?undefined:Buffer.from(body));
     }
     return json(res,404,{error:'not found'});

@@ -25,6 +25,13 @@ commit; S3/R2 bytes do not pass through the control plane. Commit still checks
 that referenced blobs exist and activates by default. OCI transport and the
 portable conformance corpus are unchanged.
 
+The separately documented [`sandboxed-web-v1` response profile](sandboxed-web-v1.md)
+is composed with this overlay. Its baseline is installed before route dispatch
+and auth checks, including auth failures. The existing 401 `WWW-Authenticate:
+Bearer realm="owa"` challenge and `Cache-Control: no-store` are preserved alongside
+the profile headers. This composition does not change token format, capability
+or expiry rules, or make public artifact GET/HEAD and health private.
+
 ## Startup and deployment
 
 Requires Node.js 22+.
@@ -384,10 +391,13 @@ hooks, keep only the safe fields and protect the resulting operational metadata.
 - Health and served artifact bytes stay public, including artifacts whose
   manifest visibility is unlisted. `read` protects control-plane release and
   manifest inspection, not public artifact retrieval.
-- Public-asset origin isolation, service-worker isolation, hardened rendering
-  security profiles, and related browser protections are issue 3 work, **not
-  implemented here**. Do not treat this prototype as a full production
-  multi-tenant hosting service.
+- The composed [`sandboxed-web-v1` profile](sandboxed-web-v1.md) supplies a
+  script-disabled response policy, not content-only origin or service-worker
+  isolation. Protected control routes still exist on every host, and `?site=`
+  still multiplexes sites on one origin. The profile's required production
+  topology is not implemented; fresh origins/browser state remain operator
+  responsibilities. Do not treat this prototype as a full production multi-tenant
+  hosting service.
 
 ## Tests
 

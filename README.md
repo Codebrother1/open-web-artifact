@@ -277,29 +277,43 @@ docs/
 ## Security / production status
 
 This is a protocol prototype, **not a production multi-tenant hosting service yet**.
-The [HTTP auth overlay](docs/auth.md) now enforces explicit site/capability
-boundaries for publishing, activation, and release inspection. It is deliberately
-minimal: no accounts database, individual token revocation/replay database, or
-full tenant/storage isolation. Signing-key rotation invalidates all tokens;
-keys must not be reused across deployments because tokens have no audience claim.
+The [HTTP auth overlay](docs/auth.md) enforces exact site/capability boundaries
+for publishing, activation, and release inspection. It remains required by default;
+only explicit direct-loopback dev mode is tokenless. Tokens do not provide full
+tenant/storage isolation, per-token revocation, or replay prevention. Signing-key
+rotation invalidates all tokens; deployment keys must not be reused.
 
-`GET /health` and artifact `GET`/`HEAD` remain public. This is not artifact access
-control. Shared CAS deduplication is not tenant-private storage, and commit checks
-blob existence rather than tenant ownership. Local operator CLI access is gated
-by filesystem permissions, not HTTP tokens. Storage and metadata remain trusted.
+The gateway also applies [`sandboxed-web-v1`](docs/sandboxed-web-v1.md), a
+**script-disabled static-preview** response policy: bare CSP sandbox, deny-by-default
+sources, inline CSS and data images only, no-store and advisory noindex headers.
+All application responses receive the profile, including auth denials, control
+JSON, health, uploads, errors and artifact GET/HEAD. Auth challenges and capabilities
+are preserved; unknown/invalid artifact MIME is an octet-stream attachment without
+rewriting bytes. The profile does not make interactive apps work or enable scripts.
 
-Public-asset origin isolation, service-worker isolation, and hardened rendering
-security profiles remain issue 3 work, **not implemented by this auth layer**.
-Quotas, garbage collection, custom-domain verification, malware moderation, and a
-finalized browser sandbox policy are also not provided. TLS, secret custody, and
-proxy logging that excludes headers, full URLs/queries, and request bodies remain
-operator responsibilities.
+Health and artifact GET/HEAD remain public; `read` protects control-plane metadata,
+not public artifact access. Shared CAS deduplication is not tenant-private storage,
+and commit still checks blob existence rather than ownership. Local operator CLI
+access remains gated by filesystem permissions; storage and metadata are trusted.
+
+A production deployment needs clean, cookieless, content-only per-site origins
+separate from control/admin/API services. **The prototype does not enforce that
+topology:** `?site=` can share an origin and protected APIs exist on all hosts.
+No-store does not erase existing service workers, caches or saved copies. TLS,
+secret custody, safe proxy logging, quotas, garbage collection and broader isolation
+remain operator responsibilities or future work.
+
+Read the [threat model](docs/sandboxed-web-v1-threat-model.md),
+[profile contract](docs/sandboxed-web-v1.md), [auth guide](docs/auth.md), and
+[optional browser guide](docs/sandboxed-web-v1-browser-validation.md).
+Combined deterministic tests prove HTTP/auth policy and byte preservation, not
+browser enforcement; browser validation remains **not run**.
 
 ## Next milestones
 
 1. Formal canonicalization compatibility suite across at least two languages.
 2. Broader live integration evidence against R2 and MinIO/S3.
-3. Hardened safe-rendering security profiles and public-asset isolation (issue 3).
+3. Production content/control origin isolation and separately reviewed interactive security profiles.
 4. Garbage collection and retention semantics for unreferenced blobs.
 5. OCI registry import/export convenience commands on top of ORAS.
 6. MCP adapter as a thin client over the HTTP protocol.
