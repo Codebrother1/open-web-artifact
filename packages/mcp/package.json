@@ -1,0 +1,18 @@
+{
+  "name": "@owa/mcp",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "description": "Optional local stdio MCP client adapter for the OWA HTTP API",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.0.0"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "2.0.0"
+  }
+}
