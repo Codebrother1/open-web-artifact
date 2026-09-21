@@ -1,6 +1,6 @@
 // Cases 12–15: fonts, media, object/embed and outgoing frames are denied.
 import { buildArtifact, htmlDocument } from '../lib/artifact.js';
-import { expect, expectProfile, test } from '../lib/test.js';
+import { expect, expectProfile, inspectChild, test } from '../lib/test.js';
 
 const html = (body, head = '') => ({ path: '/index.html', text: htmlDocument({ head, body }), mediaType: 'text/html; charset=utf-8' });
 const inner = { path: '/inner.html', text: '<!doctype html><p id="inner-marker">inner artifact document</p>', mediaType: 'text/html' };
@@ -33,6 +33,9 @@ test('13. audio and video sources (capture origin and same-artifact) never load'
   evidence.record('media element states (readyState/networkState/error)', states);
   evidence.record('media requests that reached a server', 0);
   evidence.record('browser-side attempts', net.summary(/probe\.mp|clip\.bin/));
+  // WebKit drives media loading through engine-internal blob:null/… URLs for a
+  // sandboxed (opaque-origin) document; those never touch a network.
+  evidence.record('engine-internal non-network loads by scheme', net.nonNetwork());
 });
 
 test('14. object and embed elements load no active content', async ({ page, topology, capture, net, evidence }) => {
@@ -59,16 +62,21 @@ test('15. a protected document cannot embed same-origin or capture-origin frames
     html(`<iframe id="same" src="/inner.html"></iframe><iframe id="cross" src="${capture.url('/frame.html')}"></iframe>`),
     inner
   ]));
-  expectProfile(await page.goto(topology.url('site-a'), { waitUntil: 'load' }));
+  // A CSP-blocked child frame may never let the parent's `load` event fire (WebKit),
+  // so wait for the document itself, then for both frame elements to exist, then
+  // give each child a bounded chance to settle before reading the counters.
+  const response = await page.goto(topology.url('site-a'), { waitUntil: 'domcontentloaded' });
+  expectProfile(response);
+  await expect(page.locator('#marker')).toHaveText('artifact-marker');
+  await expect.poll(() => page.frames().filter(f => f !== page.mainFrame()).length, { timeout: 10_000 }).toBe(2);
+  await Promise.all(page.frames().filter(f => f !== page.mainFrame()).map(frame =>
+    Promise.race([frame.waitForLoadState('load').catch(() => {}), new Promise(resolve => setTimeout(resolve, 3000))])));
   expect(topology.seen(r => r.path === '/inner.html'), 'same-origin frame blocked before the network').toHaveLength(0);
   expect(capture.count('/frame.html'), 'capture-origin frame blocked before the network').toBe(0);
   const children = [];
   for (const frame of page.frames().filter(f => f !== page.mainFrame())) {
-    let content = 'unavailable';
-    try {
-      content = await frame.evaluate(() => ({ inner: document.getElementById('inner-marker') !== null, capture: document.getElementById('capture-frame-marker') !== null, length: document.documentElement?.outerHTML.length ?? 0 }));
-      expect(content.inner || content.capture, 'no child frame rendered a target document').toBe(false);
-    } catch { /* an error page or detached frame is not a usable child document */ }
+    const content = await inspectChild(frame);
+    if (typeof content === 'object') expect(content.inner || content.capture, 'no child frame rendered a target document').toBe(false);
     children.push({ url: frame.url(), content });
   }
   evidence.record('child frames', children);

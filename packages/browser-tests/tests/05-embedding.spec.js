@@ -3,19 +3,7 @@
 // the artifact becoming an active child document (frame-ancestors 'none' and
 // X-Frame-Options: DENY on the response).
 import { buildArtifact, htmlDocument } from '../lib/artifact.js';
-import { expect, test } from '../lib/test.js';
-
-/** Inspect a (possibly blocked) child frame without ever hanging on it. */
-async function inspectChild(frame, ms = 3000) {
-  if (!frame) return 'no child frame object';
-  const probe = frame.evaluate(() => ({
-    marker: document.getElementById('marker')?.textContent ?? null,
-    title: document.title,
-    url: location.href,
-    length: document.documentElement?.outerHTML.length ?? 0
-  })).catch(error => `unavailable: ${String(error.message).split('\n')[0]}`);
-  return Promise.race([probe, new Promise(resolve => setTimeout(() => resolve('unavailable: no document answered'), ms))]);
-}
+import { expect, inspectChild, test } from '../lib/test.js';
 
 test('19. an unprotected parent page cannot render the protected artifact as a child frame', async ({ page, topology, capture, net, evidence }) => {
   await topology.publish('site-a', buildArtifact([{ path: '/index.html', text: htmlDocument({ marker: 'framed-artifact-marker' }), mediaType: 'text/html' }]));
@@ -36,9 +24,12 @@ test('19. an unprotected parent page cannot render the protected artifact as a c
   const framed = topology.seen(framedRequest);
   // ...the browser finished with the framed response, and the control frame rendered.
   await expect.poll(() => net.completed(target).length + net.matching(target).filter(a => a.outcome === 'failed').length, { timeout: 10_000 }).toBeGreaterThan(0);
+  // The control frame is located through the parent's <iframe id="control">, which
+  // auto-waits for the frame to attach and navigate (engines attach it at different
+  // moments), then resolved to a Frame object once it has rendered.
+  await expect(page.frameLocator('#control').locator('#capture-frame-marker')).toHaveText(/served by capture origin/, { timeout: 10_000 });
   const controlFrame = page.frames().find(frame => frame.url() === control);
   expect(controlFrame, 'the unprotected control frame exists').toBeTruthy();
-  await expect(controlFrame.locator('#capture-frame-marker')).toHaveText(/served by capture origin/);
 
   const child = page.frames().find(frame => frame !== page.mainFrame() && frame !== controlFrame);
   const content = await inspectChild(child);
