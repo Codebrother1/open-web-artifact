@@ -5,7 +5,7 @@
   "notes": [
     "Materialize input.files beneath a fresh directory, then input.symlinks; call packDirectory with input.entrypoint. Always remove temporary directories.",
     "contentBase64 encodes exact bytes. Symlink target is relative to the link; targetType directory is only a filesystem setup hint. Symlinks must be rejected even if safe-looking or dangling.",
-    "Ordering guarantees in these pack vectors intentionally cover only lowercase ASCII names: the reference uses localeCompare and does not yet define portable Unicode pack ordering.",
+    "Ordering: packDirectory places file entries in manifest.files by sorting the COMPLETE artifact path strings lexicographically by Unicode code-point values (numerically at the first difference; a shorter prefix first), exactly the relation canonical JSON uses for object keys. No locale collation, no Unicode normalization, no case folding, no natural/numeric ordering, no UTF-16 code-unit ordering; the exact strings the filesystem exposed are compared. pack-unicode-code-point-order and pack-unicode-no-normalization are the portable Unicode anchors (U+E000 sorts before U+10000). Canonicalization itself still preserves any existing files array order; manually authored manifests are not required to be sorted.",
     "expected.manifest, canonicalJson, artifactDigest, blobDigests are static independent goldens; every returned blob must also equal the source bytes."
   ],
   "vectors": [
@@ -320,6 +320,262 @@
       },
       "expected": {
         "errorCategory": "OWA_INVALID_MANIFEST"
+      }
+    },
+    {
+      "id": "pack-unicode-code-point-order",
+      "description": "Portable Unicode filenames (safe on Linux, macOS and Windows; no case-only pairs; no canonically-equivalent pairs) in deliberately scrambled fixture order. packDirectory must order COMPLETE artifact paths by Unicode code points: \".\" (U+002E) sorts before \"/\" (U+002F) so /a.txt precedes /a/x.txt; ASCII < Greek (U+03A9) < CJK (U+4E2D) < private-use U+E000 < supplementary U+10000 < U+1F331. U+E000 before U+10000 is the code-point-versus-UTF-16 anchor: a UTF-16 code-unit sort would put U+10000 (lead surrogate U+D800) first.",
+      "input": {
+        "files": [
+          {
+            "path": "🌱.txt",
+            "contentBase64": "c2VlZGxpbmcgVSsxRjMzMQo="
+          },
+          {
+            "path": "z.txt",
+            "contentBase64": "ego="
+          },
+          {
+            "path": "𐀀.txt",
+            "contentBase64": "bGluZWFyIGIgVSsxMDAwMAo="
+          },
+          {
+            "path": "a/x.txt",
+            "contentBase64": "bmVzdGVkIHgK"
+          },
+          {
+            "path": "中.txt",
+            "contentBase64": "Y2prIFUrNEUyRAo="
+          },
+          {
+            "path": "index.html",
+            "contentBase64": "PCFkb2N0eXBlIGh0bWw+PHRpdGxlPnVuaWNvZGUgb3JkZXI8L3RpdGxlPgo="
+          },
+          {
+            "path": ".txt",
+            "contentBase64": "cHJpdmF0ZSB1c2UgVStFMDAwCg=="
+          },
+          {
+            "path": "a.txt",
+            "contentBase64": "YQo="
+          },
+          {
+            "path": "Ω.txt",
+            "contentBase64": "b21lZ2EgVSswM0E5Cg=="
+          }
+        ],
+        "symlinks": [],
+        "entrypoint": "/index.html"
+      },
+      "expected": {
+        "canonicalJson": "{\"access\":{\"visibility\":\"unlisted\"},\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:87428fc522803d31065e7bce3cf03fe475096631e5e07bbd7a0fde60c4cf25c7\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/a.txt\",\"size\":2},{\"digest\":\"sha256:fe36b3f1ed15b53b59510405e25da44703e6b89846f359043334303ef8365acf\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/a/x.txt\",\"size\":9},{\"digest\":\"sha256:39baab99de448d3f5f6da08265a5f355f6ca5b4fa7d4bfcfccb42b4a45005884\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/index.html\",\"size\":44},{\"digest\":\"sha256:c865f6c5ab8d1b0bcd383a5e1e3879d22681c96bf462c269b7581d523fbe70ab\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/z.txt\",\"size\":2},{\"digest\":\"sha256:e5f50f848896124872f37875630533c0cd622c7a8513a94e1e2a4e513f6a91e2\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/Ω.txt\",\"size\":13},{\"digest\":\"sha256:647c1b290f94b9d30e71cb4941146a2f2282429440f8788788feb6d4f5afc713\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/中.txt\",\"size\":11},{\"digest\":\"sha256:f989c843e9f201c7482da6179e102372272df10fe15046ca6345c587b375444e\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/.txt\",\"size\":19},{\"digest\":\"sha256:68c2187bca725017bdb712c96af69374e5a3dc1ce1a8b7220d145a4e8482e1d9\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/𐀀.txt\",\"size\":17},{\"digest\":\"sha256:7d3f8dc64f19b696b27390b475394b1b7a7e761e39fda05e441bf224a84e126f\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/🌱.txt\",\"size\":17}],\"lifecycle\":{\"expiresAt\":null},\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:2997254e317f8669dac06cc4b08349e2bb7e524f46d5483c68d42d607ff77814",
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/a.txt",
+              "digest": "sha256:87428fc522803d31065e7bce3cf03fe475096631e5e07bbd7a0fde60c4cf25c7",
+              "size": 2,
+              "mediaType": "text/plain; charset=utf-8"
+            },
+            {
+              "path": "/a/x.txt",
+              "digest": "sha256:fe36b3f1ed15b53b59510405e25da44703e6b89846f359043334303ef8365acf",
+              "size": 9,
+              "mediaType": "text/plain; charset=utf-8"
+            },
+            {
+              "path": "/index.html",
+              "digest": "sha256:39baab99de448d3f5f6da08265a5f355f6ca5b4fa7d4bfcfccb42b4a45005884",
+              "size": 44,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/z.txt",
+              "digest": "sha256:c865f6c5ab8d1b0bcd383a5e1e3879d22681c96bf462c269b7581d523fbe70ab",
+              "size": 2,
+              "mediaType": "text/plain; charset=utf-8"
+            },
+            {
+              "path": "/Ω.txt",
+              "digest": "sha256:e5f50f848896124872f37875630533c0cd622c7a8513a94e1e2a4e513f6a91e2",
+              "size": 13,
+              "mediaType": "text/plain; charset=utf-8"
+            },
+            {
+              "path": "/中.txt",
+              "digest": "sha256:647c1b290f94b9d30e71cb4941146a2f2282429440f8788788feb6d4f5afc713",
+              "size": 11,
+              "mediaType": "text/plain; charset=utf-8"
+            },
+            {
+              "path": "/.txt",
+              "digest": "sha256:f989c843e9f201c7482da6179e102372272df10fe15046ca6345c587b375444e",
+              "size": 19,
+              "mediaType": "text/plain; charset=utf-8"
+            },
+            {
+              "path": "/𐀀.txt",
+              "digest": "sha256:68c2187bca725017bdb712c96af69374e5a3dc1ce1a8b7220d145a4e8482e1d9",
+              "size": 17,
+              "mediaType": "text/plain; charset=utf-8"
+            },
+            {
+              "path": "/🌱.txt",
+              "digest": "sha256:7d3f8dc64f19b696b27390b475394b1b7a7e761e39fda05e441bf224a84e126f",
+              "size": 17,
+              "mediaType": "text/plain; charset=utf-8"
+            }
+          ],
+          "access": {
+            "visibility": "unlisted"
+          },
+          "lifecycle": {
+            "expiresAt": null
+          }
+        },
+        "blobDigests": [
+          "sha256:39baab99de448d3f5f6da08265a5f355f6ca5b4fa7d4bfcfccb42b4a45005884",
+          "sha256:647c1b290f94b9d30e71cb4941146a2f2282429440f8788788feb6d4f5afc713",
+          "sha256:68c2187bca725017bdb712c96af69374e5a3dc1ce1a8b7220d145a4e8482e1d9",
+          "sha256:7d3f8dc64f19b696b27390b475394b1b7a7e761e39fda05e441bf224a84e126f",
+          "sha256:87428fc522803d31065e7bce3cf03fe475096631e5e07bbd7a0fde60c4cf25c7",
+          "sha256:c865f6c5ab8d1b0bcd383a5e1e3879d22681c96bf462c269b7581d523fbe70ab",
+          "sha256:e5f50f848896124872f37875630533c0cd622c7a8513a94e1e2a4e513f6a91e2",
+          "sha256:f989c843e9f201c7482da6179e102372272df10fe15046ca6345c587b375444e",
+          "sha256:fe36b3f1ed15b53b59510405e25da44703e6b89846f359043334303ef8365acf"
+        ]
+      }
+    },
+    {
+      "id": "pack-unicode-no-normalization",
+      "description": "Filenames that look alike but are distinct code-point sequences and are NOT canonically equivalent (so they coexist on Linux, macOS and Windows): ASCII digits/letters versus superscript two (U+00B2), the fi ligature (U+FB01) and fullwidth f (U+FF46), plus 10 versus 9 versus 2. packDirectory must compare the exact strings by code point: no Unicode normalization (compatibility folding would merge them), no case folding, no natural/numeric ordering (\"10\" sorts before \"2\" and \"9\").",
+      "input": {
+        "files": [
+          {
+            "path": "ｆ.txt",
+            "contentBase64": "ZnVsbHdpZHRoIGYgVStGRjQ2Cg=="
+          },
+          {
+            "path": "9.txt",
+            "contentBase64": "bmluZQo="
+          },
+          {
+            "path": "fi.txt",
+            "contentBase64": "ZiBpCg=="
+          },
+          {
+            "path": "².txt",
+            "contentBase64": "c3VwZXJzY3JpcHQgdHdvIFUrMDBCMgo="
+          },
+          {
+            "path": "index.html",
+            "contentBase64": "PCFkb2N0eXBlIGh0bWw+PHRpdGxlPm5vIG5vcm1hbGl6YXRpb248L3RpdGxlPgo="
+          },
+          {
+            "path": "10.txt",
+            "contentBase64": "dGVuCg=="
+          },
+          {
+            "path": "ﬁ.txt",
+            "contentBase64": "ZmkgbGlnYXR1cmUgVStGQjAxCg=="
+          },
+          {
+            "path": "2.txt",
+            "contentBase64": "dHdvCg=="
+          },
+          {
+            "path": "f.txt",
+            "contentBase64": "Zgo="
+          }
+        ],
+        "symlinks": [],
+        "entrypoint": "/index.html"
+      },
+      "expected": {
+        "canonicalJson": "{\"access\":{\"visibility\":\"unlisted\"},\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:6db0f6e1133a0debabee7bf20a2ad413d0279f891fcf74c05da928eb34863c6b\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/10.txt\",\"size\":4},{\"digest\":\"sha256:27dd8ed44a83ff94d557f9fd0412ed5a8cbca69ea04922d88c01184a07300a5a\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/2.txt\",\"size\":4},{\"digest\":\"sha256:9257872a1fba978179a9b2b5ffb6ba54d9f06aad1d4c69169f89bbe4cd0d543b\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/9.txt\",\"size\":5},{\"digest\":\"sha256:092fcfbbcfca3b5be7ae1b5e58538e92c35ab273ae13664fed0d67484c8e78a6\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/f.txt\",\"size\":2},{\"digest\":\"sha256:5835c3e95c902907d6a0d8319a709d7955165ea5ed225282d45d016b7527dafe\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/fi.txt\",\"size\":4},{\"digest\":\"sha256:f493f7cd3f25278aa2d1405275af58d4e726174a708b0872a82c0ece92d4ef20\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/index.html\",\"size\":47},{\"digest\":\"sha256:e75fb60ddfe7057d7f290dd5d8e2af0362282c3a3ee3894e82ba9d9fabb286a4\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/².txt\",\"size\":23},{\"digest\":\"sha256:ffaae709f9b0c14d1cf6124692099bc078a33887b694a333a881a69703d6eed6\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/ﬁ.txt\",\"size\":19},{\"digest\":\"sha256:fc04b5ac0e9d30555463258ec6c4bd33dfa48481398755b57689859ff4179d5f\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/ｆ.txt\",\"size\":19}],\"lifecycle\":{\"expiresAt\":null},\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:328dd5a0aa0e63b752ae70ec95db4e4ff394edc7334e01abe0922f6f6f92e5c6",
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/10.txt",
+              "digest": "sha256:6db0f6e1133a0debabee7bf20a2ad413d0279f891fcf74c05da928eb34863c6b",
+              "size": 4,
+              "mediaType": "text/plain; charset=utf-8"
+            },
+            {
+              "path": "/2.txt",
+              "digest": "sha256:27dd8ed44a83ff94d557f9fd0412ed5a8cbca69ea04922d88c01184a07300a5a",
+              "size": 4,
+              "mediaType": "text/plain; charset=utf-8"
+            },
+            {
+              "path": "/9.txt",
+              "digest": "sha256:9257872a1fba978179a9b2b5ffb6ba54d9f06aad1d4c69169f89bbe4cd0d543b",
+              "size": 5,
+              "mediaType": "text/plain; charset=utf-8"
+            },
+            {
+              "path": "/f.txt",
+              "digest": "sha256:092fcfbbcfca3b5be7ae1b5e58538e92c35ab273ae13664fed0d67484c8e78a6",
+              "size": 2,
+              "mediaType": "text/plain; charset=utf-8"
+            },
+            {
+              "path": "/fi.txt",
+              "digest": "sha256:5835c3e95c902907d6a0d8319a709d7955165ea5ed225282d45d016b7527dafe",
+              "size": 4,
+              "mediaType": "text/plain; charset=utf-8"
+            },
+            {
+              "path": "/index.html",
+              "digest": "sha256:f493f7cd3f25278aa2d1405275af58d4e726174a708b0872a82c0ece92d4ef20",
+              "size": 47,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/².txt",
+              "digest": "sha256:e75fb60ddfe7057d7f290dd5d8e2af0362282c3a3ee3894e82ba9d9fabb286a4",
+              "size": 23,
+              "mediaType": "text/plain; charset=utf-8"
+            },
+            {
+              "path": "/ﬁ.txt",
+              "digest": "sha256:ffaae709f9b0c14d1cf6124692099bc078a33887b694a333a881a69703d6eed6",
+              "size": 19,
+              "mediaType": "text/plain; charset=utf-8"
+            },
+            {
+              "path": "/ｆ.txt",
+              "digest": "sha256:fc04b5ac0e9d30555463258ec6c4bd33dfa48481398755b57689859ff4179d5f",
+              "size": 19,
+              "mediaType": "text/plain; charset=utf-8"
+            }
+          ],
+          "access": {
+            "visibility": "unlisted"
+          },
+          "lifecycle": {
+            "expiresAt": null
+          }
+        },
+        "blobDigests": [
+          "sha256:092fcfbbcfca3b5be7ae1b5e58538e92c35ab273ae13664fed0d67484c8e78a6",
+          "sha256:27dd8ed44a83ff94d557f9fd0412ed5a8cbca69ea04922d88c01184a07300a5a",
+          "sha256:5835c3e95c902907d6a0d8319a709d7955165ea5ed225282d45d016b7527dafe",
+          "sha256:6db0f6e1133a0debabee7bf20a2ad413d0279f891fcf74c05da928eb34863c6b",
+          "sha256:9257872a1fba978179a9b2b5ffb6ba54d9f06aad1d4c69169f89bbe4cd0d543b",
+          "sha256:e75fb60ddfe7057d7f290dd5d8e2af0362282c3a3ee3894e82ba9d9fabb286a4",
+          "sha256:f493f7cd3f25278aa2d1405275af58d4e726174a708b0872a82c0ece92d4ef20",
+          "sha256:fc04b5ac0e9d30555463258ec6c4bd33dfa48481398755b57689859ff4179d5f",
+          "sha256:ffaae709f9b0c14d1cf6124692099bc078a33887b694a333a881a69703d6eed6"
+        ]
       }
     }
   ]

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { lstat, readdir, readFile } from 'node:fs/promises';
 import { extname, relative, resolve, posix } from 'node:path';
-import { OWA_MEDIA_TYPE, OWA_SPEC_VERSION, artifactDigest, owaError, sha256, validateManifest } from '../../spec/src/index.js';
+import { OWA_MEDIA_TYPE, OWA_SPEC_VERSION, artifactDigest, compareUnicodeCodePoints, owaError, sha256, validateManifest } from '../../spec/src/index.js';
 
 function mediaType(path) {
   const ext = extname(path).toLowerCase();
@@ -16,7 +16,8 @@ function mediaType(path) {
 
 async function walk(root, dir=root) {
   const out=[];
-  for (const name of (await readdir(dir)).sort()) {
+  // Deterministic traversal by code point; the normative order is the final sort below.
+  for (const name of (await readdir(dir)).sort(compareUnicodeCodePoints)) {
     const full=resolve(dir,name); const s=await lstat(full);
     if (s.isSymbolicLink()) throw owaError('OWA_SYMLINK', `Symlinks are not supported in artifacts: ${full}`);
     if (s.isDirectory()) out.push(...await walk(root,full)); else if (s.isFile()) out.push(full);
@@ -31,7 +32,11 @@ export async function packDirectory(directory, entrypoint='/index.html') {
     const path='/' + relative(root,filename).split('\\').join('/');
     blobs.set(digest,data); files.push({path,digest,size:data.byteLength,mediaType:mediaType(path)});
   }
-  files.sort((a,b)=>a.path.localeCompare(b.path));
+  // Producer ordering (issue #8): COMPLETE artifact paths in Unicode code-point
+  // lexicographic order — the relation canonical JSON uses for object keys. No
+  // locale collation, no normalization, no case folding; the exact strings the
+  // filesystem exposed are compared and stored.
+  files.sort((a,b)=>compareUnicodeCodePoints(a.path,b.path));
   const manifest={specVersion:OWA_SPEC_VERSION,artifactType:OWA_MEDIA_TYPE,entrypoint,files,access:{visibility:'unlisted'},lifecycle:{expiresAt:null}};
   validateManifest(manifest);
   return {manifest,artifactDigest:artifactDigest(manifest),blobs};
