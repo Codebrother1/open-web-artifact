@@ -375,7 +375,8 @@ test('MCP invalid input and local packing failures map safely without HTTP or st
 // must invent nothing when the server has no content origin. Both halves run
 // through the real official SDK client against a real HTTP server.
 test('MCP publish returns the server canonical content URL when a content origin is configured', { timeout: 20_000 }, async t => {
-  const f = await fixture(t, { content: CONTENT_ORIGIN });
+  // `duplicate` matches the fixed BASELINE_DIGEST fixture (4 files, 3 unique blobs).
+  const f = await fixture(t, { duplicate: true, content: CONTENT_ORIGIN });
   const peer = await f.connect(f.mint(CAPS));
   const value = expectPublish(await peer.call('publish', f.args({ directory: 'site' })), f,
     { uploaded: 3, reused: 0, digest: BASELINE_DIGEST, url: 'https://demo.sites.example.invalid/' });
@@ -398,7 +399,7 @@ test('MCP publish returns the server canonical content URL when a content origin
 });
 
 test('MCP publish omits url entirely when the server provides no canonical content URL', { timeout: 20_000 }, async t => {
-  const f = await fixture(t); // No content origin configured on the server.
+  const f = await fixture(t, { duplicate: true }); // No content origin on the server.
   const peer = await f.connect(f.mint(CAPS));
   const value = expectPublish(await peer.call('publish', f.args({ directory: 'site' })), f,
     { uploaded: 3, reused: 0, digest: BASELINE_DIGEST });
