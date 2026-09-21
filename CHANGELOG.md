@@ -22,6 +22,20 @@ digest algorithm); no package version, tag or release.
   replaces its four-extension local interpretation with the same published
   rule. All previously published pack vectors keep their canonical JSON and
   artifact digests; manually authored `mediaType` values are unaffected.
+- make OCI index reference selection exact, unique and fail-closed (issue
+  #36): `readOciLayout` selects the `index.json` descriptor whose
+  `org.opencontainers.image.ref.name` annotation is a string exactly equal to
+  the requested ref and requires exactly one such descriptor — zero matches
+  fail as not found, duplicates fail as ambiguous, descriptor order never
+  decides. The undocumented `latest` → `manifests[0]` fallback is removed; the
+  Go conformance implementation adopts the same rule and rejects duplicate
+  matches. A new static multi-descriptor success vector
+  (`blob-read-index-exact-ref-selection`) pins exact match over array position;
+  failure behaviour is pinned by direct tests in both implementations because
+  generic OCI layout failures have no portable OWA error category (the 18
+  categories are unchanged). Writer output, config/manifest/layer/blob
+  verification, duplicate-content handling, media-type mapping and all
+  published artifact identities are unchanged.
 
 ## 0.4.0 - 2026-09-21
 

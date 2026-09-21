@@ -83,13 +83,48 @@ export async function writeOciLayout({manifest,blobs,output,ref='latest'}){
   return {artifactDigest:configDigest,ociManifestDigest,ref,output:root};
 }
 
+export const REF_NAME_ANNOTATION='org.opencontainers.image.ref.name';
+
+/**
+ * Index reference selection (issue #36; docs/oci.md "Index reference selection").
+ * EXACTLY ONE EXACT MATCH OR FAIL. The requested `ref` is the only selector:
+ *
+ *  1. `index.manifests` must be an array; only its object entries are descriptors;
+ *  2. a descriptor matches when `annotations` is an object that has the key
+ *     `org.opencontainers.image.ref.name` with a STRING value exactly equal to
+ *     `ref` — a missing annotations object, a missing key, null, a number, a
+ *     boolean or a different string never match; an empty annotation matches
+ *     only when the caller explicitly requested the empty string;
+ *  3. zero matches → reference not found; more than one → ambiguous.
+ *
+ * Descriptor order carries no meaning and never breaks a tie. There is no
+ * `latest` → `manifests[0]` fallback (the previous, undocumented reference
+ * behaviour), no digest, artifact-digest or media-type guessing, and no
+ * "first valid-looking descriptor". Both failures are transport-local layout
+ * errors, deliberately without a portable OWA error category.
+ */
+export function selectIndexDescriptor(index,ref){
+  if(typeof ref!=='string')throw new Error('OCI reference must be a string');
+  const manifests=index?.manifests;
+  if(!Array.isArray(manifests))throw new Error('OCI index has no manifests array');
+  const matches=manifests.filter(descriptor=>{
+    if(descriptor===null||typeof descriptor!=='object'||Array.isArray(descriptor))return false;
+    const annotations=descriptor.annotations;
+    if(annotations===null||typeof annotations!=='object'||Array.isArray(annotations)||!Object.hasOwn(annotations,REF_NAME_ANNOTATION))return false;
+    const name=annotations[REF_NAME_ANNOTATION];
+    return typeof name==='string'&&name===ref;
+  });
+  if(matches.length===0)throw new Error(`OCI reference not found: ${ref}`);
+  if(matches.length>1)throw new Error(`Ambiguous OCI index: ${matches.length} descriptors carry ${REF_NAME_ANNOTATION} ${ref}`);
+  return matches[0];
+}
+
 export async function readOciLayout({input,ref='latest'}){
   const root=input;
   const layout=JSON.parse(await readFile(join(root,'oci-layout'),'utf8'));
   if(layout.imageLayoutVersion!==OCI_LAYOUT_VERSION)throw new Error(`Unsupported OCI layout version: ${layout.imageLayoutVersion}`);
   const index=JSON.parse(await readFile(join(root,'index.json'),'utf8'));
-  const descriptor=index.manifests?.find(item=>item.annotations?.['org.opencontainers.image.ref.name']===ref) ?? (ref==='latest'?index.manifests?.[0]:null);
-  if(!descriptor)throw new Error(`OCI reference not found: ${ref}`);
+  const descriptor=selectIndexDescriptor(index,ref);
   if(descriptor.mediaType!==OCI_IMAGE_MANIFEST)throw new Error(`Unsupported OCI manifest media type: ${descriptor.mediaType}`);
   const ociManifestBytes=await readVerifiedBlob(root,descriptor.digest,descriptor.size);
   const ociManifest=JSON.parse(ociManifestBytes.toString('utf8'));

@@ -39,11 +39,12 @@ same checked-in corpus; neither calls the other.
 - directory packing with Unicode code-point ordering of complete artifact paths,
   symlink rejection, duplicate-content blob deduplication, and the fixed
   pack-time media-type table with its portable extension rule (issue #33);
-- the OCI image-layout boundaries the corpus exercises: canonical config blob,
-  one descriptor per file entry, `dev.openwebartifact.path` identity, descriptor
-  media-type mapping with the `application/octet-stream` fallback, path-aware
-  descriptor selection with the narrow legacy fallback, digest/size checks in the
-  documented order.
+- the OCI image-layout boundaries the corpus exercises: exact, unique
+  `org.opencontainers.image.ref.name` index reference selection (issue #36),
+  canonical config blob, one descriptor per file entry,
+  `dev.openwebartifact.path` identity, descriptor media-type mapping with the
+  `application/octet-stream` fallback, path-aware descriptor selection with the
+  narrow legacy fallback, digest/size checks in the documented order.
 
 ### What it deliberately is not
 
@@ -80,7 +81,7 @@ Every file under `docs/conformance/v0.2/` and every vector in it is executed —
 | `path.json` | path | 25 | validate; exact original string returned |
 | `request.json` | request | 44 | validate manifest → resolve; exact file entry or null |
 | `pack.json` | pack | 17 | materialize files/symlinks in a temp dir → pack (media types from the fixed table) → manifest, canonical, digest, sorted unique blob digests, blob bytes |
-| `blob.json` | blob | 10 | validate manifest → OCI write + read-back, or OCI read of a static layout → manifest, identity, blobs |
+| `blob.json` | blob | 11 | validate manifest → OCI write + read-back, or OCI read of a static layout (index descriptor by exact, unique ref) → manifest, identity, blobs |
 
 Plus the immutable basic vectors (`docs/test-vectors/basic/`: whole-file SHA-256
 pins copied from the conformance guide, canonical bytes equal `canonical.json`,
@@ -128,28 +129,48 @@ None of these blocked the corpus; each is recorded so the specification can
 decide whether to pin it. Items the specification has since pinned move to
 "Resolved" below with their history.
 
-1. **Index reference selection.** [oci.md](oci.md) says `index.json` lists the
-   manifest with `org.opencontainers.image.ref.name` set to the requested ref.
-   This implementation requires an exact match and fails otherwise; behaviour
-   for an index whose entries carry no `ref.name` is unspecified. The corpus
-   layouts all carry `latest`.
-2. **Non-regular directory entries.** The packing rule speaks of "each
+1. **Non-regular directory entries.** The packing rule speaks of "each
    discovered regular file". Symbolic links are rejected as specified; other
    non-regular entries (sockets, devices, FIFOs) are skipped here. The corpus
    does not cover them.
-3. **Duplicate JSON member names** are explicitly outside the corpus. This
+2. **Duplicate JSON member names** are explicitly outside the corpus. This
    parser keeps the last value at the first member's position and discloses
    that policy, as the conformance guide requires.
-4. **Shortest-digit selection.** The specification's "shortest round-tripping
+3. **Shortest-digit selection.** The specification's "shortest round-tripping
    digits, closest, ties to even" is realised with `strconv.FormatFloat(v, 'e',
    -1, 64)` for the digits and an explicit implementation of the layout rules.
    Every corpus number agrees; equivalence for all binary64 values is a property
    of Go's shortest-formatting algorithm that the corpus exercises but does not
    prove exhaustively.
-5. **Filesystem names that are not valid Unicode** are out of scope by the
+4. **Filesystem names that are not valid Unicode** are out of scope by the
    specification's own statement; the packer rejects them rather than guessing.
 
 ### Resolved
+
+- **Index reference selection** — surfaced by this implementation, resolved by
+  issue #36. [oci.md](oci.md) said only that `index.json` lists the manifest
+  with `org.opencontainers.image.ref.name` set to the requested ref; this
+  implementation interpreted that as exact-match-only and failed when no
+  descriptor matched, while the JavaScript reference additionally fell back to
+  `index.manifests[0]` when `latest` was requested and unmatched, and both
+  readers took the first of several descriptors claiming the requested ref — so
+  two conforming readers could import different OCI manifests from one
+  `index.json`. [oci.md](oci.md#index-reference-selection) now makes exact
+  **and unique** matching normative: `manifests` must be an array; a descriptor
+  matches only through a string `ref.name` annotation exactly equal to the
+  requested ref; exactly one match is required; zero matches are *not found*
+  and duplicates are *ambiguous*; descriptor order never breaks a tie; a
+  missing, `null`, numeric, boolean or different annotation never matches; an
+  empty annotation matches only an explicitly requested empty string; nothing is
+  selected by digest, artifact-digest annotation, media type
+  or position. The JavaScript `latest → manifests[0]` fallback was removed, and
+  this implementation replaced its first-match loop with `selectIndexDescriptor`,
+  which counts all exact matches and reports `ErrRefNotFound` / `ErrRefAmbiguous`
+  (transport-local; no portable category was added). The portable success anchor
+  is `blob-read-index-exact-ref-selection` in `blob.json` (decoy `v1` first,
+  `latest` second); failure behaviour is pinned by `oci_index_ref_test.go` and
+  the JavaScript `oci-index-ref.test.js` because generic OCI layout failures have
+  no portable OWA error category.
 
 - **Pack media-type detection** — surfaced by this implementation, resolved by
   issue #33. The directory-packing rule originally defined paths and ordering
