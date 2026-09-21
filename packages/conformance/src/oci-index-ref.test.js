@@ -129,6 +129,11 @@ test('the undocumented `latest` → manifests[0] fallback is gone: a layout writ
   await assert.rejects(readOciLayout({ input: layout, ref: 'v2' }), /OCI reference not found: v2$/, 'no matching ref');
   const imported = await readOciLayout({ input: layout, ref: 'v1' });
   assert.equal(imported.artifactDigest, written.artifactDigest); assert.equal(imported.ociManifestDigest, written.ociManifestDigest); assert.equal(imported.ref, 'v1');
+  const emptyWritten = await writeOciLayout({ manifest, blobs, output: layout, ref: '' });
+  const emptyImported = await readOciLayout({ input: layout, ref: '' });
+  assert.equal(emptyImported.artifactDigest, emptyWritten.artifactDigest, 'explicit empty library ref round-trips by exact equality');
+  assert.equal(emptyImported.ociManifestDigest, emptyWritten.ociManifestDigest);
+  assert.equal(emptyImported.ref, '');
 });
 
 test('one descriptor with a missing, malformed, empty or different ref.name never matches `latest` — no fallback of any kind', async t => {
