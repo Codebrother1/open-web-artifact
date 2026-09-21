@@ -69,4 +69,3 @@ jobs:
       - name: Tests left the checkout clean
         working-directory: .
         run: test -z "$(git status --porcelain)"
-
