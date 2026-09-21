@@ -1,0 +1,72 @@
+# Lane 5 — independent Go conformance implementation (issue #31).
+#
+# implementations/go-conformance is a standard-library-only Go implementation of
+# the portable OWA semantics, derived from the published specification and the
+# static corpus under docs/conformance/v0.2/ — never from the JavaScript
+# packages. This lane runs it against the same checked-in corpus and immutable
+# basic vectors the reference is checked against. No Node, no npm and no
+# repository JavaScript is involved; the only network access is the pinned Go
+# toolchain download. No secret exists in this lane.
+name: Go conformance
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-go-conformance-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go-conformance:
+    name: go-conformance (go 1.27, ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: implementations/go-conformance
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27'
+          check-latest: false
+          cache: false
+
+      - name: Versions
+        run: go version
+
+      - name: Prove the module is standard-library only
+        run: |
+          if grep -Eq '^[[:space:]]*require' go.mod; then echo "go.mod must not require modules"; exit 1; fi
+          deps="$(go list -deps ./... | grep -v '^github.com/Codebrother1/open-web-artifact/' | grep '\.' || true)"
+          if [ -n "$deps" ]; then echo "non-standard-library dependencies: $deps"; exit 1; fi
+
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Independent corpus, basic-vector and anchor run
+        run: go test ./... -count=1 -v
+
+      - name: Whitespace check
+        working-directory: .
+        run: git diff --check
+
+      - name: Tests left the checkout clean
+        working-directory: .
+        run: test -z "$(git status --porcelain)"
+
