@@ -103,7 +103,7 @@ export const REF_NAME_ANNOTATION='org.opencontainers.image.ref.name';
  * errors, deliberately without a portable OWA error category.
  */
 export function selectIndexDescriptor(index,ref){
-  if(typeof ref!=='string'||ref.length===0)throw new Error('OCI reference must be a nonempty string');
+  if(typeof ref!=='string')throw new Error('OCI reference must be a string');
   const manifests=index?.manifests;
   if(!Array.isArray(manifests))throw new Error('OCI index has no manifests array');
   const matches=manifests.filter(descriptor=>{
