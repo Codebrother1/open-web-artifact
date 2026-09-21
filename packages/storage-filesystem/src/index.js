@@ -20,10 +20,63 @@ export class StorageOperationError extends Error {
   }
 }
 
-/** True only when child resolves strictly inside root, with no symlink escape. */
+/**
+ * Lexical containment only. This catches `..` and absolute-path tricks in a
+ * spelled path, but it CANNOT see a symlink: `<root>/blobs -> /elsewhere` still
+ * spells every child as `<root>/blobs/...`. It is kept as defense in depth and
+ * is never the sole check before enumeration or deletion; see realDirectoryChain.
+ */
 function isInside(root, child) {
   const rel = relative(resolve(root), resolve(child));
   return rel !== '' && !rel.startsWith(`..${sep}`) && rel !== '..' && !resolve(child).startsWith(`${resolve(root)}${sep}..`);
+}
+
+/**
+ * No-follow ancestor guard for GC-owned directories.
+ *
+ * Walks each path component BELOW the configured root and lstat()s it, so a
+ * symlink in an operational directory position (`blobs`, `blobs/sha256`,
+ * `gc-leases/sha256`, `sites/<id>/releases`, ...) is reported as a link and
+ * rejected instead of being silently followed by readdir()/rm(). The root itself
+ * is operator configuration and is not inspected. Returns 'ok' when every
+ * component is a real directory, 'missing' when a component does not exist
+ * (the caller decides whether absence is acceptable), and throws `code` for a
+ * symlink, a non-directory, or any other lstat failure.
+ *
+ * This defends against PRE-EXISTING symlinks. Node has no openat/unlinkat-style
+ * API, so a concurrent local attacker who can swap a directory for a symlink
+ * between this check and the following operation is outside the reference
+ * threat model; see docs/gc.md.
+ */
+async function realDirectoryChain(root, segments, code) {
+  let current = root;
+  for (const segment of segments) {
+    current = join(current, segment);
+    let stats;
+    try { stats = await lstat(current); }
+    catch (error) {
+      if (error?.code === 'ENOENT') return 'missing';
+      throw new StorageOperationError(code);
+    }
+    if (stats.isSymbolicLink() || !stats.isDirectory()) throw new StorageOperationError(code);
+  }
+  return 'ok';
+}
+
+/**
+ * lstat() a destructive target and require a regular file, never a symlink or
+ * directory. Returns null when the target is already absent (idempotent), the
+ * stats otherwise, and throws `code` for anything that is not a plain file.
+ */
+async function regularFileOrMissing(path, code) {
+  let stats;
+  try { stats = await lstat(path); }
+  catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    throw new StorageOperationError(code);
+  }
+  if (stats.isSymbolicLink() || !stats.isFile()) throw new StorageOperationError(code);
+  return stats;
 }
 
 async function writeJson(path,value){await mkdir(dirname(path),{recursive:true});await writeFile(path,JSON.stringify(value,null,2));}
@@ -45,15 +98,22 @@ export class FilesystemBlobStore{
    */
   async listBlobs(){
     const algorithms=join(this.root,'blobs');
-    if(!existsSync(algorithms))return [];
+    // FAIL CLOSED if `<root>/blobs` is a symlink: readdir() would follow it and
+    // every later lexical check would still spell paths under <root>/blobs while
+    // the filesystem resolved outside the configured data root.
+    if(await realDirectoryChain(this.root,['blobs'],'OWA_GC_LIST_FAILED')==='missing')return [];
     const out=[];
     let entries;
     try { entries=await readdir(algorithms,{withFileTypes:true}); }
     catch { throw new StorageOperationError('OWA_GC_LIST_FAILED'); }
     for(const algorithm of entries){
-      // Only the sha256 namespace exists today; ignore anything else quietly.
+      // The GC-owned namespace is exactly `blobs/sha256`. A symlink sitting in
+      // that position is a misconfiguration and fails closed rather than being
+      // followed or quietly enumerated as empty. Unrelated neighbours are ignored.
+      if(algorithm.name==='sha256'&&algorithm.isSymbolicLink())throw new StorageOperationError('OWA_GC_LIST_FAILED');
       if(!algorithm.isDirectory()||algorithm.name!=='sha256')continue;
       const dir=join(algorithms,algorithm.name);
+      await realDirectoryChain(this.root,['blobs','sha256'],'OWA_GC_LIST_FAILED');
       if(!isInside(this.root,dir))continue;
       let files;
       try { files=await readdir(dir,{withFileTypes:true}); }
@@ -77,6 +137,10 @@ export class FilesystemBlobStore{
     if(!DIGEST.test(digest))throw new StorageOperationError('OWA_GC_INVALID_DIGEST');
     const path=this.path(digest);
     if(!isInside(this.root,path))throw new StorageOperationError('OWA_GC_INVALID_DIGEST');
+    // Every ancestor must be a real directory and the target a regular file.
+    // rm() through a symlinked ancestor would unlink the EXTERNAL file.
+    if(await realDirectoryChain(this.root,['blobs','sha256'],'OWA_GC_DELETE_FAILED')==='missing')return;
+    if(await regularFileOrMissing(path,'OWA_GC_DELETE_FAILED')===null)return; // Idempotent.
     try { await rm(path,{force:true}); } catch { throw new StorageOperationError('OWA_GC_DELETE_FAILED'); }
   }
 }
@@ -100,10 +164,14 @@ export class FilesystemLeaseStore{
     if(!Number.isSafeInteger(ttlSeconds)||ttlSeconds<=0)throw new StorageOperationError('OWA_GC_INVALID_LEASE_TTL');
     const at=this.now();
     const target=new Date(at.getTime()+ttlSeconds*1000);
+    // A missing lease directory is created normally; a symlinked one is never
+    // written through, so lease records cannot land outside the data root.
+    await realDirectoryChain(this.root,['gc-leases','sha256'],'OWA_GC_LEASE_UNREADABLE');
     const written=[];
     for(const digest of new Set(digests)){
       if(!DIGEST.test(digest))throw new StorageOperationError('OWA_GC_INVALID_DIGEST');
       const path=this.path(digest);
+      await regularFileOrMissing(path,'OWA_GC_LEASE_UNREADABLE'); // Never overwrite through a link.
       let expiresAt=target;
       const existing=await readJson(path).catch(()=>null);
       if(existing&&typeof existing.expiresAt==='string'){
@@ -123,7 +191,9 @@ export class FilesystemLeaseStore{
    */
   async list(){
     const dir=join(this.root,'gc-leases','sha256');
-    if(!existsSync(dir))return [];
+    // FAIL CLOSED on a symlinked lease directory or ancestor: an external tree
+    // must never be read as lease state, nor later pruned as if it were ours.
+    if(await realDirectoryChain(this.root,['gc-leases','sha256'],'OWA_GC_LEASE_UNREADABLE')==='missing')return [];
     let files;
     try { files=await readdir(dir,{withFileTypes:true}); }
     catch { throw new StorageOperationError('OWA_GC_LEASE_UNREADABLE'); }
@@ -152,9 +222,15 @@ export class FilesystemLeaseStore{
   /** Destructive: drop expired lease records. Never called during a dry run. */
   async pruneExpired(asOf=this.now()){
     let removed=0;
-    for(const lease of await this.list()){
+    const leases=await this.list(); // Already guarded against a symlinked namespace.
+    // Re-verify immediately before the destructive pass, then require each
+    // record to be a regular file: rm() must never reach through a link.
+    if(await realDirectoryChain(this.root,['gc-leases','sha256'],'OWA_GC_LEASE_PRUNE_FAILED')==='missing')return 0;
+    for(const lease of leases){
       if(lease.expiresAt>asOf)continue;
-      try { await rm(this.path(lease.digest),{force:true}); removed++; }
+      const path=this.path(lease.digest);
+      if(await regularFileOrMissing(path,'OWA_GC_LEASE_PRUNE_FAILED')===null)continue;
+      try { await rm(path,{force:true}); removed++; }
       catch { throw new StorageOperationError('OWA_GC_LEASE_PRUNE_FAILED'); }
     }
     return removed;
@@ -183,7 +259,9 @@ export class FilesystemMetadataStore{
    */
   async listSites(){
     const dir=join(this.root,'sites');
-    if(!existsSync(dir))return [];
+    // FAIL CLOSED: a symlinked `sites` directory would let an external tree pose
+    // as the release roots that decide what survives GC.
+    if(await realDirectoryChain(this.root,['sites'],'OWA_GC_METADATA_MALFORMED')==='missing')return [];
     let entries;
     try { entries=await readdir(dir,{withFileTypes:true}); }
     catch { throw new StorageOperationError('OWA_GC_METADATA_UNREADABLE'); }
@@ -213,8 +291,11 @@ export class FilesystemMetadataStore{
   async listAllReleases(siteId){
     if(!SITE_ID.test(String(siteId??'')))throw new StorageOperationError('OWA_GC_METADATA_MALFORMED');
     const dir=join(this.root,'sites',siteId,'releases');
-    if(!existsSync(dir))return [];
     if(!isInside(this.root,dir))throw new StorageOperationError('OWA_GC_METADATA_MALFORMED');
+    // FAIL CLOSED: `sites`, `sites/<id>` and `sites/<id>/releases` must all be
+    // real directories. A symlinked releases directory is malformed metadata,
+    // never a source of trusted roots, and apply aborts before any deletion.
+    if(await realDirectoryChain(this.root,['sites',siteId,'releases'],'OWA_GC_METADATA_MALFORMED')==='missing')return [];
     let entries;
     try { entries=await readdir(dir,{withFileTypes:true}); }
     catch { throw new StorageOperationError('OWA_GC_METADATA_UNREADABLE'); }

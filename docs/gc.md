@@ -153,7 +153,48 @@ integrity verification is issue #10 and is not implemented here.
   the blob root. Unrelated files, other algorithm directories, nested
   directories and non-hex names are ignored, not deleted.
 - `delete(digest)` validates the digest, confirms the resolved path is inside the
-  blob root, and is idempotent: deleting a missing object is not an error.
+  blob root, requires the target to be a regular file (never a symlink or a
+  directory), and is idempotent: deleting a missing object is not an error.
+
+### No-follow ancestor guard
+
+`lstat` on the final entry is necessary but not sufficient. `readdir()` and
+`rm()` follow a symlink at an **ancestor** position — `<root>/blobs`,
+`<root>/blobs/sha256` — and a purely lexical containment check
+(`resolve`/`relative`/`startsWith`) cannot see it: every child is still spelled
+under `<root>/blobs/…` even though the filesystem resolved outside
+`OWA_DATA_DIR`. Left unguarded, GC would enumerate an external tree as blobs and
+`rm()` an external file through the link.
+
+Every GC-owned directory chain below the configured data root is therefore
+walked component by component and each component is `lstat`ed and required to
+be a real directory before any enumeration or destructive mutation:
+
+| Namespace | Chain verified | On a symlink |
+| --- | --- | --- |
+| Blobs | `blobs`, `blobs/sha256` | `OWA_GC_LIST_FAILED` / `OWA_GC_DELETE_FAILED` — fail closed |
+| Leases | `gc-leases`, `gc-leases/sha256` | `OWA_GC_LEASE_UNREADABLE` on read/write, `OWA_GC_LEASE_PRUNE_FAILED` on prune — fail closed |
+| Metadata | `sites`, `sites/<id>`, `sites/<id>/releases` | `OWA_GC_METADATA_MALFORMED` — fail closed |
+
+The chosen contract for blobs is **fail closed**, not "enumerate nothing": a
+symlink in an operational position is a misconfiguration signal, and an empty
+enumeration could hide it. Because the listing throws, the collector aborts
+before any deletion. A symlinked `releases` directory is malformed metadata, so
+external JSON can never pose as the release roots that decide what survives. A
+symlinked lease namespace is neither read as lease state nor written through,
+and `--prune-expired-leases` re-verifies the chain immediately before its
+destructive pass and requires each record to be a regular file.
+
+The data root itself is operator configuration and is not inspected; pointing
+`OWA_DATA_DIR` at a symlink is a legitimate deployment choice.
+
+**Limitation — concurrent local mutation.** This guard defends against
+*pre-existing* symlinks. Node exposes no `openat`/`unlinkat`-style API, so there
+is a window between the `lstat` check and the following `readdir`/`rm` in which
+a local attacker with write access to `OWA_DATA_DIR` could swap a directory for a
+symlink. A concurrent privileged attacker on the same filesystem is outside the
+reference threat model: `OWA_DATA_DIR` is assumed to be writable only by the
+operator and artifactd.
 
 ## S3 / R2 blob operations
 
@@ -285,3 +326,6 @@ Errors are fixed codes: `OWA_GC_METADATA_UNREADABLE`, `OWA_GC_METADATA_MALFORMED
   want a streaming variant.
 - Filesystem enumeration reports `mtime`, which an operator or backup restore can
   move. The grace period assumes plausible modification times.
+- The no-follow ancestor guard defends against pre-existing symlinks only. A
+  concurrent local attacker able to mutate `OWA_DATA_DIR` between the `lstat`
+  check and the following operation is outside the reference threat model.

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readdir, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -717,4 +717,152 @@ test('S3 GC operations leave existing publish presigning untouched', async t => 
   assert.equal(url.searchParams.get('X-Amz-SignedHeaders'), 'host');
   assert.equal(url.searchParams.get('X-Amz-Expires'), '900');
   assert.match(url.searchParams.get('X-Amz-Signature'), /^[0-9a-f]{64}$/);
+});
+
+// ------------------------------------------- ancestor symlink escapes ----
+
+/**
+ * Regression for GC following a symlinked ANCESTOR directory out of the data
+ * root. lstat() on the final digest entry was never enough: readdir()/rm()
+ * follow a symlink at `<root>/blobs`, and lexical isInside() still sees a path
+ * spelled under <root> while the filesystem resolved elsewhere. Every case
+ * below plants real-looking content OUTSIDE the root and proves it is never
+ * enumerated, never trusted, and never modified — byte for byte.
+ */
+async function externalTree(t) {
+  const outside = await mkdtemp(join(tmpdir(), 'owa-gc-outside-'));
+  t.after(() => rm(outside, { recursive: true, force: true }));
+  return outside;
+}
+const bytesAt = async path => (await readFile(path)).toString('utf8');
+
+test('blobs-root symlink: GC fails closed and never touches the external tree', async t => {
+  const e = await env(t);
+  const outside = await externalTree(t);
+  const hex = 'a'.repeat(64);
+  await mkdir(join(outside, 'sha256'), { recursive: true });
+  const external = join(outside, 'sha256', hex);
+  await writeFile(external, 'PRECIOUS EXTERNAL DATA', 'utf8');
+  // <root>/blobs -> <outside>. Nothing else exists under the root.
+  await symlink(outside, join(e.root, 'blobs'));
+
+  await assert.rejects(() => e.blobs.listBlobs(), error => error.code === 'OWA_GC_LIST_FAILED',
+    'a symlinked blob root is not enumerable');
+
+  let deletes = 0;
+  const guarded = Object.create(e.blobs);
+  guarded.delete = async digest => { deletes++; return e.blobs.delete(digest); };
+  await assert.rejects(
+    () => collectGarbage({ blobs: guarded, metadata: e.metadata, leases: e.leases, apply: true, graceSeconds: 0, now: clock }),
+    error => error instanceof GcError && error.code === 'OWA_GC_LIST_FAILED');
+  assert.equal(deletes, 0, 'apply aborted before any delete call');
+
+  // A direct delete of the "digest" the external file spells must also refuse.
+  await assert.rejects(() => e.blobs.delete(`sha256:${hex}`), error => error.code === 'OWA_GC_DELETE_FAILED');
+
+  assert.equal(existsSync(external), true, 'the external file still exists');
+  assert.equal(await bytesAt(external), 'PRECIOUS EXTERNAL DATA', 'the external bytes are unchanged');
+  assert.equal((await readdir(join(outside, 'sha256'))).length, 1, 'nothing was added or removed outside');
+});
+
+test('blobs/sha256 symlink: the namespace directory itself is never followed', async t => {
+  const e = await env(t);
+  const outside = await externalTree(t);
+  const hex = 'b'.repeat(64);
+  const external = join(outside, hex);
+  await writeFile(external, 'ALSO PRECIOUS', 'utf8');
+  await mkdir(join(e.root, 'blobs'), { recursive: true }); // real blobs dir …
+  await symlink(outside, join(e.root, 'blobs', 'sha256')); // … but sha256 is a link out
+
+  await assert.rejects(() => e.blobs.listBlobs(), error => error.code === 'OWA_GC_LIST_FAILED');
+  await assert.rejects(() => e.blobs.delete(`sha256:${hex}`), error => error.code === 'OWA_GC_DELETE_FAILED');
+  assert.equal(await bytesAt(external), 'ALSO PRECIOUS', 'external bytes unchanged');
+});
+
+test('lease-directory symlink: --prune-expired-leases cannot rm an external JSON', async t => {
+  for (const shape of ['gc-leases', 'gc-leases/sha256']) {
+    await t.test(`${shape} -> external`, async t2 => {
+      const e = await env(t2);
+      const outside = await externalTree(t2);
+      // A valid-looking, already-EXPIRED lease record living outside the root.
+      const hex = 'c'.repeat(64);
+      const leaseDir = shape === 'gc-leases' ? join(outside, 'sha256') : outside;
+      await mkdir(leaseDir, { recursive: true });
+      const external = join(leaseDir, `${hex}.json`);
+      const record = JSON.stringify({ digest: `sha256:${hex}`, expiresAt: '2000-01-01T00:00:00.000Z', updatedAt: '2000-01-01T00:00:00.000Z' });
+      await writeFile(external, record, 'utf8');
+      if (shape === 'gc-leases') {
+        await symlink(outside, join(e.root, 'gc-leases'));
+      } else {
+        await mkdir(join(e.root, 'gc-leases'), { recursive: true });
+        await symlink(outside, join(e.root, 'gc-leases', 'sha256'));
+      }
+
+      await assert.rejects(() => e.leases.list(), error => error.code === 'OWA_GC_LEASE_UNREADABLE',
+        'a symlinked lease namespace is not readable lease state');
+      await assert.rejects(() => e.leases.pruneExpired(), error => /OWA_GC_LEASE_/.test(error.code));
+      await assert.rejects(
+        () => collectGarbage({ blobs: e.blobs, metadata: e.metadata, leases: e.leases, apply: true, graceSeconds: 0, pruneExpiredLeases: true, now: clock }),
+        error => error instanceof GcError, 'apply with pruning aborts');
+
+      assert.equal(existsSync(external), true, 'the external lease-looking file still exists');
+      assert.equal(await bytesAt(external), record, 'its bytes are unchanged');
+      // Writing a lease must not go through the link either.
+      await assert.rejects(() => e.leases.refresh([`sha256:${'d'.repeat(64)}`], { ttlSeconds: 60 }),
+        error => error.code === 'OWA_GC_LEASE_UNREADABLE');
+      assert.equal((await readdir(leaseDir)).length, 1, 'nothing was written outside the root');
+    });
+  }
+});
+
+test('release-directory symlink: external release JSON is never a trusted root and apply aborts', async t => {
+  const e = await env(t);
+  const outside = await externalTree(t);
+  // A real site under the root, then its releases directory replaced by a link
+  // to an external tree holding a perfectly plausible release record.
+  const orphan = await e.writeBlob('orphan that must survive an aborted run');
+  const { site } = await e.addRelease('alpha', [{ path: '/index.html', text: 'real release' }]);
+  const releasesDir = join(e.root, 'sites', site.id, 'releases');
+  await rm(releasesDir, { recursive: true, force: true });
+  const plausible = manifestFor([{ path: '/index.html', text: 'external plausible release' }]);
+  const externalRelease = join(outside, `r_${'e'.repeat(20)}.json`);
+  await writeFile(externalRelease, JSON.stringify({
+    id: `r_${'e'.repeat(20)}`, artifactDigest: artifactDigest(plausible), createdAt: NOW.toISOString(), manifest: plausible
+  }), 'utf8');
+  await symlink(outside, releasesDir);
+
+  await assert.rejects(() => e.metadata.listAllReleases(site.id), error => error.code === 'OWA_GC_METADATA_MALFORMED',
+    'a symlinked releases directory is malformed metadata');
+
+  let deletes = 0;
+  const guarded = Object.create(e.blobs);
+  guarded.delete = async digest => { deletes++; return e.blobs.delete(digest); };
+  await assert.rejects(
+    () => collectGarbage({ blobs: guarded, metadata: e.metadata, leases: e.leases, apply: true, graceSeconds: 0, now: clock }),
+    error => error instanceof GcError && error.code === 'OWA_GC_METADATA_MALFORMED');
+  assert.equal(deletes, 0, 'zero blob deletes were attempted');
+  assert.equal(await e.blobs.has(orphan), true, 'even a true orphan survives an aborted run');
+  assert.equal(existsSync(externalRelease), true, 'the external release file is untouched');
+});
+
+test('sites-root symlink is rejected the same way', async t => {
+  const e = await env(t);
+  const outside = await externalTree(t);
+  await symlink(outside, join(e.root, 'sites'));
+  await assert.rejects(() => e.metadata.listSites(), error => error.code === 'OWA_GC_METADATA_MALFORMED');
+});
+
+test('ordinary real directories still enumerate and delete normally after the guard', async t => {
+  const e = await env(t);
+  const orphan = await e.writeBlob('ordinary orphan');
+  const kept = await e.writeBlob('ordinary kept');
+  await e.addRelease('alpha', [{ path: '/index.html', text: 'ordinary kept' }]);
+  await e.leases.refresh([kept], { ttlSeconds: 60 });
+  assert.equal((await e.blobs.listBlobs()).length, 2, 'real directories enumerate');
+  assert.equal((await e.leases.list()).length, 1, 'real lease directories list');
+  const report = await e.run({ apply: true });
+  assert.equal(report.deleted, 1, 'real orphan is deleted');
+  assert.equal(await e.blobs.has(orphan), false);
+  assert.equal(await e.blobs.has(kept), true);
+  await e.blobs.delete(orphan); // already gone: still idempotent
 });
