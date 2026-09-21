@@ -134,9 +134,10 @@ func TestSelectIndexDescriptorRules(t *testing.T) {
 			t.Fatalf("%s: expected a manifests-array layout error, got %v", text, err)
 		}
 	}
-	// The requested ref is the selector and must be nonempty.
-	if _, err := selectIndexDescriptor(index("["+d("")+"]"), ""); err == nil || !errors.Is(err, ErrLayout) || errors.Is(err, ErrRefNotFound) {
-		t.Fatalf("empty requested ref must be rejected before matching, got %v", err)
+	// The requested ref is the selector. Empty remains a valid explicit library-level string value.
+	emptyIndex := index("[" + d("") + "]")
+	if got, err := selectIndexDescriptor(emptyIndex, ""); err != nil || got != emptyIndex.Get("manifests").Array[0] {
+		t.Fatalf("explicit empty ref must select the exact empty-string annotation: %v", err)
 	}
 	// 4. exactly one match returns THAT descriptor, wherever it sits.
 	for _, tc := range []struct {
@@ -211,9 +212,6 @@ func TestIndexRefNoLatestFallback(t *testing.T) {
 	expectNotFound(t, err, "single v1 descriptor read as latest: no first-descriptor fallback")
 	_, err = ReadOCILayout(dir, "v2")
 	expectNotFound(t, err, "no matching ref")
-	if _, err := ReadOCILayout(dir, ""); err == nil || !errors.Is(err, ErrLayout) {
-		t.Fatalf("empty requested ref: %v", err)
-	}
 	imported, err := ReadOCILayout(dir, "v1")
 	if err != nil {
 		t.Fatal(err)
