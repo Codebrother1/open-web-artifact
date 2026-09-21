@@ -255,14 +255,39 @@ function assertPackedBytes(packed, files) {
   assert.equal(packed.artifactDigest, hash(Buffer.from(canonicalJson(packed.manifest), 'utf8')));
 }
 
-test(`seeded packing ignores filesystem creation order (${ITERATIONS.enumeration}; ${SEED_HEX})`, async () => {
+// Fixed Unicode ordering set (issue #8) added to every enumeration iteration under
+// a collision-safe directory: Greek, CJK, BMP private-use, and two supplementary
+// code points. Names are portable on Linux/macOS/Windows (no case-only pairs, no
+// canonically-equivalent pairs, no forbidden characters). Deterministic bytes.
+const unicodeOrderingFiles = [
+  { path: 'unicode-order/\u{1F331}.txt', data: Buffer.from('U+1F331 seedling\n') },
+  { path: 'unicode-order/Ω.txt', data: Buffer.from('U+03A9 omega\n') },
+  { path: 'unicode-order/\u{10000}.txt', data: Buffer.from('U+10000 linear b\n') },
+  { path: 'unicode-order/.txt', data: Buffer.from('U+E000 private use\n') },
+  { path: 'unicode-order/中.txt', data: Buffer.from('U+4E2D cjk\n') }
+];
+// STATIC anchor for the specified rule, hand-ordered by code point: U+03A9 <
+// U+4E2D < U+E000 < U+10000 < U+1F331. Written literally so a refactor to
+// default .sort() (UTF-16 code units: U+10000's lead surrogate U+D800 < U+E000)
+// or to locale collation fails here regardless of host.
+const expectedUnicodeOrder = ['/unicode-order/Ω.txt', '/unicode-order/中.txt', '/unicode-order/.txt', '/unicode-order/\u{10000}.txt', '/unicode-order/\u{1F331}.txt'];
+// Test-local code-point comparator (independent of packages/spec) for the
+// generated ASCII part of each expected list.
+function codePointOrder(a, b) {
+  const x = Array.from(a, c => c.codePointAt(0)), y = Array.from(b, c => c.codePointAt(0));
+  for (let i = 0; i < Math.min(x.length, y.length); i++) if (x[i] !== y[i]) return x[i] - y[i];
+  return x.length - y.length;
+}
+
+test(`seeded packing ignores filesystem creation order and sorts complete paths by Unicode code point (${ITERATIONS.enumeration}; ${SEED_HEX})`, async () => {
   await property('enumeration', async (rng, iteration, context) => {
-    const files = generatedFiles(rng, iteration);
+    const files = [...generatedFiles(rng, iteration), ...unicodeOrderingFiles];
     const first = shuffle(files, rng);
     // A reverse of a shuffled order is guaranteed to be different (unique paths).
     const second = [...first].reverse();
-    context('pack equal lowercase ASCII trees created in different orders', {
-      files, first: first.map(file => file.path), second: second.map(file => file.path)
+    const expectedPaths = files.map(file => `/${file.path}`).sort(codePointOrder);
+    context('pack equal Unicode-capable trees created in different orders', {
+      files: files.map(file => file.path), first: first.map(file => file.path), second: second.map(file => file.path), expectedPaths
     });
     await withTemp(async root => {
       const aRoot = join(root, 'first'), bRoot = join(root, 'second');
@@ -271,11 +296,15 @@ test(`seeded packing ignores filesystem creation order (${ITERATIONS.enumeration
       const a = await packDirectory(aRoot), b = await packDirectory(bRoot);
       assertPackedBytes(a, files);
       assertPackedBytes(b, files);
+      assert.deepEqual(a.manifest, b.manifest, 'structurally equal manifests');
       assert.equal(canonicalJson(a.manifest), canonicalJson(b.manifest));
       assert.equal(a.artifactDigest, b.artifactDigest);
-      assert.deepEqual(a.manifest.files.map(file => file.path), b.manifest.files.map(file => file.path));
-      // Deliberately no alternative comparator: this property does not redefine
-      // packDirectory's localeCompare order or promise cross-locale collation.
+      // Not merely A == B (both could be deterministically wrong): the exact
+      // specified order, independently computed, and the literal Unicode anchor.
+      assert.deepEqual(a.manifest.files.map(file => file.path), expectedPaths, 'complete artifact paths in Unicode code-point order');
+      assert.deepEqual(a.manifest.files.slice(-expectedUnicodeOrder.length).map(file => file.path), expectedUnicodeOrder, 'U+03A9 < U+4E2D < U+E000 < U+10000 < U+1F331');
+      // No normalization or folding happened: the exact strings created on disk came back.
+      for (const file of unicodeOrderingFiles) assert.ok(a.manifest.files.some(entry => entry.path === `/${file.path}`), `${file.path} preserved exactly`);
     });
   });
 });

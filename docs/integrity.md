@@ -500,5 +500,6 @@ closed; test fixtures use purpose-built mocks.
   following read is outside the model, as for GC.
 
 Issues #8 (locale-independent pack ordering) and #9 (OCI duplicate-content path
-semantics) were out of scope for this work; #9 has since been resolved in the OCI
-transport (see [oci.md](oci.md)), #8 remains open.
+semantics) were out of scope for this work; both have since been resolved — #9 in
+the OCI transport (see [oci.md](oci.md)), #8 in the reference packer (see the
+[directory packing rule](spec-v0.2.md#directory-packing-producer-ordering)).

@@ -12,7 +12,15 @@ export function sha256(data) {
   return `sha256:${createHash('sha256').update(data).digest('hex')}`;
 }
 
-function compareUnicodeCodePoints(a, b) {
+/**
+ * Unicode code-point lexicographic order: compare two strings as sequences of
+ * code-point values, numerically at the first difference, shorter prefix first.
+ * No locale collation, no Unicode normalization, no case folding, no UTF-16
+ * code-unit order. Canonical JSON orders object keys with it, and the reference
+ * directory packer orders complete artifact paths with the SAME relation
+ * (issue #8). Exported additively; the implementation is unchanged.
+ */
+export function compareUnicodeCodePoints(a, b) {
   const aa = Array.from(a, c => c.codePointAt(0));
   const bb = Array.from(b, c => c.codePointAt(0));
   for (let i = 0; i < Math.min(aa.length, bb.length); i++) {

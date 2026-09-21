@@ -117,6 +117,18 @@ A remote-capable store MAY additionally expose a direct-upload instruction such 
 
 The reference implementation includes filesystem and S3-compatible blob stores. The S3 adapter uses Signature V4 and is intended to support R2, AWS S3, MinIO, Backblaze B2, DigitalOcean Spaces, and compatible services subject to provider-specific validation.
 
+## Directory packing (producer ordering)
+Constructing a manifest from a directory is producer behaviour of the reference/conformance `pack` operation, not a property of manifests. When it builds `files`, the pack operation:
+
+1. converts each discovered regular file to its complete OWA artifact path (`/` + the `/`-joined relative path), rejecting symbolic links;
+2. does **not** Unicode-normalize, case-fold or otherwise alter that string — the exact name the host filesystem/runtime exposed is the path;
+3. sorts the complete path strings with the **same Unicode code-point lexicographic relation** specified for canonical object keys in rule 2 above: compare the sequences of code-point values numerically at the first difference; a proper prefix sorts first; no locale collation, no UTF-16 code-unit order, no natural/numeric ordering, no case folding;
+4. places the file entries into `manifest.files` in that order.
+
+Traversal order of the filesystem is irrelevant: only the final sort of complete paths is normative (`/a.txt` sorts before `/a/x.txt` because U+002E precedes U+002F, whatever the directory walk did). Once a manifest exists, its `files` array order is fully specified and preserved by canonicalization; manually authored manifests are **not** required to be sorted, and `validateManifest` does not check ordering.
+
+*Versioning and migration note.* Earlier v0.2 text left arbitrary-Unicode directory-pack ordering undefined (the reference used locale-sensitive collation). Defining it here closes an undefined producer behaviour inside the existing v0.2 draft: no new `specVersion`, media type or manifest field is introduced, canonical JSON and the artifact digest algorithm are unchanged, and every published v0.2 corpus and legacy artifact identity is preserved. Existing stored manifests and releases do not change. Re-packing a directory containing Unicode filenames with an older, locale-sensitive reference and with the corrected one MAY yield a different `files` order and therefore a different artifact digest; no legacy-collation compatibility mode exists because the old result depended on the host's locale/ICU and is not a portable algorithm. The packer operates on the Unicode filename strings the runtime exposes; a portable mapping for filesystem byte names that cannot be represented as such strings is out of scope.
+
 ## Invariants
 1. File contents are addressed by SHA-256 digest.
 2. Manifest identity is independent of JSON object insertion order.
@@ -135,8 +147,8 @@ A site may have many RELEASED artifacts and exactly zero or one ACTIVE release. 
 ## Conformance scope and known limitations
 The [conformance guide](conformance/README.md) defines operation-specific fixture inputs, success fields, and 18 stable error categories. Adapters in any language map local validation and parse errors to those categories; exception classes and human-readable text are not the contract. This is not an HTTP error-response redesign.
 
-Issue 5 does not fix the following existing limitations:
-- The reference directory packer uses locale-sensitive `localeCompare` for file ordering. The pack fixtures pin explicit expected arrays for lowercase ASCII names, not universal cross-locale ordering of arbitrary Unicode filenames. Once a manifest exists, its array order is fully specified and MUST be preserved.
+Issue 5 did not fix the following limitations at the time; their current status is noted:
+- The reference directory packer then used locale-sensitive `localeCompare` for file ordering and pinned only lowercase ASCII expectations. Pack ordering is now defined above ([Directory packing](#directory-packing-producer-ordering), issue #8) as Unicode code-point order of complete artifact paths, with portable Unicode vectors; a manifest's array order was always fully specified once it existed and MUST be preserved.
 - OCI import at the time indexed layers by digest, collapsing entries with the same content digest and their distinct path annotations. Duplicate-content manifests were always valid; the OCI transport later resolved the round trip (issue #9) by selecting one layer descriptor per file entry through its `dev.openwebartifact.path` annotation while blob bytes stay deduplicated by digest — non-normative transport behaviour, see [oci.md](oci.md). Core manifest semantics did not change.
 - *Non-normative OCI transport note:* an OCI layer descriptor `mediaType` must be an RFC 6838 type/subtype, so the OCI transport maps the OWA `mediaType` to that form (`text/html; charset=utf-8` → `text/html`; unrepresentable values → `application/octet-stream`) in descriptors only. The canonical OWA manifest — the OCI config blob — keeps the full value, so manifest validation, canonical JSON and artifact digests are unaffected. See [oci.md](oci.md).
 - Commit checks blob existence, not stored bytes' hashes or lengths. Content-mismatch fixtures exercise existing OCI read/write verification only; they do not add commit-time or S3 verification.
