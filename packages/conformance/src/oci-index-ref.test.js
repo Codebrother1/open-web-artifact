@@ -73,8 +73,10 @@ test('selectIndexDescriptor: exactly one exact string match, or fail — every r
   for (const index of [undefined, null, {}, { manifests: null }, { manifests: {} }, { manifests: 'latest' }, { manifests: latest }]) {
     assert.throws(() => selectIndexDescriptor(index, 'latest'), /OCI index has no manifests array/, JSON.stringify(index));
   }
-  // The requested ref is the selector and must itself be a nonempty string.
-  for (const ref of ['', undefined, null, 0, true, ['latest']]) assert.throws(() => selectIndexDescriptor({ manifests: [latest] }, ref), /OCI reference must be a nonempty string/);
+  // The requested ref must be a string. Empty is preserved as an explicit library-level ref value.
+  for (const ref of [undefined, null, 0, true, ['latest']]) assert.throws(() => selectIndexDescriptor({ manifests: [latest] }, ref), /OCI reference must be a string/);
+  const emptyRef = d('');
+  assert.equal(selectIndexDescriptor({ manifests: [emptyRef] }, ''), emptyRef, 'explicit empty ref still selects an exact empty-string annotation');
   // 4. exactly one match: the very same descriptor object is returned.
   assert.equal(selectIndexDescriptor({ manifests: [latest] }, 'latest'), latest);
   assert.equal(selectIndexDescriptor({ manifests: [v1, latest] }, 'latest'), latest, 'matching descriptor is second');
@@ -125,7 +127,6 @@ test('the undocumented `latest` → manifests[0] fallback is gone: a layout writ
   await assert.rejects(readOciLayout({ input: layout }), /OCI reference not found: latest$/, 'default ref latest, single v1 descriptor: no fallback');
   await assert.rejects(readOciLayout({ input: layout, ref: 'latest' }), /OCI reference not found: latest$/);
   await assert.rejects(readOciLayout({ input: layout, ref: 'v2' }), /OCI reference not found: v2$/, 'no matching ref');
-  await assert.rejects(readOciLayout({ input: layout, ref: '' }), /OCI reference must be a nonempty string/);
   const imported = await readOciLayout({ input: layout, ref: 'v1' });
   assert.equal(imported.artifactDigest, written.artifactDigest); assert.equal(imported.ociManifestDigest, written.ociManifestDigest); assert.equal(imported.ref, 'v1');
 });
