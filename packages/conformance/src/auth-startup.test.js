@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createToken } from '../../server/src/auth.js';
+import { SHARED_ORIGIN_WARNING } from '../../server/src/index.js';
 
 // Exercise main in a real Node child, never createArtifactServer or a test loader.
 // All security inputs are fixed and synthetic. Only ports/temp paths are dynamic;
@@ -117,7 +118,11 @@ async function running(state, mode) {
   assert.ok(ready !== null && !state.spawnFailed && !state.closed, 'server remains running after readiness');
   assert.ok(ready.mode === mode, 'readiness reports the selected auth mode');
   assert.ok(Number.isInteger(ready.port) && ready.port > 0 && ready.port <= 65535, 'PORT=0 log reports the actual bound port');
-  assert.ok(state.stderr === '', 'successful startup has no stderr');
+  // Successful startup prints nothing on stderr except, when no content origin
+  // is configured, the one fixed shared-origin topology warning. Secret, bearer,
+  // cause and stack-trace exclusion is asserted separately over stdout+stderr.
+  assert.ok(state.stderr === '' || state.stderr === `${SHARED_ORIGIN_WARNING}\n`,
+    'successful startup has no stderr beyond the fixed topology warning');
   assert.ok(state.stdout === `artifactd (filesystem, auth ${mode}) listening on port ${ready.port}\n`, 'startup emits only the static readiness line');
   state.port = ready.port;
   return state;

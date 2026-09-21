@@ -9,6 +9,12 @@ import { activateRelease, commitManifest, planManifest, resolveRequestPath } fro
 import { sha256 } from '../../spec/src/index.js';
 import { AuthError, createAuthorizer, isSiteScope } from './auth.js';
 import { artifactHeaders, securityHeaders } from './security-profile.js';
+import { ContentHostError, canonicalContentUrl, createHostBinding } from './content-host.js';
+
+// Paths the content origin must never treat as artifact content, even via SPA
+// fallback. Keeping this explicit stops a future control route from silently
+// becoming reachable (or being masked by a 200) on the public origin.
+const CONTROL_RESERVED_PATH = /^\/(?:v1(?:\/|(?![\s\S]))|health(?![\s\S]))/;
 
 function json(res,status,body){res.writeHead(status,{'content-type':'application/json; charset=utf-8'});res.end(JSON.stringify(body,null,2));}
 async function readJson(req){let raw='';for await(const c of req)raw+=c;return JSON.parse(raw||'{}');}
@@ -52,7 +58,12 @@ export async function createDefaultStores({dataDir=resolve(process.env.OWA_DATA_
   return {blobs:new FilesystemBlobStore(dataDir),metadata,storageKind:'filesystem'};
 }
 
-export function createArtifactServer({blobs,metadata,uploadSecret=randomBytes(32).toString('hex'),publicBaseUrl=null,auth={},audit=null}={}){
+/**
+ * Shared request logic for every listener. Business logic lives here exactly
+ * once; the exported factories below differ only in which dispatchers they
+ * expose on an HTTP origin. See docs/origins.md for the route matrix.
+ */
+function createRuntime({blobs,metadata,uploadSecret=randomBytes(32).toString('hex'),publicBaseUrl=null,auth={},audit=null,content=null}={}){
   if(!blobs||!metadata)throw new Error('blobs and metadata stores are required');
   const authorizer = createAuthorizer(auth); // Required by default; missing secret fails closed.
   if (audit !== null && typeof audit !== 'function') throw new AuthError('OWA_AUTH_CONFIG');
@@ -61,6 +72,19 @@ export function createArtifactServer({blobs,metadata,uploadSecret=randomBytes(32
   if (authorizer.mode === 'required' && Buffer.from(uploadSecret).equals(Buffer.from(auth.secret))) throw new AuthError('OWA_AUTH_CONFIG');
   // Copy this key too; it is independent of the bearer-signing key.
   const localKey = Buffer.from(uploadSecret);
+
+  // Content-origin configuration is operator input only. It is validated once,
+  // here, so a request can never introduce or widen a host->site binding.
+  let binding = null, contentScheme = 'https', contentPort = null;
+  if (content !== null) {
+    if (typeof content !== 'object' || Array.isArray(content)) throw new AuthError('OWA_AUTH_CONFIG');
+    binding = createHostBinding(content);
+    contentScheme = content.scheme ?? 'https';
+    contentPort = content.port ?? null;
+    if (contentScheme !== 'http' && contentScheme !== 'https') throw new AuthError('OWA_AUTH_CONFIG');
+    if (contentPort !== null && (!Number.isSafeInteger(contentPort) || contentPort < 1 || contentPort > 65535)) throw new AuthError('OWA_AUTH_CONFIG');
+  }
+
   function authorize(req, site, capabilities) {
     const claims = authorizer.authorize(req, site, capabilities);
     req.auth = Object.freeze({ jti: claims?.jti ?? null, site });
@@ -78,23 +102,18 @@ export function createArtifactServer({blobs,metadata,uploadSecret=randomBytes(32
     const expiresIn = Math.min(900, remaining);
     return { expiresIn, expires: issuedAt + expiresIn };
   }
-  return createServer(async(req,res)=>{
-    // Install the profile before every route and auth failure. Auth's challenge
-    // and no-store fields are added normally; this never replaces all headers.
-    for (const [name,value] of Object.entries(securityHeaders())) res.setHeader(name,value);
-    try{
-    const target=req.url??'/';
-    if(!target.startsWith('/')||target.includes('#'))return json(res,400,{error:'Invalid request target'});
-    const queryIndex=target.indexOf('?');
-    const rawPath=queryIndex<0?target:target.slice(0,queryIndex);
-    const base=`http://${req.headers.host??'localhost'}`;
-    const url=new URL(target,base);
-    if(req.method==='GET'&&url.pathname==='/health')return json(res,200,{ok:true,spec:'owa.dev/v1'});
+
+  /**
+   * Control plane. Unchanged from the shared-origin prototype: same routes, same
+   * capability checks, same fixed error bodies, same activation default.
+   */
+  async function controlDispatch(req,res,url,rawPath,base){
+    if(req.method==='GET'&&url.pathname==='/health'){json(res,200,{ok:true,spec:'owa.dev/v1'});return true;}
 
     const planMatch=url.pathname.match(/^\/v1\/sites\/([^/]+)\/publish\/plan$/);
     if(req.method==='POST'&&planMatch){
       const slug=routeSite(planMatch[1]);
-      if (!slug) return json(res,400,{error:'Invalid site scope',code:'OWA_INVALID_SITE'});
+      if (!slug) { json(res,400,{error:'Invalid site scope',code:'OWA_INVALID_SITE'}); return true; }
       authorize(req,slug,['plan']);
       const body=await readJson(req);
       authorize(req,slug,['plan']); // A slow body cannot extend authorization.
@@ -111,36 +130,36 @@ export function createArtifactServer({blobs,metadata,uploadSecret=randomBytes(32
           ...(scoped?{authorization:'bearer'}:{})};
       }});
       authorize(req,slug,['plan']); // Includes fully deduplicated plans after HEADs.
-      if(body.artifactDigest&&body.artifactDigest!==plan.artifactDigest)return json(res,400,{error:'artifactDigest does not match canonical manifest'});
+      if(body.artifactDigest&&body.artifactDigest!==plan.artifactDigest){json(res,400,{error:'artifactDigest does not match canonical manifest'});return true;}
       auditOperation(req,'plan');
-      return json(res,200,{slug,...plan});
+      json(res,200,{slug,...plan});return true;
     }
 
     const uploadMatch=url.pathname.match(/^\/v1\/uploads\/(sha256%3A[0-9a-f]{64}|sha256:[0-9a-f]{64})$/i);
     if(req.method==='PUT'&&uploadMatch){
-      if(typeof blobs.createUpload==='function')return json(res,404,{error:'direct S3 uploads do not pass through artifactd'});
+      if(typeof blobs.createUpload==='function'){json(res,404,{error:'direct S3 uploads do not pass through artifactd'});return true;}
       const scoped=authorizer.mode==='required';
       const sites=url.searchParams.getAll('site');
-      if (scoped && (sites.length!==1 || !isSiteScope(sites[0]))) return json(res,400,{error:'Invalid upload scope',code:'OWA_INVALID_SITE'});
-      if (!scoped && sites.length) return json(res,400,{error:'Invalid upload scope',code:'OWA_INVALID_SITE'});
+      if (scoped && (sites.length!==1 || !isSiteScope(sites[0]))) { json(res,400,{error:'Invalid upload scope',code:'OWA_INVALID_SITE'}); return true; }
+      if (!scoped && sites.length) { json(res,400,{error:'Invalid upload scope',code:'OWA_INVALID_SITE'}); return true; }
       // Legacy local grants are usable only in explicitly selected loopback dev.
       authorize(req,scoped?sites[0]:'local',['upload']);
       const digest=decodeURIComponent(uploadMatch[1]).toLowerCase();
       const expiresValues=url.searchParams.getAll('expires'), signatures=url.searchParams.getAll('sig');
       const rawExpires=expiresValues[0], expires=Number(rawExpires);
-      if(expiresValues.length!==1 || !/^[0-9]+(?![\s\S])/.test(rawExpires??'') || !Number.isSafeInteger(expires) || expires<=authorizer.now())return json(res,403,{error:'Upload grant expired or invalid',code:'OWA_UPLOAD_INVALID'});
-      if(signatures.length!==1 || !validUploadSignature(signatures[0],uploadSignature(localKey,digest,expires,scoped?sites[0]:null)))return json(res,403,{error:'Invalid upload signature',code:'OWA_UPLOAD_INVALID'});
+      if(expiresValues.length!==1 || !/^[0-9]+(?![\s\S])/.test(rawExpires??'') || !Number.isSafeInteger(expires) || expires<=authorizer.now()){json(res,403,{error:'Upload grant expired or invalid',code:'OWA_UPLOAD_INVALID'});return true;}
+      if(signatures.length!==1 || !validUploadSignature(signatures[0],uploadSignature(localKey,digest,expires,scoped?sites[0]:null))){json(res,403,{error:'Invalid upload signature',code:'OWA_UPLOAD_INVALID'});return true;}
       const bytes=await readBytes(req);
       authorize(req,scoped?sites[0]:'local',['upload']); // Recheck after receiving a slow body.
-      if (expires<=authorizer.now()) return json(res,403,{error:'Upload grant expired or invalid',code:'OWA_UPLOAD_INVALID'});
-      if(sha256(bytes)!==digest)return json(res,400,{error:'blob digest mismatch'});
-      await blobs.put(digest,new Uint8Array(bytes)); auditOperation(req,'upload'); res.writeHead(204); return res.end();
+      if (expires<=authorizer.now()) { json(res,403,{error:'Upload grant expired or invalid',code:'OWA_UPLOAD_INVALID'}); return true; }
+      if(sha256(bytes)!==digest){json(res,400,{error:'blob digest mismatch'});return true;}
+      await blobs.put(digest,new Uint8Array(bytes)); auditOperation(req,'upload'); res.writeHead(204); res.end(); return true;
     }
 
     const commitMatch=url.pathname.match(/^\/v1\/sites\/([^/]+)\/publish\/commit$/);
     if(req.method==='POST'&&commitMatch){
       const slug=routeSite(commitMatch[1]);
-      if (!slug) return json(res,400,{error:'Invalid site scope',code:'OWA_INVALID_SITE'});
+      if (!slug) { json(res,400,{error:'Invalid site scope',code:'OWA_INVALID_SITE'}); return true; }
       authorize(req,slug,['commit']);
       const body=await readJson(req);
       const activate=body.activate!==false; // Preserve the existing activation default.
@@ -148,68 +167,214 @@ export function createArtifactServer({blobs,metadata,uploadSecret=randomBytes(32
       safeSiteRecord(await metadata.getSite(slug),slug);
       const r=await commitManifest({slug,manifest:body.manifest,expectedArtifactDigest:body.artifactDigest,blobs,metadata,activate});
       auditOperation(req,'commit');
-      return json(res,201,{slug:r.site.slug,releaseId:r.release.id,artifactDigest:r.release.artifactDigest,activeReleaseId:r.site.activeReleaseId});
+      // Canonical public URL, derived only from validated server configuration and
+      // the authorized slug. Never client input; never persisted in the manifest;
+      // omitted entirely when no content origin is configured.
+      const contentUrl=canonicalContentUrl(binding,r.site.slug,{scheme:contentScheme,port:contentPort});
+      json(res,201,{slug:r.site.slug,releaseId:r.release.id,artifactDigest:r.release.artifactDigest,activeReleaseId:r.site.activeReleaseId,
+        ...(contentUrl===null?{}:{contentUrl})});
+      return true;
     }
 
     const a=url.pathname.match(/^\/v1\/sites\/([^/]+)\/activate\/([^/]+)$/);
     if(req.method==='POST'&&a){
       const slug=routeSite(a[1]);
-      if (!slug) return json(res,400,{error:'Invalid site scope',code:'OWA_INVALID_SITE'});
+      if (!slug) { json(res,400,{error:'Invalid site scope',code:'OWA_INVALID_SITE'}); return true; }
       authorize(req,slug,['activate']);
       let releaseId;
-      try { releaseId=decodeURIComponent(a[2]); } catch { return json(res,400,{error:'Invalid release identifier'}); }
-      if (!/^r_[0-9a-f]{20}(?![\s\S])/.test(releaseId)) return json(res,400,{error:'Invalid release identifier'});
+      try { releaseId=decodeURIComponent(a[2]); } catch { json(res,400,{error:'Invalid release identifier'}); return true; }
+      if (!/^r_[0-9a-f]{20}(?![\s\S])/.test(releaseId)) { json(res,400,{error:'Invalid release identifier'}); return true; }
       safeSiteRecord(await metadata.getSite(slug),slug);
       const r=await activateRelease(metadata,slug,releaseId); auditOperation(req,'activate');
-      return json(res,200,{slug:r.site.slug,activeReleaseId:r.release.id});
+      json(res,200,{slug:r.site.slug,activeReleaseId:r.release.id});return true;
     }
     const l=url.pathname.match(/^\/v1\/sites\/([^/]+)\/releases$/);
     if(req.method==='GET'&&l){
       const slug=routeSite(l[1]);
-      if (!slug) return json(res,400,{error:'Invalid site scope',code:'OWA_INVALID_SITE'});
+      if (!slug) { json(res,400,{error:'Invalid site scope',code:'OWA_INVALID_SITE'}); return true; }
       authorize(req,slug,['read']);
       const site=safeSiteRecord(await metadata.getSite(slug),slug);
-      if(!site)return json(res,404,{error:'site not found'});
+      if(!site){json(res,404,{error:'site not found'});return true;}
       const releases=await metadata.listReleases(site.id); auditOperation(req,'read');
-      return json(res,200,{site,releases});
+      json(res,200,{site,releases});return true;
     }
-    const host=(req.headers.host??'').split(':')[0];const slug=host.endsWith('.localhost')?host.slice(0,-10):url.searchParams.get('site');
-    if((req.method==='GET'||req.method==='HEAD')&&slug){
-      if (!isSiteScope(slug)) return json(res,404,{error:'site or active release not found'});
-      const site=safeSiteRecord(await metadata.getSite(slug),slug);if(!site?.activeReleaseId)return json(res,404,{error:'site or active release not found'});
-      if (!/^r_[0-9a-f]{20}(?![\s\S])/.test(site.activeReleaseId)) throw new Error('Invalid active release');
-      const release=await metadata.getRelease(site.id,site.activeReleaseId);if(!release)return json(res,404,{error:'release not found'});
-      if(release.manifest.lifecycle?.expiresAt&&new Date(release.manifest.lifecycle.expiresAt)<=new Date())return json(res,410,{error:'artifact expired'});
-      // Preserve the raw artifact pathname for the unchanged decode-once resolver;
-      // WHATWG URL parsing must not erase traversal before its checks.
-      const file=resolveRequestPath(release.manifest,rawPath);if(!file)return json(res,404,{error:'file not found'});
-      const body=await blobs.get(file.digest);
-      res.writeHead(200,{...artifactHeaders(file.mediaType),'content-length':String(body.byteLength),'etag':`"${file.digest}"`});
-      return res.end(req.method==='HEAD'?undefined:Buffer.from(body));
-    }
-    return json(res,404,{error:'not found'});
-  }catch(e){
-    if (e instanceof AuthError) {
-      if (e.status===401) res.setHeader('www-authenticate','Bearer realm="owa"');
-      res.setHeader('cache-control','no-store');
-      return json(res,e.status,{error:e.message,code:e.code});
-    }
-    // Only a fixed, recognized core failure is surfaced; provider errors and
-    // nested causes can contain presigned URLs and must never be reflected.
-    if (e instanceof Error && /^Missing blob sha256:[0-9a-f]{64}(?![\s\S])/.test(e.message)) return json(res,500,{error:'Missing blob',code:'OWA_BLOB_MISSING'});
-    return json(res,500,{error:'Operation failed',code:'OWA_OPERATION_FAILED'});
-  }});
+    return false;
+  }
+
+  /**
+   * Serve one already-selected site. The caller decides which site; this never
+   * reads Host or query input, so selection and path resolution stay independent.
+   */
+  async function serveSite(req,res,slug,rawPath){
+    if (!isSiteScope(slug)) { json(res,404,{error:'site or active release not found'}); return true; }
+    const site=safeSiteRecord(await metadata.getSite(slug),slug);
+    if(!site?.activeReleaseId){json(res,404,{error:'site or active release not found'});return true;}
+    if (!/^r_[0-9a-f]{20}(?![\s\S])/.test(site.activeReleaseId)) throw new Error('Invalid active release');
+    const release=await metadata.getRelease(site.id,site.activeReleaseId);
+    if(!release){json(res,404,{error:'release not found'});return true;}
+    if(release.manifest.lifecycle?.expiresAt&&new Date(release.manifest.lifecycle.expiresAt)<=new Date()){json(res,410,{error:'artifact expired'});return true;}
+    // Preserve the raw artifact pathname for the unchanged decode-once resolver;
+    // WHATWG URL parsing must not erase traversal before its checks.
+    const file=resolveRequestPath(release.manifest,rawPath);
+    if(!file){json(res,404,{error:'file not found'});return true;}
+    const body=await blobs.get(file.digest);
+    res.writeHead(200,{...artifactHeaders(file.mediaType),'content-length':String(body.byteLength),'etag':`"${file.digest}"`});
+    res.end(req.method==='HEAD'?undefined:Buffer.from(body));
+    return true;
+  }
+
+  /** Prototype shared-origin selection: `.localhost` host, else the `?site=` query. */
+  async function legacyContentDispatch(req,res,url,rawPath){
+    const host=(req.headers.host??'').split(':')[0];
+    const slug=host.endsWith('.localhost')?host.slice(0,-10):url.searchParams.get('site');
+    if((req.method==='GET'||req.method==='HEAD')&&slug) return serveSite(req,res,slug,rawPath);
+    return false;
+  }
+
+  /**
+   * Production content origin: GET/HEAD only, one Host-bound site, no query
+   * selector, and no control route reachable even as an SPA fallback.
+   */
+  async function contentDispatch(req,res,url,rawPath){
+    // Allowlist first, and answer every non-content request with the SAME fixed
+    // 404. A 405 here would confirm which paths and methods the control plane
+    // implements, so the content origin deliberately reveals no method surface.
+    if(CONTROL_RESERVED_PATH.test(rawPath)||(req.method!=='GET'&&req.method!=='HEAD')){json(res,404,{error:'not found'});return true;}
+    // Host is the ONLY site selector here; `?site=` is inert and cannot override it.
+    const slug=binding.resolve(req.headers.host);
+    return serveSite(req,res,slug,rawPath);
+  }
+
+  return {authorizer,binding,controlDispatch,legacyContentDispatch,contentDispatch,
+    contentUrlFor:slug=>canonicalContentUrl(binding,slug,{scheme:contentScheme,port:contentPort})};
 }
+
+/** Wrap a dispatcher in the shared framing, profile and fixed-error contract. */
+function createListener(dispatch){
+  return createServer(async(req,res)=>{
+    // Install the profile before every route and auth failure. Auth's challenge
+    // and no-store fields are added normally; this never replaces all headers.
+    for (const [name,value] of Object.entries(securityHeaders())) res.setHeader(name,value);
+    try{
+      const target=req.url??'/';
+      if(!target.startsWith('/')||target.includes('#'))return json(res,400,{error:'Invalid request target'});
+      const queryIndex=target.indexOf('?');
+      const rawPath=queryIndex<0?target:target.slice(0,queryIndex);
+      // A hostile Host (bad port, brackets, control bytes) must not make URL
+      // construction throw into the generic 500 branch and hide the real reason.
+      // Parsing falls back to an inert base; Host-based decisions never use it.
+      let base;
+      try {
+        base=new URL(`http://${req.headers.host??'localhost'}`).origin;
+        if(base==='null')base='http://invalid.invalid';
+      } catch { base='http://invalid.invalid'; }
+      const url=new URL(target,base);
+      if(await dispatch(req,res,url,rawPath,base))return;
+      return json(res,404,{error:'not found'});
+    }catch(e){
+      if (e instanceof AuthError) {
+        if (e.status===401) res.setHeader('www-authenticate','Bearer realm="owa"');
+        res.setHeader('cache-control','no-store');
+        return json(res,e.status,{error:e.message,code:e.code});
+      }
+      // Fixed Host-binding failures. The body never echoes the received Host.
+      if (e instanceof ContentHostError) return json(res,e.status,{error:e.message,code:e.code});
+      // Only a fixed, recognized core failure is surfaced; provider errors and
+      // nested causes can contain presigned URLs and must never be reflected.
+      if (e instanceof Error && /^Missing blob sha256:[0-9a-f]{64}(?![\s\S])/.test(e.message)) return json(res,500,{error:'Missing blob',code:'OWA_BLOB_MISSING'});
+      return json(res,500,{error:'Operation failed',code:'OWA_OPERATION_FAILED'});
+    }
+  });
+}
+
+/**
+ * Prototype/dev server: control plane AND content on ONE origin, with the
+ * `?site=`/`.localhost` selector. Unchanged behavior, but it is explicitly not
+ * the production topology; see createControlServer/createContentServer.
+ */
+export function createArtifactServer(options={}){
+  const runtime=createRuntime(options);
+  return createListener(async(req,res,url,rawPath,base)=>
+    await runtime.controlDispatch(req,res,url,rawPath,base) || await runtime.legacyContentDispatch(req,res,url,rawPath));
+}
+
+/**
+ * Control origin: authenticated publishing, activation, release listing, health.
+ * Serves no artifact content, so a hostile artifact never shares this origin.
+ */
+export function createControlServer(options={}){
+  const runtime=createRuntime(options);
+  return createListener((req,res,url,rawPath,base)=>runtime.controlDispatch(req,res,url,rawPath,base));
+}
+
+/**
+ * Content origin: public artifact GET/HEAD for exactly the Host-bound site.
+ * Requires content host configuration and never authenticates a request.
+ */
+export function createContentServer({blobs,metadata,content}={}){
+  if(content===null||content===undefined)throw new AuthError('OWA_AUTH_CONFIG');
+  // Content serving is public by construction: no bearer, no upload key, and no
+  // control routes exist on this listener, so dev auth mode is irrelevant here.
+  const runtime=createRuntime({blobs,metadata,content,uploadSecret:randomBytes(32).toString('hex'),auth:{mode:'dev'}});
+  return createListener((req,res,url,rawPath)=>runtime.contentDispatch(req,res,url,rawPath));
+}
+
+/**
+ * Read content-origin configuration from the environment. Returns null when no
+ * content origin is configured, which selects the legacy shared-origin topology.
+ * Nothing here is ever derived from a request; see docs/origins.md.
+ */
+export function contentConfigFromEnv(env=process.env){
+  const baseDomain=env.OWA_CONTENT_BASE_DOMAIN??null;
+  const rawMap=env.OWA_CONTENT_HOST_MAP??null;
+  if(baseDomain===null&&rawMap===null)return null;
+  let hosts=null;
+  if(rawMap!==null){
+    // A malformed map must fail startup, never silently bind nothing.
+    try { hosts=JSON.parse(rawMap); } catch { throw new AuthError('OWA_AUTH_CONFIG'); }
+  }
+  const rawPort=env.OWA_CONTENT_PUBLIC_PORT;
+  return {
+    baseDomain,
+    hosts,
+    scheme:env.OWA_CONTENT_SCHEME??'https',
+    port:rawPort===undefined||rawPort===''?null:Number(rawPort)
+  };
+}
+
+// Exactly this text, so operators and tests can match it without parsing prose.
+export const SHARED_ORIGIN_WARNING='artifactd: no content origin configured; serving control and content on one origin with the prototype query selector. See docs/origins.md.';
 
 async function main(){
   const mode=process.argv.includes('--dev')?'dev':(process.env.OWA_AUTH_MODE??'required');
   const auth={mode,secret:process.env.OWA_AUTH_SECRET};
   createAuthorizer(auth); // Fail before opening storage or a listener.
-  const port=Number(process.env.PORT??7331); const stores=await createDefaultStores();
-  const server=createArtifactServer({...stores,auth,publicBaseUrl:process.env.OWA_PUBLIC_BASE_URL??null});
-  const host=mode==='dev'?'127.0.0.1':(process.env.HOST??'127.0.0.1');
-  server.listen(port,host,()=>console.log(`artifactd (${stores.storageKind}, auth ${mode}) listening on port ${server.address().port}`));
-  server.on('error',()=>{console.error('artifactd failed to listen');process.exitCode=1;});
+  const content=contentConfigFromEnv();
+  const stores=await createDefaultStores();
+  const controlPort=Number(process.env.OWA_CONTROL_PORT??process.env.PORT??7331);
+  const controlHost=mode==='dev'?'127.0.0.1':(process.env.OWA_CONTROL_HOST??process.env.HOST??'127.0.0.1');
+  const listeners=[];
+
+  if(content===null){
+    // Legacy prototype topology: control and content share ONE origin and the
+    // `?site=` selector is live. Announce it; this must never be mistaken for
+    // the production boundary, which requires a configured content origin.
+    const server=createArtifactServer({...stores,auth,publicBaseUrl:process.env.OWA_PUBLIC_BASE_URL??null});
+    listeners.push(['artifactd',server,controlPort,controlHost]);
+    // One fixed line on stderr. The readiness line on stdout is unchanged, so
+    // existing supervisors keep working, but the weaker topology is never silent.
+    console.warn(SHARED_ORIGIN_WARNING);
+  } else {
+    const contentPort=Number(process.env.OWA_CONTENT_LISTEN_PORT??7332);
+    const contentHost=mode==='dev'?'127.0.0.1':(process.env.OWA_CONTENT_LISTEN_HOST??process.env.HOST??'127.0.0.1');
+    listeners.push(['artifactd control',createControlServer({...stores,auth,content,publicBaseUrl:process.env.OWA_PUBLIC_BASE_URL??null}),controlPort,controlHost]);
+    listeners.push(['artifactd content',createContentServer({...stores,content}),contentPort,contentHost]);
+  }
+
+  for(const [label,server,port,host] of listeners){
+    server.listen(port,host,()=>console.log(`${label} (${stores.storageKind}, auth ${mode}) listening on port ${server.address().port}`));
+    server.on('error',()=>{console.error(`${label} failed to listen`);process.exitCode=1;});
+  }
 }
 
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href){

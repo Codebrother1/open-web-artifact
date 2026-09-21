@@ -83,7 +83,7 @@
               },
               "url": {
                 "type": "string",
-                "description": "Public gateway URL, not an upload grant or a claim of origin isolation."
+                "description": "Canonical public content URL returned by the server. Absent when the server has no content origin configured. Not an upload grant."
               }
             },
             "required": [
@@ -93,8 +93,7 @@
               "releaseId",
               "activeReleaseId",
               "uploaded",
-              "reused",
-              "url"
+              "reused"
             ],
             "additionalProperties": false
           },

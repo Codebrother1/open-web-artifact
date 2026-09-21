@@ -167,7 +167,7 @@ include both success and the error shape documented later.
 | `releaseId` | `r_` plus exactly 20 lowercase hexadecimal characters. |
 | `activeReleaseId` | A release ID or `null` for `publish` and `list_releases`. For `activate` and `rollback`, a non-null release ID equal to the explicitly requested ID. |
 | `uploaded`, `reused` | Integers from 0 through 9007199254740991 inclusive, counting **unique blobs**, not filenames or bytes. Plan validation additionally checks their total against the packed unique-blob count. |
-| `url` | String constructed as `${configuredOrigin}/?site=${site}`. A public gateway URL, **not a presigned upload URL**. It selects the site's active content, not necessarily the newly staged release, and does not establish per-site origin isolation. |
+| `url` | **Optional.** The canonical public content URL exactly as returned by the server's commit response (`contentUrl`), never synthesized by the adapter. Absent when the server has no content origin configured; the adapter emits no URL rather than guessing one. A public content URL, **not a presigned upload URL**. It selects the site's active content, not necessarily the newly staged release. |
 | `releases` | Array of all release metadata returned by the current HTTP listing, possibly empty; no adapter pagination or selection. Each item has only the three declared fields. |
 | `createdAt` | A valid UTC timestamp of the exact form `YYYY-MM-DDTHH:mm:ss.sssZ`; runtime validation requires a finite date and an identical ISO round-trip. |
 
@@ -375,12 +375,17 @@ this adapter boundary; configure those not to expose secrets either.
   identical artifact. Blob deduplication is not release-level idempotency.
 - Listing uses the current HTTP endpoint without pagination and excludes its
   full manifests from the MCP result. Large listings can still be large.
-- Public artifact access, shared-CAS limitations, site/capability auth boundaries,
-  and missing enforced content/control origin isolation are unchanged. The
-  [`sandboxed-web-v1` profile](sandboxed-web-v1.md) is an independent
+- Public artifact access, shared-CAS limitations and site/capability auth
+  boundaries are unchanged. Content/control origin isolation is now provided by
+  the server, not the adapter: see
+  [control and content origins](origins.md). The adapter holds no
+  content-domain policy, does not synthesize `/?site=`, and surfaces only the
+  server's canonical URL. The
+  [`sandboxed-web-v1` profile](sandboxed-web-v1.md) remains an independent
   script-disabled HTTP response policy, not an MCP/browser execution guarantee.
-  The returned `?site=` URL does not fix shared-origin hosting. See the
-  [auth guide](auth.md) and [threat model](sandboxed-web-v1-threat-model.md).
+  A returned URL is not by itself proof that the deployment separated origins.
+  See the [auth guide](auth.md) and
+  [threat model](sandboxed-web-v1-threat-model.md).
 
 ## Tests and evidence
 

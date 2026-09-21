@@ -282,20 +282,28 @@ deployment requirements, not capabilities enforced by the current prototype.
 
 `http://a.localhost:7331` and `http://b.localhost:7331` have different URL origins
 (the hostname differs). This alone does not establish independent cookie jars
-or all browser "site" boundaries. The prototype also accepts `?site=a` and
-`?site=b` on the **same** origin, and dispatches control/API routes on **every**
-host before artifact routing. Those routes have the separate auth overlay's
-capability and identifier checks; they are not removed from content hosts.
-Artifact GET/HEAD and health remain public. `.localhost` host selection takes
-precedence over the query selector. Neither the CSP nor the profile marker
-disables those routes. Do not describe the reference development server as
-enforcing content/control separation or production multi-tenant isolation.
+or all browser "site" boundaries.
 
-The minimum future architectural work is explicit Host-to-site binding, a
-content-only listener/origin separated from control/admin/API listeners, and
-removal of the shared-origin `?site=` selector on content delivery. This profile
-documents that requirement; composing it with the existing auth overlay does
-**not** implement host management or a new routing architecture.
+As of v0.4 the reference server offers a content-only origin that implements the
+topology this profile requires: explicit Host-to-site binding, no control/API
+route on the content listener, and no `?site=` selector. See
+[control and content origins](origins.md). Neither the CSP nor the profile
+marker is what removes those routes — the listener's route surface is.
+
+The **legacy shared-origin server** remains available and unchanged for
+compatibility and for the existing test corpus. On it, the prototype still
+accepts `?site=a` and `?site=b` on the **same** origin and dispatches control/API
+routes on **every** host before artifact routing. Those routes have the separate
+auth overlay's capability and identifier checks; they are not removed from
+content hosts. Artifact GET/HEAD and health remain public, and `.localhost` host
+selection takes precedence over the query selector. Do not describe that legacy
+server as enforcing content/control separation or production multi-tenant
+isolation.
+
+Origin separation is deployment topology, not a response-policy capability.
+Composing this profile with the auth overlay still does **not** implement host
+management, custom-domain ownership, or protection from a proxy that rewrites
+`Host`.
 
 ## Raw HTTP request targets and the unchanged resolver
 

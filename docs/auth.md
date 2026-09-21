@@ -392,12 +392,16 @@ hooks, keep only the safe fields and protect the resulting operational metadata.
   manifest visibility is unlisted. `read` protects control-plane release and
   manifest inspection, not public artifact retrieval.
 - The composed [`sandboxed-web-v1` profile](sandboxed-web-v1.md) supplies a
-  script-disabled response policy, not content-only origin or service-worker
-  isolation. Protected control routes still exist on every host, and `?site=`
-  still multiplexes sites on one origin. The profile's required production
-  topology is not implemented; fresh origins/browser state remain operator
-  responsibilities. Do not treat this prototype as a full production multi-tenant
-  hosting service.
+  script-disabled response policy, not service-worker isolation. Origin topology
+  is supplied separately by the v0.4
+  [control/content origin split](origins.md): a configured content origin serves
+  artifact GET/HEAD only and exposes no bearer-protected route. This auth model
+  is unchanged by that split — same token format, capabilities, scopes, errors
+  and challenges — and the control listener keeps the entire authenticated
+  surface. On the legacy shared-origin server, protected control routes still
+  exist on every host and `?site=` still multiplexes sites on one origin. Fresh
+  origins and browser state remain operator responsibilities. Do not treat this
+  reference server as a full production multi-tenant hosting service.
 
 ## Tests
 

@@ -18,7 +18,12 @@ const error = object({
     status: { type: 'integer', minimum: 100, maximum: 599 }
   }, ['code', 'category', 'message'])
 });
-const output = properties => ({ type: 'object', oneOf: [object({ ok: { const: true }, ...properties }), error] });
+// required defaults to every property; pass an explicit list to make a field
+// optional, as `url` is now that the server may legitimately supply no URL.
+const output = (properties, required = null) => ({
+  type: 'object',
+  oneOf: [object({ ok: { const: true }, ...properties }, required === null ? undefined : ['ok', ...required]), error]
+});
 const mutation = { readOnlyHint: false, destructiveHint: true, openWorldHint: true };
 const activationInput = object({ site, server, releaseId });
 const activationOutput = output({ site, activeReleaseId: releaseId });
@@ -38,8 +43,8 @@ export const TOOLS = [
     }, ['site', 'server', 'directory']),
     outputSchema: output({
       site, artifactDigest, releaseId, activeReleaseId, uploaded: count, reused: count,
-      url: { type: 'string', description: 'Public gateway URL, not an upload grant or a claim of origin isolation.' }
-    }),
+      url: { type: 'string', description: 'Canonical public content URL returned by the server. Absent when the server has no content origin configured. Not an upload grant.' }
+    }, ['site', 'artifactDigest', 'releaseId', 'activeReleaseId', 'uploaded', 'reused']),
     annotations: mutation
   },
   {

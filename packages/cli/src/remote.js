@@ -143,19 +143,35 @@ export async function remotePublishResult(directory, slug, server, { activate = 
   if (commit.slug !== slug || !isRelease(commit.releaseId) || !isDigest(commit.artifactDigest)
     || commit.artifactDigest !== packed.artifactDigest || !isActiveRelease(commit.activeReleaseId))
     throw new CliError('OWA_CLI_RESPONSE');
+  // The canonical public URL is whatever the control plane returns; the CLI never
+  // reconstructs host mapping locally. It is still validated as a credential-free
+  // absolute http(s) URL so a control bearer can never ride along in a printed
+  // address, and an absent or unusable value simply yields no URL at all.
+  const contentUrl = publicContentUrl(commit.contentUrl);
   return {
     site: slug,
     artifactDigest: commit.artifactDigest,
     releaseId: commit.releaseId,
     activeReleaseId: commit.activeReleaseId,
     uploaded: uploads.length,
-    reused: plan.reused
+    reused: plan.reused,
+    ...(contentUrl === null ? {} : { contentUrl })
   };
+}
+
+/** Accept only a credential-free absolute http(s) URL, else null. Never throws. */
+export function publicContentUrl(value) {
+  if (value === undefined || value === null) return null;
+  let url;
+  try { url = httpUrl(value, 'OWA_CLI_RESPONSE'); } catch { return null; }
+  if (url.username || url.password || url.search || url.hash) return null;
+  return url.href;
 }
 
 export async function remotePublish(directory, slug, server, { activate = true } = {}) {
   const result = await remotePublishResult(directory, slug, server, { activate });
-  return `Published ${result.releaseId}\nArtifact ${result.artifactDigest}\nUploaded ${result.uploaded} blob(s), reused ${result.reused}`;
+  return `Published ${result.releaseId}\nArtifact ${result.artifactDigest}\nUploaded ${result.uploaded} blob(s), reused ${result.reused}`
+    + (result.contentUrl ? `\nPublic URL: ${result.contentUrl}` : '');
 }
 
 export async function remoteReleasesResult(slug, server) {

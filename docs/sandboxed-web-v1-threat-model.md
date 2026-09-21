@@ -26,11 +26,18 @@ or a claim that auth design preceded the standalone profile.
   control-plane/admin/API origin, preferably on a separate registrable domain.
   Do not set parent-domain credentials on content hosts. One site per hostname
   gives URL-origin separation, not automatically separate cookie/site boundaries.
-- The current reference gateway does NOT enforce this deployment topology.
-  `a.localhost` and `b.localhost` are distinct URL origins, but the `?site=` fallback
-  multiplexes sites on one origin and control routes exist on every host. Those
-  routes are now auth-protected and identifier-checked, not absent from content
-  hosts. This is a prototype/development convenience, not an isolation guarantee.
+- As of v0.4 the reference server CAN enforce this deployment topology: a
+  configured content origin serves artifact GET/HEAD only, binds one `Host` to
+  one site, and exposes no control route or `?site=` selector. See
+  [control and content origins](origins.md). It does not defend against a proxy
+  that rewrites `Host`, nor against browser state already held for a reused
+  hostname.
+- With no content origin configured the server runs the legacy shared-origin
+  prototype. There, `a.localhost` and `b.localhost` are distinct URL origins, but
+  the `?site=` fallback multiplexes sites on one origin and control routes exist
+  on every host. Those routes are auth-protected and identifier-checked, not
+  absent from content hosts. That is a development convenience, not an isolation
+  guarantee.
 - Bare CSP `sandbox` gives protected documents an opaque origin. It does not
   rewrite the request URL, strip incoming cookies, create cookie jars, make all
   requests credential-free, or remove APIs from an origin. Headers cannot repair
