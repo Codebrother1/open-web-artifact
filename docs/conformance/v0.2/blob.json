@@ -9,7 +9,8 @@
     "The write size-mismatch sample intentionally has both wrong length and digest: the existing write boundary checks size first. Read content-size sample has the correct digest but manifest and layer both declare size 4 for the 3-byte blob.",
     "Success checks artifact identity and exact returned blob bytes. Failure checks only the stable errorCategory, never human-readable messages. No S3 behavior is changed or assumed.",
     "oci-read layouts carry the transport descriptor representation: each layer mediaType is the RFC 6838 type/subtype of the OWA file mediaType (parameters such as \"; charset=utf-8\" removed; a value that is not a valid type/subtype becomes application/octet-stream), while the config blob keeps the full OWA mediaType. The reader requires that mapped value; a layer carrying the parameterized or a different media type is rejected. See docs/oci.md.",
-    "Duplicate content (issue #9): blob-write-duplicate-content and blob-read-duplicate-content are the portable anchors for several file entries sharing one content digest. One OCI layer descriptor exists per file entry, identified by dev.openwebartifact.path; repeated descriptors reference the same blob digest, whose bytes appear once in input.blobs / the layout and once in expected.blobs; the config keeps each entry's full OWA mediaType while descriptors carry the mapped per-entry type; descriptor order is not file order."
+    "Duplicate content (issue #9): blob-write-duplicate-content and blob-read-duplicate-content are the portable anchors for several file entries sharing one content digest. One OCI layer descriptor exists per file entry, identified by dev.openwebartifact.path; repeated descriptors reference the same blob digest, whose bytes appear once in input.blobs / the layout and once in expected.blobs; the config keeps each entry's full OWA mediaType while descriptors carry the mapped per-entry type; descriptor order is not file order.",
+    "Index reference selection (issue #36): readOciLayout selects the index.json descriptor whose annotations carry org.opencontainers.image.ref.name as a string exactly equal to the requested ref, and requires exactly ONE such descriptor: zero matches and duplicate matches both fail, descriptor order never breaks a tie, a missing annotations object, missing key, null, number, boolean, empty or different string never matches, and requesting latest does NOT fall back to manifests[0]. blob-read-index-exact-ref-selection is the portable success anchor: its index lists a complete decoy artifact under ref v1 FIRST and the expected artifact under latest SECOND, so a first-descriptor or positional reader imports the wrong artifact. Selection failures are transport-local OCI layout errors without a portable OWA errorCategory, so they are pinned by direct tests in both implementations rather than by negative vectors. See docs/oci.md."
   ],
   "vectors": [
     {
@@ -440,6 +441,84 @@
           {
             "digest": "sha256:a4d26868017c0ccffe2efe50944ef4211834660cca834c6e9f86dec6a88246fa",
             "contentBase64": "c2hhcmVk"
+          }
+        ]
+      }
+    },
+    {
+      "id": "blob-read-index-exact-ref-selection",
+      "description": "An independently authored OCI layout whose index.json lists TWO complete, importable artifacts: manifests[0] carries org.opencontainers.image.ref.name v1 (a decoy) and manifests[1] carries latest. The harness reads latest, so the expected manifest, canonical bytes, artifact digest and blobs are the SECOND descriptor's. Selection is by exact, unique ref.name match only (issue #36): a reader that fell back to the first descriptor, or selected by position, would import the decoy and fail this vector.",
+      "input": {
+        "boundary": "oci-read",
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:35d03f83cfe558c8126e8d71e8be1ab3a082aeaab6e276d991ca2a2cb10c1c10",
+              "size": 82,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/notes.txt",
+              "digest": "sha256:212e1766e4c497ca126ee26ceb0e6860b37350f1cf333ffd154f5f4e086effe1",
+              "size": 43,
+              "mediaType": "text/plain; charset=utf-8"
+            }
+          ]
+        },
+        "layoutFiles": [
+          {
+            "path": "oci-layout",
+            "contentBase64": "eyJpbWFnZUxheW91dFZlcnNpb24iOiIxLjAuMCJ9"
+          },
+          {
+            "path": "index.json",
+            "contentBase64": "eyJtYW5pZmVzdHMiOlt7ImFubm90YXRpb25zIjp7ImRldi5vcGVud2ViYXJ0aWZhY3QuYXJ0aWZhY3QuZGlnZXN0Ijoic2hhMjU2OmY3ZjM2NjZiYTY3ZjEwY2JhMDIyNTYxNGMwZDdjYjNiNjMxMWI0ZDRiYjYxZDBjYzk2MzQ5ZDI1YTVjYzVlNzQiLCJvcmcub3BlbmNvbnRhaW5lcnMuaW1hZ2UucmVmLm5hbWUiOiJ2MSJ9LCJhcnRpZmFjdFR5cGUiOiJhcHBsaWNhdGlvbi92bmQub3BlbndlYmFydGlmYWN0LnNpdGUudjEranNvbiIsImRpZ2VzdCI6InNoYTI1NjoyZmQ3NjhjMjMzNjgzYjljNDMwNmMyODA5YTI4ZmI0OTJkNjA3ZTk3MDdiNjg5MjEwNzI0ZGU0OTgwMjc4NzlkIiwibWVkaWFUeXBlIjoiYXBwbGljYXRpb24vdm5kLm9jaS5pbWFnZS5tYW5pZmVzdC52MStqc29uIiwic2l6ZSI6NjYzfSx7ImFubm90YXRpb25zIjp7ImRldi5vcGVud2ViYXJ0aWZhY3QuYXJ0aWZhY3QuZGlnZXN0Ijoic2hhMjU2OjY3NDBiOWY1NzcxNzQzM2Q2NWZjYTI1MGEwOGIzZjU0ZDU2ZjVjYWM3YTFhYTYyMWNlYWI0YmI4YmJkZGI4MTUiLCJvcmcub3BlbmNvbnRhaW5lcnMuaW1hZ2UucmVmLm5hbWUiOiJsYXRlc3QifSwiYXJ0aWZhY3RUeXBlIjoiYXBwbGljYXRpb24vdm5kLm9wZW53ZWJhcnRpZmFjdC5zaXRlLnYxK2pzb24iLCJkaWdlc3QiOiJzaGEyNTY6NTVlYmJhMzk4MzYwMzdlNGYwODE3ZTc4ZjEyYzUyNGVlMzc2YmQ1ZWI2ODJiNjc3YTk0ZmFjOWRlNDY0ZGYzOSIsIm1lZGlhVHlwZSI6ImFwcGxpY2F0aW9uL3ZuZC5vY2kuaW1hZ2UubWFuaWZlc3QudjEranNvbiIsInNpemUiOjg4NH1dLCJtZWRpYVR5cGUiOiJhcHBsaWNhdGlvbi92bmQub2NpLmltYWdlLmluZGV4LnYxK2pzb24iLCJzY2hlbWFWZXJzaW9uIjoyfQ=="
+          },
+          {
+            "path": "blobs/sha256/f7f3666ba67f10cba0225614c0d7cb3b6311b4d4bb61d0cc96349d25a5cc5e74",
+            "contentBase64": "eyJhcnRpZmFjdFR5cGUiOiJhcHBsaWNhdGlvbi92bmQub3BlbndlYmFydGlmYWN0LnNpdGUudjEranNvbiIsImVudHJ5cG9pbnQiOiIvaW5kZXguaHRtbCIsImZpbGVzIjpbeyJkaWdlc3QiOiJzaGEyNTY6OTQyNzU5N2QxMWNkNzVmZDBkYzI5YzBjNWI5MTZiN2E5YWNhNDUwZmMyMDhkNjE1NTIyMTNiOTZiMjRiZmNjNiIsIm1lZGlhVHlwZSI6InRleHQvaHRtbDsgY2hhcnNldD11dGYtOCIsInBhdGgiOiIvaW5kZXguaHRtbCIsInNpemUiOjg0fV0sInNwZWNWZXJzaW9uIjoib3dhLmRldi92MSJ9"
+          },
+          {
+            "path": "blobs/sha256/2fd768c233683b9c4306c2809a28fb492d607e9707b689210724de498027879d",
+            "contentBase64": "eyJhbm5vdGF0aW9ucyI6eyJkZXYub3BlbndlYmFydGlmYWN0LmFydGlmYWN0LmRpZ2VzdCI6InNoYTI1NjpmN2YzNjY2YmE2N2YxMGNiYTAyMjU2MTRjMGQ3Y2IzYjYzMTFiNGQ0YmI2MWQwY2M5NjM0OWQyNWE1Y2M1ZTc0In0sImFydGlmYWN0VHlwZSI6ImFwcGxpY2F0aW9uL3ZuZC5vcGVud2ViYXJ0aWZhY3Quc2l0ZS52MStqc29uIiwiY29uZmlnIjp7ImRpZ2VzdCI6InNoYTI1NjpmN2YzNjY2YmE2N2YxMGNiYTAyMjU2MTRjMGQ3Y2IzYjYzMTFiNGQ0YmI2MWQwY2M5NjM0OWQyNWE1Y2M1ZTc0IiwibWVkaWFUeXBlIjoiYXBwbGljYXRpb24vdm5kLm9wZW53ZWJhcnRpZmFjdC5zaXRlLnYxK2pzb24iLCJzaXplIjoyODJ9LCJsYXllcnMiOlt7ImFubm90YXRpb25zIjp7ImRldi5vcGVud2ViYXJ0aWZhY3QucGF0aCI6Ii9pbmRleC5odG1sIiwib3JnLm9wZW5jb250YWluZXJzLmltYWdlLnRpdGxlIjoiaW5kZXguaHRtbCJ9LCJkaWdlc3QiOiJzaGEyNTY6OTQyNzU5N2QxMWNkNzVmZDBkYzI5YzBjNWI5MTZiN2E5YWNhNDUwZmMyMDhkNjE1NTIyMTNiOTZiMjRiZmNjNiIsIm1lZGlhVHlwZSI6InRleHQvaHRtbCIsInNpemUiOjg0fV0sIm1lZGlhVHlwZSI6ImFwcGxpY2F0aW9uL3ZuZC5vY2kuaW1hZ2UubWFuaWZlc3QudjEranNvbiIsInNjaGVtYVZlcnNpb24iOjJ9"
+          },
+          {
+            "path": "blobs/sha256/9427597d11cd75fd0dc29c0c5b916b7a9aca450fc208d61552213b96b24bfcc6",
+            "contentBase64": "PCFkb2N0eXBlIGh0bWw+PGgxPnYxOiB0aGUgZGVjb3kgdGhhdCBhIGZpcnN0LWRlc2NyaXB0b3IgZmFsbGJhY2sgd291bGQgaW1wb3J0PC9oMT4K"
+          },
+          {
+            "path": "blobs/sha256/6740b9f57717433d65fca250a08b3f54d56f5cac7a1aa621ceab4bb8bbddb815",
+            "contentBase64": "eyJhcnRpZmFjdFR5cGUiOiJhcHBsaWNhdGlvbi92bmQub3BlbndlYmFydGlmYWN0LnNpdGUudjEranNvbiIsImVudHJ5cG9pbnQiOiIvaW5kZXguaHRtbCIsImZpbGVzIjpbeyJkaWdlc3QiOiJzaGEyNTY6MzVkMDNmODNjZmU1NThjODEyNmU4ZDcxZThiZTFhYjNhMDgyYWVhYWI2ZTI3NmQ5OTFjYTJhMmNiMTBjMWMxMCIsIm1lZGlhVHlwZSI6InRleHQvaHRtbDsgY2hhcnNldD11dGYtOCIsInBhdGgiOiIvaW5kZXguaHRtbCIsInNpemUiOjgyfSx7ImRpZ2VzdCI6InNoYTI1NjoyMTJlMTc2NmU0YzQ5N2NhMTI2ZWUyNmNlYjBlNjg2MGIzNzM1MGYxY2YzMzNmZmQxNTRmNWY0ZTA4NmVmZmUxIiwibWVkaWFUeXBlIjoidGV4dC9wbGFpbjsgY2hhcnNldD11dGYtOCIsInBhdGgiOiIvbm90ZXMudHh0Iiwic2l6ZSI6NDN9XSwic3BlY1ZlcnNpb24iOiJvd2EuZGV2L3YxIn0="
+          },
+          {
+            "path": "blobs/sha256/55ebba39836037e4f0817e78f12c524ee376bd5eb682b677a94fac9de464df39",
+            "contentBase64": "eyJhbm5vdGF0aW9ucyI6eyJkZXYub3BlbndlYmFydGlmYWN0LmFydGlmYWN0LmRpZ2VzdCI6InNoYTI1Njo2NzQwYjlmNTc3MTc0MzNkNjVmY2EyNTBhMDhiM2Y1NGQ1NmY1Y2FjN2ExYWE2MjFjZWFiNGJiOGJiZGRiODE1In0sImFydGlmYWN0VHlwZSI6ImFwcGxpY2F0aW9uL3ZuZC5vcGVud2ViYXJ0aWZhY3Quc2l0ZS52MStqc29uIiwiY29uZmlnIjp7ImRpZ2VzdCI6InNoYTI1Njo2NzQwYjlmNTc3MTc0MzNkNjVmY2EyNTBhMDhiM2Y1NGQ1NmY1Y2FjN2ExYWE2MjFjZWFiNGJiOGJiZGRiODE1IiwibWVkaWFUeXBlIjoiYXBwbGljYXRpb24vdm5kLm9wZW53ZWJhcnRpZmFjdC5zaXRlLnYxK2pzb24iLCJzaXplIjo0Mzd9LCJsYXllcnMiOlt7ImFubm90YXRpb25zIjp7ImRldi5vcGVud2ViYXJ0aWZhY3QucGF0aCI6Ii9pbmRleC5odG1sIiwib3JnLm9wZW5jb250YWluZXJzLmltYWdlLnRpdGxlIjoiaW5kZXguaHRtbCJ9LCJkaWdlc3QiOiJzaGEyNTY6MzVkMDNmODNjZmU1NThjODEyNmU4ZDcxZThiZTFhYjNhMDgyYWVhYWI2ZTI3NmQ5OTFjYTJhMmNiMTBjMWMxMCIsIm1lZGlhVHlwZSI6InRleHQvaHRtbCIsInNpemUiOjgyfSx7ImFubm90YXRpb25zIjp7ImRldi5vcGVud2ViYXJ0aWZhY3QucGF0aCI6Ii9ub3Rlcy50eHQiLCJvcmcub3BlbmNvbnRhaW5lcnMuaW1hZ2UudGl0bGUiOiJub3Rlcy50eHQifSwiZGlnZXN0Ijoic2hhMjU2OjIxMmUxNzY2ZTRjNDk3Y2ExMjZlZTI2Y2ViMGU2ODYwYjM3MzUwZjFjZjMzM2ZmZDE1NGY1ZjRlMDg2ZWZmZTEiLCJtZWRpYVR5cGUiOiJ0ZXh0L3BsYWluIiwic2l6ZSI6NDN9XSwibWVkaWFUeXBlIjoiYXBwbGljYXRpb24vdm5kLm9jaS5pbWFnZS5tYW5pZmVzdC52MStqc29uIiwic2NoZW1hVmVyc2lvbiI6Mn0="
+          },
+          {
+            "path": "blobs/sha256/35d03f83cfe558c8126e8d71e8be1ab3a082aeaab6e276d991ca2a2cb10c1c10",
+            "contentBase64": "PCFkb2N0eXBlIGh0bWw+PGgxPmxhdGVzdDogc2VsZWN0ZWQgYnkgZXhhY3QgcmVmLm5hbWUsIG5vdCBieSBhcnJheSBwb3NpdGlvbjwvaDE+Cg=="
+          },
+          {
+            "path": "blobs/sha256/212e1766e4c497ca126ee26ceb0e6860b37350f1cf333ffd154f5f4e086effe1",
+            "contentBase64": "dGhlIGluZGV4IGxpc3RzIHYxIGZpcnN0IGFuZCBsYXRlc3Qgc2Vjb25kCg=="
+          }
+        ]
+      },
+      "expected": {
+        "canonicalJson": "{\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:35d03f83cfe558c8126e8d71e8be1ab3a082aeaab6e276d991ca2a2cb10c1c10\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/index.html\",\"size\":82},{\"digest\":\"sha256:212e1766e4c497ca126ee26ceb0e6860b37350f1cf333ffd154f5f4e086effe1\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/notes.txt\",\"size\":43}],\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:6740b9f57717433d65fca250a08b3f54d56f5cac7a1aa621ceab4bb8bbddb815",
+        "blobs": [
+          {
+            "digest": "sha256:212e1766e4c497ca126ee26ceb0e6860b37350f1cf333ffd154f5f4e086effe1",
+            "contentBase64": "dGhlIGluZGV4IGxpc3RzIHYxIGZpcnN0IGFuZCBsYXRlc3Qgc2Vjb25kCg=="
+          },
+          {
+            "digest": "sha256:35d03f83cfe558c8126e8d71e8be1ab3a082aeaab6e276d991ca2a2cb10c1c10",
+            "contentBase64": "PCFkb2N0eXBlIGh0bWw+PGgxPmxhdGVzdDogc2VsZWN0ZWQgYnkgZXhhY3QgcmVmLm5hbWUsIG5vdCBieSBhcnJheSBwb3NpdGlvbjwvaDE+Cg=="
           }
         ]
       }

@@ -48,12 +48,64 @@ manifest**:
 
 `index.json` lists that manifest with `org.opencontainers.image.ref.name` set to
 the requested `ref`. `readOciLayout({ input, ref })` re-verifies **everything**
-on the way back in: layout version, descriptor media type, OCI manifest digest
-and size, `artifactType`, config media type, the config's canonical digest
-against `config.digest` and the annotation, and for every OWA file entry the
-descriptor selected by its path annotation — its digest, size, mapped media type
-and path — plus the actual blob bytes' SHA-256 and length. The pulled layout is
-the local integrity boundary; a registry is never trusted to have preserved bytes.
+on the way back in: layout version, the index descriptor selected by exact,
+unique `ref.name` match ([next section](#index-reference-selection)), its
+descriptor media type, OCI manifest digest and size, `artifactType`, config
+media type, the config's canonical digest against `config.digest` and the
+annotation, and for every OWA file entry the descriptor selected by its path
+annotation — its digest, size, mapped media type and path — plus the actual blob
+bytes' SHA-256 and length. The pulled layout is the local integrity boundary; a
+registry is never trusted to have preserved bytes.
+
+### Index reference selection
+
+`index.json` may list several manifests (ORAS, other tools and hand-authored
+layouts do). The requested `ref` is the **only** selector, and selection is
+**exact, unique and fail-closed** (issue #36):
+
+1. `index.manifests` MUST be an array; only its object entries are descriptors.
+2. A descriptor **matches** when its `annotations` value is an object that has
+   the key `org.opencontainers.image.ref.name` with a **string** value **exactly
+   equal** to the requested `ref` (code point for code point — no case folding,
+   trimming or normalization).
+3. Exactly **one** descriptor MUST match. **Zero** matches fail as *reference not
+   found*; **more than one** exact match fails as *ambiguous*.
+4. A missing `annotations` object, a missing key, a `null`, number or boolean
+   value, an empty string, or any different string **does not match**.
+5. Descriptor **order carries no meaning** and never breaks a tie: requesting
+   `latest` does **not** fall back to `index.manifests[0]`, duplicates are not
+   resolved first-wins or last-wins, and there is no "first valid-looking
+   descriptor".
+6. Nothing else selects at this step — not the OCI manifest digest, not the
+   `dev.openwebartifact.artifact.digest` annotation, not the media type, not the
+   position.
+
+Once the unique descriptor is selected, every verification listed above applies
+to it unchanged. Both failures are **transport-local layout errors**: the
+portable corpus defines no OWA error category for them (the 18 categories are
+unchanged), so they are pinned by direct tests in both implementations
+(`packages/conformance/src/oci-index-ref.test.js`,
+`implementations/go-conformance/oci_index_ref_test.go`); the JavaScript reader
+distinguishes them in its message text (`OCI reference not found: <ref>` vs
+`Ambiguous OCI index: <n> descriptors carry org.opencontainers.image.ref.name
+<ref>`) and the Go implementation through `ErrRefNotFound` / `ErrRefAmbiguous`.
+The portable **success** anchor is
+[`blob-read-index-exact-ref-selection`](conformance/v0.2/blob.json): its index
+lists a complete decoy artifact under `v1` **first** and the expected artifact
+under `latest` **second**, so a positional or first-descriptor reader imports the
+wrong artifact and fails the vector.
+
+*History.* Before issue #36 the JavaScript reference reader used
+`exact match ?? (ref === "latest" ? manifests[0] : null)` — an undocumented,
+descriptor-order-dependent compatibility fallback — and both readers accepted the
+first of several descriptors claiming the requested ref. Neither behaviour was
+required by any published corpus vector, by the v0.4.0 documentation, or by the
+live ORAS/Zot flow (ORAS writes the destination ref as `ref.name` on every pull,
+by tag and by digest), so the fallback was removed and duplicate matches are now
+rejected. This is a v0.2-draft transport clarification: writer output, config
+verification, OCI manifest digest verification, layer selection, duplicate-content
+behaviour, media-type mapping, blob verification and all published artifact
+identities are unchanged.
 
 ### File entries vs blobs (duplicate content)
 
@@ -297,5 +349,9 @@ checks (`npm run test:integration:harness`) pin that behaviour.
 - **Extra, unrelated layer descriptors** are not a new error: the reader selects
   what the config manifest needs and ignores descriptors no file entry refers
   to, exactly as before — unless such a descriptor collides with a required path.
+- **Extra index descriptors** under other refs are likewise ignored; only a
+  missing or duplicated `org.opencontainers.image.ref.name` for the requested
+  ref is an error ([Index reference selection](#index-reference-selection)).
+  There is no `latest` or first-descriptor fallback.
 - No `push-oci`/`pull-oci` commands exist; ORAS is the transport. `export-oci`
   and `import-oci` are the whole OWA surface.

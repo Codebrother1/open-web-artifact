@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -24,6 +25,71 @@ type layoutError struct{ message string }
 
 func (e *layoutError) Error() string { return "oci layout: " + e.message }
 func (e *layoutError) Unwrap() error { return ErrLayout }
+
+// ErrRefNotFound and ErrRefAmbiguous are the two index reference selection
+// failures of docs/oci.md "Index reference selection" (issue #36). Both also
+// match ErrLayout through errors.Is. They are transport-local: the portable
+// corpus defines no OWA error category for them, and CategoryOf reports none.
+var (
+	ErrRefNotFound  = errors.New("oci layout: reference not found")
+	ErrRefAmbiguous = errors.New("oci layout: ambiguous reference")
+)
+
+type refError struct {
+	kind    error
+	message string
+}
+
+func (e *refError) Error() string   { return e.kind.Error() + ": " + e.message }
+func (e *refError) Unwrap() []error { return []error{ErrLayout, e.kind} }
+
+// selectIndexDescriptor implements index reference selection: EXACTLY ONE
+// EXACT MATCH OR FAIL. The requested ref is the only selector.
+//
+//  1. index.manifests must be an array; only its object entries are descriptors;
+//  2. a descriptor matches when its annotations value is an object whose
+//     org.opencontainers.image.ref.name member is a STRING exactly equal (code
+//     point for code point) to ref — a missing annotations object, a missing
+//     key, null, a number, a boolean, an empty string or a different string
+//     never match;
+//  3. zero matches → ErrRefNotFound; more than one → ErrRefAmbiguous.
+//
+// Descriptor order carries no meaning and never breaks a tie: there is no
+// "latest" → manifests[0] fallback, no first-match-wins, and no digest,
+// artifact-digest or media-type guessing.
+func selectIndexDescriptor(index *Value, ref string) (*Value, error) {
+	if ref == "" {
+		return nil, layoutErr("requested reference must be a nonempty string")
+	}
+	manifests := index.Get("manifests")
+	if manifests == nil || manifests.Kind != KindArray {
+		return nil, layoutErr("index.json has no manifests array")
+	}
+	want := StrOf(ref)
+	var matches []*Value
+	for _, d := range manifests.Array {
+		if d.Kind != KindObject {
+			continue
+		}
+		ann := d.Get("annotations")
+		if ann == nil || ann.Kind != KindObject {
+			continue
+		}
+		name := ann.Get(AnnotationRefName)
+		if name == nil || name.Kind != KindString || !name.Str.Equal(want) {
+			continue
+		}
+		matches = append(matches, d)
+	}
+	switch len(matches) {
+	case 0:
+		return nil, &refError{ErrRefNotFound, ref}
+	case 1:
+		return matches[0], nil
+	default:
+		return nil, &refError{ErrRefAmbiguous, strconv.Itoa(len(matches)) + " descriptors carry " + AnnotationRefName + " " + ref}
+	}
+}
 
 func blobPath(root, digest string) (string, error) {
 	if !IsDigestString(digest) {
@@ -198,14 +264,16 @@ func parseJSONFile(path string) (*Value, error) {
 }
 
 // ReadOCILayout imports the layout under dir for the given ref, re-verifying
-// everything docs/oci.md lists: layout version, index descriptor media type,
-// OCI manifest bytes (hash, then declared size), artifactType, config media
-// type, config bytes (hash, then size), the config's canonical artifact digest
-// against config.digest and the artifact-digest annotation, then — per file
-// entry — the descriptor selected by its dev.openwebartifact.path annotation
-// (path-aware, duplicate claims are ambiguous, digest-only fallback only for a
-// unique digest with a single annotation-less layer, one descriptor per entry),
-// its digest, size and mapped media type, and the blob bytes' hash and length.
+// everything docs/oci.md lists: layout version, the index descriptor selected
+// by exact, unique ref.name match (selectIndexDescriptor — no fallback of any
+// kind), its media type, OCI manifest bytes (hash, then declared size),
+// artifactType, config media type, config bytes (hash, then size), the config's
+// canonical artifact digest against config.digest and the artifact-digest
+// annotation, then — per file entry — the descriptor selected by its
+// dev.openwebartifact.path annotation (path-aware, duplicate claims are
+// ambiguous, digest-only fallback only for a unique digest with a single
+// annotation-less layer, one descriptor per entry), its digest, size and mapped
+// media type, and the blob bytes' hash and length.
 func ReadOCILayout(dir string, ref string) (*Imported, error) {
 	layoutFile, err := parseJSONFile(filepath.Join(dir, "oci-layout"))
 	if err != nil {
@@ -218,24 +286,9 @@ func ReadOCILayout(dir string, ref string) (*Imported, error) {
 	if err != nil {
 		return nil, err
 	}
-	manifests := index.Get("manifests")
-	if manifests == nil || manifests.Kind != KindArray {
-		return nil, layoutErr("index.json has no manifests array")
-	}
-	var descriptor *Value
-	for _, d := range manifests.Array {
-		if d.Kind != KindObject {
-			continue
-		}
-		if ann := d.Get("annotations"); ann != nil && ann.Kind == KindObject {
-			if name, ok := stringField(ann, AnnotationRefName); ok && name == ref {
-				descriptor = d
-				break
-			}
-		}
-	}
-	if descriptor == nil {
-		return nil, layoutErr("reference not found in index.json: " + ref)
+	descriptor, err := selectIndexDescriptor(index, ref)
+	if err != nil {
+		return nil, err
 	}
 	if mt, ok := stringField(descriptor, "mediaType"); !ok || mt != OCIImageManifest {
 		return nil, layoutErr("index descriptor is not an OCI image manifest")
