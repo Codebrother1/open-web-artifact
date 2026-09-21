@@ -7,7 +7,9 @@
     "contentBase64 encodes exact bytes. Symlink target is relative to the link; targetType directory is only a filesystem setup hint. Symlinks must be rejected even if safe-looking or dangling.",
     "Ordering: packDirectory places file entries in manifest.files by sorting the COMPLETE artifact path strings lexicographically by Unicode code-point values (numerically at the first difference; a shorter prefix first), exactly the relation canonical JSON uses for object keys. No locale collation, no Unicode normalization, no case folding, no natural/numeric ordering, no UTF-16 code-unit ordering; the exact strings the filesystem exposed are compared. pack-unicode-code-point-order and pack-unicode-no-normalization are the portable Unicode anchors (U+E000 sorts before U+10000). Canonicalization itself still preserves any existing files array order; manually authored manifests are not required to be sorted.",
     "expected.manifest, canonicalJson, artifactDigest, blobDigests are static independent goldens; every returned blob must also equal the source bytes.",
-    "pack-cross-language-anchor is the static rendezvous point for independent implementations (issue #31): the JavaScript reference and the Go conformance implementation each check its expected canonicalJson, artifactDigest and blobDigests from this file; neither calls the other. Four entries share one content digest under two media types and the names span ASCII, Greek, CJK, private-use and supplementary code points."
+    "pack-cross-language-anchor is the static rendezvous point for independent implementations (issue #31): the JavaScript reference and the Go conformance implementation each check its expected canonicalJson, artifactDigest and blobDigests from this file; neither calls the other. Four entries share one content digest under two media types and the names span ASCII, Greek, CJK, private-use and supplementary code points.",
+    "Media types (issue #33): packDirectory assigns file.mediaType from the complete artifact path alone, by the fixed table and extension rule in spec-v0.2.md (Directory packing, Media type assignment): take the final path segment; the extension is the suffix from its FINAL '.'; there is no extension when the segment has no '.' or when that '.' is its first character (dotfiles such as .env and .html); fold ASCII A-Z to a-z in the lookup key only; everything unlisted is application/octet-stream. No host MIME database, no byte inspection, no compound extensions (archive.tar.gz uses only .gz); the path itself is never altered. pack-media-type-table pins every table entry; pack-media-type-uppercase-extensions, pack-media-type-fallback, pack-media-type-multiple-dots and pack-media-type-no-byte-sniffing pin the edge behaviour. This is producer behaviour: manually authored manifests may carry any nonempty mediaType.",
+    "A name ending in '.' has the extension '.' and is therefore application/octet-stream; that case is pinned by direct implementation tests in both runners rather than by a materialized vector, because Win32 removes a trailing dot from file names and such a fixture would not materialize identically on every platform."
   ],
   "vectors": [
     {
@@ -679,6 +681,646 @@
           "sha256:8f8b54cb66cd5db57de8c580ed23c38d936af9550f6d29f91ec2ab4820bf161f",
           "sha256:b68413c92866ed085e7dbdd258946058a497b6253e710b4d615f3efcb7738183",
           "sha256:e0794dd6c07bdec065c1a63a633f361b6dd745190e9d16c4be615c84847df911"
+        ]
+      }
+    },
+    {
+      "id": "pack-media-type-table",
+      "description": "Every extension of the fixed pack media-type table (issue #33), lowercase, one file each in scrambled fixture order; the table is closed, nothing else is mapped.",
+      "input": {
+        "files": [
+          {
+            "path": "style.css",
+            "contentBase64": "Ym9keXttYXJnaW46MH0K"
+          },
+          {
+            "path": "fonts/sans.woff2",
+            "contentBase64": "d09GMgABAAA="
+          },
+          {
+            "path": "photo.jpg",
+            "contentBase64": "/9j/4AAQSkY="
+          },
+          {
+            "path": "index.html",
+            "contentBase64": "PCFkb2N0eXBlIGh0bWw+PHRpdGxlPnR5cGVzPC90aXRsZT4K"
+          },
+          {
+            "path": "lib.wasm",
+            "contentBase64": "AGFzbQEAAAA="
+          },
+          {
+            "path": "data.json",
+            "contentBase64": "eyJhIjoxfQo="
+          },
+          {
+            "path": "anim.gif",
+            "contentBase64": "R0lGODlhAQABAA=="
+          },
+          {
+            "path": "about.htm",
+            "contentBase64": "PHA+YWJvdXQ8L3A+Cg=="
+          },
+          {
+            "path": "feed.xml",
+            "contentBase64": "PD94bWwgdmVyc2lvbj0iMS4wIj8+PGZlZWQvPgo="
+          },
+          {
+            "path": "favicon.ico",
+            "contentBase64": "AAABAAEA"
+          },
+          {
+            "path": "module.mjs",
+            "contentBase64": "ZXhwb3J0IGRlZmF1bHQgMjsK"
+          },
+          {
+            "path": "pixel.png",
+            "contentBase64": "iVBORw0KGgo="
+          },
+          {
+            "path": "guide.pdf",
+            "contentBase64": "JVBERi0xLjcKJSVFT0YK"
+          },
+          {
+            "path": "notes.txt",
+            "contentBase64": "bm90ZXMK"
+          },
+          {
+            "path": "hero.webp",
+            "contentBase64": "UklGRgwAAABXRUJQVlA4IA=="
+          },
+          {
+            "path": "logo.svg",
+            "contentBase64": "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4K"
+          },
+          {
+            "path": "app.js",
+            "contentBase64": "ZXhwb3J0IGNvbnN0IGEgPSAxOwo="
+          },
+          {
+            "path": "fonts/sans.woff",
+            "contentBase64": "d09GRgABAAA="
+          },
+          {
+            "path": "picture.jpeg",
+            "contentBase64": "/9j/4QAWRXg="
+          }
+        ],
+        "symlinks": [],
+        "entrypoint": "/index.html"
+      },
+      "expected": {
+        "canonicalJson": "{\"access\":{\"visibility\":\"unlisted\"},\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:473bca61a87e3877fe6d15ba53a4995e552554aa0b167240f61ce82c746f4c13\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/about.htm\",\"size\":13},{\"digest\":\"sha256:fb6567d497606314a968515ebf9063dcee9fcff777897c384ed8e6a26dbd7190\",\"mediaType\":\"image/gif\",\"path\":\"/anim.gif\",\"size\":10},{\"digest\":\"sha256:037ecd1db38c230c248787e60fd7bfc0cb0101b187b59535b6e7483be762d350\",\"mediaType\":\"text/javascript; charset=utf-8\",\"path\":\"/app.js\",\"size\":20},{\"digest\":\"sha256:e346432021b04179518d9614f3560ccd71354a4ee101ddcb893d6959a9d6301c\",\"mediaType\":\"application/json; charset=utf-8\",\"path\":\"/data.json\",\"size\":8},{\"digest\":\"sha256:2f7124cc50e450d0fc84f9abef409cc57960e51e5e2fa9ac67dd80b26442e181\",\"mediaType\":\"image/x-icon\",\"path\":\"/favicon.ico\",\"size\":6},{\"digest\":\"sha256:08a1b483ea9c45a8e1466afe44be9d079789e4ed8c004aa1035f1f08ffe52657\",\"mediaType\":\"application/xml; charset=utf-8\",\"path\":\"/feed.xml\",\"size\":29},{\"digest\":\"sha256:debc3c5c4663eca1493214f836684afd49cbdf9ac15c7f300ef8ee71687d2b14\",\"mediaType\":\"font/woff\",\"path\":\"/fonts/sans.woff\",\"size\":8},{\"digest\":\"sha256:bfe7277d3812b9c67ced5748502ab2e20333da34adc12ccbe9a287fb94a68e2c\",\"mediaType\":\"font/woff2\",\"path\":\"/fonts/sans.woff2\",\"size\":8},{\"digest\":\"sha256:1e7313ace78f0fb481a486939b4885902663102818090805515553d84e0bbfd3\",\"mediaType\":\"application/pdf\",\"path\":\"/guide.pdf\",\"size\":15},{\"digest\":\"sha256:12c725aa5d732696f09fdd5f887a7b800719a78a1d2e01c91540038c2ccefd23\",\"mediaType\":\"image/webp\",\"path\":\"/hero.webp\",\"size\":16},{\"digest\":\"sha256:704042f162e392598fab0bafda2d22a6412ee220513de0fdddf80a7f9f373478\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/index.html\",\"size\":36},{\"digest\":\"sha256:93a44bbb96c751218e4c00d479e4c14358122a389acca16205b1e4d0dc5f9476\",\"mediaType\":\"application/wasm\",\"path\":\"/lib.wasm\",\"size\":8},{\"digest\":\"sha256:fb91f9a03c202c5f160eef644da6f2f704b19ac5c5f8b4c124e1b0b485ad57a0\",\"mediaType\":\"image/svg+xml\",\"path\":\"/logo.svg\",\"size\":42},{\"digest\":\"sha256:38b5a31fa5dd51d6f1eb8c3ec5fd65f8fba0930db22b2dc5468d8d3b991dfb42\",\"mediaType\":\"text/javascript; charset=utf-8\",\"path\":\"/module.mjs\",\"size\":18},{\"digest\":\"sha256:444e0fffbd825e9610ff5b199485707a0c895339ae80c15cc8a8aee41b106fda\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/notes.txt\",\"size\":6},{\"digest\":\"sha256:eb7e0381d519c6a257584ed4a69cf3ae4e4cfc7351cacb301ac646c0df5e8aca\",\"mediaType\":\"image/jpeg\",\"path\":\"/photo.jpg\",\"size\":8},{\"digest\":\"sha256:e49a0eb78dc68a777d337906a27a814c02ed320dbacbd148473c4b621f632331\",\"mediaType\":\"image/jpeg\",\"path\":\"/picture.jpeg\",\"size\":8},{\"digest\":\"sha256:4c4b6a3be1314ab86138bef4314dde022e600960d8689a2c8f8631802d20dab6\",\"mediaType\":\"image/png\",\"path\":\"/pixel.png\",\"size\":8},{\"digest\":\"sha256:6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\",\"mediaType\":\"text/css; charset=utf-8\",\"path\":\"/style.css\",\"size\":15}],\"lifecycle\":{\"expiresAt\":null},\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:072f58ce55ce5458bb37889cd9684bd16adbcb37518f547444d8ddcace91f3cd",
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/about.htm",
+              "digest": "sha256:473bca61a87e3877fe6d15ba53a4995e552554aa0b167240f61ce82c746f4c13",
+              "size": 13,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/anim.gif",
+              "digest": "sha256:fb6567d497606314a968515ebf9063dcee9fcff777897c384ed8e6a26dbd7190",
+              "size": 10,
+              "mediaType": "image/gif"
+            },
+            {
+              "path": "/app.js",
+              "digest": "sha256:037ecd1db38c230c248787e60fd7bfc0cb0101b187b59535b6e7483be762d350",
+              "size": 20,
+              "mediaType": "text/javascript; charset=utf-8"
+            },
+            {
+              "path": "/data.json",
+              "digest": "sha256:e346432021b04179518d9614f3560ccd71354a4ee101ddcb893d6959a9d6301c",
+              "size": 8,
+              "mediaType": "application/json; charset=utf-8"
+            },
+            {
+              "path": "/favicon.ico",
+              "digest": "sha256:2f7124cc50e450d0fc84f9abef409cc57960e51e5e2fa9ac67dd80b26442e181",
+              "size": 6,
+              "mediaType": "image/x-icon"
+            },
+            {
+              "path": "/feed.xml",
+              "digest": "sha256:08a1b483ea9c45a8e1466afe44be9d079789e4ed8c004aa1035f1f08ffe52657",
+              "size": 29,
+              "mediaType": "application/xml; charset=utf-8"
+            },
+            {
+              "path": "/fonts/sans.woff",
+              "digest": "sha256:debc3c5c4663eca1493214f836684afd49cbdf9ac15c7f300ef8ee71687d2b14",
+              "size": 8,
+              "mediaType": "font/woff"
+            },
+            {
+              "path": "/fonts/sans.woff2",
+              "digest": "sha256:bfe7277d3812b9c67ced5748502ab2e20333da34adc12ccbe9a287fb94a68e2c",
+              "size": 8,
+              "mediaType": "font/woff2"
+            },
+            {
+              "path": "/guide.pdf",
+              "digest": "sha256:1e7313ace78f0fb481a486939b4885902663102818090805515553d84e0bbfd3",
+              "size": 15,
+              "mediaType": "application/pdf"
+            },
+            {
+              "path": "/hero.webp",
+              "digest": "sha256:12c725aa5d732696f09fdd5f887a7b800719a78a1d2e01c91540038c2ccefd23",
+              "size": 16,
+              "mediaType": "image/webp"
+            },
+            {
+              "path": "/index.html",
+              "digest": "sha256:704042f162e392598fab0bafda2d22a6412ee220513de0fdddf80a7f9f373478",
+              "size": 36,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/lib.wasm",
+              "digest": "sha256:93a44bbb96c751218e4c00d479e4c14358122a389acca16205b1e4d0dc5f9476",
+              "size": 8,
+              "mediaType": "application/wasm"
+            },
+            {
+              "path": "/logo.svg",
+              "digest": "sha256:fb91f9a03c202c5f160eef644da6f2f704b19ac5c5f8b4c124e1b0b485ad57a0",
+              "size": 42,
+              "mediaType": "image/svg+xml"
+            },
+            {
+              "path": "/module.mjs",
+              "digest": "sha256:38b5a31fa5dd51d6f1eb8c3ec5fd65f8fba0930db22b2dc5468d8d3b991dfb42",
+              "size": 18,
+              "mediaType": "text/javascript; charset=utf-8"
+            },
+            {
+              "path": "/notes.txt",
+              "digest": "sha256:444e0fffbd825e9610ff5b199485707a0c895339ae80c15cc8a8aee41b106fda",
+              "size": 6,
+              "mediaType": "text/plain; charset=utf-8"
+            },
+            {
+              "path": "/photo.jpg",
+              "digest": "sha256:eb7e0381d519c6a257584ed4a69cf3ae4e4cfc7351cacb301ac646c0df5e8aca",
+              "size": 8,
+              "mediaType": "image/jpeg"
+            },
+            {
+              "path": "/picture.jpeg",
+              "digest": "sha256:e49a0eb78dc68a777d337906a27a814c02ed320dbacbd148473c4b621f632331",
+              "size": 8,
+              "mediaType": "image/jpeg"
+            },
+            {
+              "path": "/pixel.png",
+              "digest": "sha256:4c4b6a3be1314ab86138bef4314dde022e600960d8689a2c8f8631802d20dab6",
+              "size": 8,
+              "mediaType": "image/png"
+            },
+            {
+              "path": "/style.css",
+              "digest": "sha256:6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf",
+              "size": 15,
+              "mediaType": "text/css; charset=utf-8"
+            }
+          ],
+          "access": {
+            "visibility": "unlisted"
+          },
+          "lifecycle": {
+            "expiresAt": null
+          }
+        },
+        "blobDigests": [
+          "sha256:037ecd1db38c230c248787e60fd7bfc0cb0101b187b59535b6e7483be762d350",
+          "sha256:08a1b483ea9c45a8e1466afe44be9d079789e4ed8c004aa1035f1f08ffe52657",
+          "sha256:12c725aa5d732696f09fdd5f887a7b800719a78a1d2e01c91540038c2ccefd23",
+          "sha256:1e7313ace78f0fb481a486939b4885902663102818090805515553d84e0bbfd3",
+          "sha256:2f7124cc50e450d0fc84f9abef409cc57960e51e5e2fa9ac67dd80b26442e181",
+          "sha256:38b5a31fa5dd51d6f1eb8c3ec5fd65f8fba0930db22b2dc5468d8d3b991dfb42",
+          "sha256:444e0fffbd825e9610ff5b199485707a0c895339ae80c15cc8a8aee41b106fda",
+          "sha256:473bca61a87e3877fe6d15ba53a4995e552554aa0b167240f61ce82c746f4c13",
+          "sha256:4c4b6a3be1314ab86138bef4314dde022e600960d8689a2c8f8631802d20dab6",
+          "sha256:6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf",
+          "sha256:704042f162e392598fab0bafda2d22a6412ee220513de0fdddf80a7f9f373478",
+          "sha256:93a44bbb96c751218e4c00d479e4c14358122a389acca16205b1e4d0dc5f9476",
+          "sha256:bfe7277d3812b9c67ced5748502ab2e20333da34adc12ccbe9a287fb94a68e2c",
+          "sha256:debc3c5c4663eca1493214f836684afd49cbdf9ac15c7f300ef8ee71687d2b14",
+          "sha256:e346432021b04179518d9614f3560ccd71354a4ee101ddcb893d6959a9d6301c",
+          "sha256:e49a0eb78dc68a777d337906a27a814c02ed320dbacbd148473c4b621f632331",
+          "sha256:eb7e0381d519c6a257584ed4a69cf3ae4e4cfc7351cacb301ac646c0df5e8aca",
+          "sha256:fb6567d497606314a968515ebf9063dcee9fcff777897c384ed8e6a26dbd7190",
+          "sha256:fb91f9a03c202c5f160eef644da6f2f704b19ac5c5f8b4c124e1b0b485ad57a0"
+        ]
+      }
+    },
+    {
+      "id": "pack-media-type-uppercase-extensions",
+      "description": "Known extensions match after folding ASCII A-Z to a-z in the lookup key only: INDEX.HTML, App.MJS, IMAGE.PNG, Data.Json, README.TXT and Theme.CsS map exactly as their lowercase forms while every artifact path keeps its exact case and sorts by code point (uppercase before lowercase). No case-only name pairs, so the fixture materializes on case-insensitive filesystems.",
+      "input": {
+        "files": [
+          {
+            "path": "IMAGE.PNG",
+            "contentBase64": "iVBORw0KGgo="
+          },
+          {
+            "path": "a.txt",
+            "contentBase64": "bG93ZXJjYXNlIG5laWdoYm91cgo="
+          },
+          {
+            "path": "INDEX.HTML",
+            "contentBase64": "PCFkb2N0eXBlIGh0bWw+PHRpdGxlPlVQUEVSPC90aXRsZT4K"
+          },
+          {
+            "path": "Theme.CsS",
+            "contentBase64": "OnJvb3R7LS14OjF9Cg=="
+          },
+          {
+            "path": "README.TXT",
+            "contentBase64": "UkVBRE1FCg=="
+          },
+          {
+            "path": "App.MJS",
+            "contentBase64": "ZXhwb3J0IGRlZmF1bHQgMTsK"
+          },
+          {
+            "path": "Data.Json",
+            "contentBase64": "eyJ1cHBlciI6dHJ1ZX0K"
+          }
+        ],
+        "symlinks": [],
+        "entrypoint": "/INDEX.HTML"
+      },
+      "expected": {
+        "canonicalJson": "{\"access\":{\"visibility\":\"unlisted\"},\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/INDEX.HTML\",\"files\":[{\"digest\":\"sha256:96909e1dce85ca534fd8881f6c8369a8a87e06df5a4bf81ef44a72db195b0704\",\"mediaType\":\"text/javascript; charset=utf-8\",\"path\":\"/App.MJS\",\"size\":18},{\"digest\":\"sha256:91c94859f901bd6e22d1380f762a7a70d6e655402ceef3ca5f2ccbd1b9236796\",\"mediaType\":\"application/json; charset=utf-8\",\"path\":\"/Data.Json\",\"size\":15},{\"digest\":\"sha256:4c4b6a3be1314ab86138bef4314dde022e600960d8689a2c8f8631802d20dab6\",\"mediaType\":\"image/png\",\"path\":\"/IMAGE.PNG\",\"size\":8},{\"digest\":\"sha256:493cb45e0e239bf08aa964f80772809156b8d91e3aa2c11fd27aaa693b309422\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/INDEX.HTML\",\"size\":36},{\"digest\":\"sha256:57bb905d0f2ccecbb9d81d40daa17e1e05b109c833ddc766edb0b59561088f20\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/README.TXT\",\"size\":7},{\"digest\":\"sha256:f3d288c9ab2a55a2de5c503e443fc12f6b2facdc2182d6a2ff48d70428dc7378\",\"mediaType\":\"text/css; charset=utf-8\",\"path\":\"/Theme.CsS\",\"size\":13},{\"digest\":\"sha256:0bda137256a0a69f681a1926cae39f885ea73dc68993c9c33577ae6cdde15863\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/a.txt\",\"size\":20}],\"lifecycle\":{\"expiresAt\":null},\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:3d230f5859906cb19b1ec67b807969e2e7040e6ce2e02fe7b66c81da69a5b9ee",
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/INDEX.HTML",
+          "files": [
+            {
+              "path": "/App.MJS",
+              "digest": "sha256:96909e1dce85ca534fd8881f6c8369a8a87e06df5a4bf81ef44a72db195b0704",
+              "size": 18,
+              "mediaType": "text/javascript; charset=utf-8"
+            },
+            {
+              "path": "/Data.Json",
+              "digest": "sha256:91c94859f901bd6e22d1380f762a7a70d6e655402ceef3ca5f2ccbd1b9236796",
+              "size": 15,
+              "mediaType": "application/json; charset=utf-8"
+            },
+            {
+              "path": "/IMAGE.PNG",
+              "digest": "sha256:4c4b6a3be1314ab86138bef4314dde022e600960d8689a2c8f8631802d20dab6",
+              "size": 8,
+              "mediaType": "image/png"
+            },
+            {
+              "path": "/INDEX.HTML",
+              "digest": "sha256:493cb45e0e239bf08aa964f80772809156b8d91e3aa2c11fd27aaa693b309422",
+              "size": 36,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/README.TXT",
+              "digest": "sha256:57bb905d0f2ccecbb9d81d40daa17e1e05b109c833ddc766edb0b59561088f20",
+              "size": 7,
+              "mediaType": "text/plain; charset=utf-8"
+            },
+            {
+              "path": "/Theme.CsS",
+              "digest": "sha256:f3d288c9ab2a55a2de5c503e443fc12f6b2facdc2182d6a2ff48d70428dc7378",
+              "size": 13,
+              "mediaType": "text/css; charset=utf-8"
+            },
+            {
+              "path": "/a.txt",
+              "digest": "sha256:0bda137256a0a69f681a1926cae39f885ea73dc68993c9c33577ae6cdde15863",
+              "size": 20,
+              "mediaType": "text/plain; charset=utf-8"
+            }
+          ],
+          "access": {
+            "visibility": "unlisted"
+          },
+          "lifecycle": {
+            "expiresAt": null
+          }
+        },
+        "blobDigests": [
+          "sha256:0bda137256a0a69f681a1926cae39f885ea73dc68993c9c33577ae6cdde15863",
+          "sha256:493cb45e0e239bf08aa964f80772809156b8d91e3aa2c11fd27aaa693b309422",
+          "sha256:4c4b6a3be1314ab86138bef4314dde022e600960d8689a2c8f8631802d20dab6",
+          "sha256:57bb905d0f2ccecbb9d81d40daa17e1e05b109c833ddc766edb0b59561088f20",
+          "sha256:91c94859f901bd6e22d1380f762a7a70d6e655402ceef3ca5f2ccbd1b9236796",
+          "sha256:96909e1dce85ca534fd8881f6c8369a8a87e06df5a4bf81ef44a72db195b0704",
+          "sha256:f3d288c9ab2a55a2de5c503e443fc12f6b2facdc2182d6a2ff48d70428dc7378"
+        ]
+      }
+    },
+    {
+      "id": "pack-media-type-fallback",
+      "description": "application/octet-stream for a name without a dot (README), a dotfile whose only dot is its first character even when the name resembles a known extension (.env, .html), an unlisted extension (file.xyz), an unlisted FINAL extension after several dots (archive.json.gz: no compound-extension rule, only .gz is examined), and a file without an extension inside a directory whose name has one (vendor.json/LICENSE: only the final path segment is examined).",
+      "input": {
+        "files": [
+          {
+            "path": "archive.json.gz",
+            "contentBase64": "H4sIAAAAAAA="
+          },
+          {
+            "path": ".html",
+            "contentBase64": "PHA+ZG90ZmlsZSBuYW1lZCBsaWtlIGFuIGV4dGVuc2lvbjwvcD4K"
+          },
+          {
+            "path": "index.html",
+            "contentBase64": "PCFkb2N0eXBlIGh0bWw+PHRpdGxlPmZhbGxiYWNrPC90aXRsZT4K"
+          },
+          {
+            "path": "vendor.json/LICENSE",
+            "contentBase64": "TUlUCg=="
+          },
+          {
+            "path": "README",
+            "contentBase64": "bm8gZXh0ZW5zaW9uCg=="
+          },
+          {
+            "path": "file.xyz",
+            "contentBase64": "dW5rbm93biBleHRlbnNpb24K"
+          },
+          {
+            "path": ".env",
+            "contentBase64": "U0VDUkVUPTEK"
+          }
+        ],
+        "symlinks": [],
+        "entrypoint": "/index.html"
+      },
+      "expected": {
+        "canonicalJson": "{\"access\":{\"visibility\":\"unlisted\"},\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:664049a85e2251d253ff78a9a7808b41ef4a9f14c8a1b998b6bffd40b2494808\",\"mediaType\":\"application/octet-stream\",\"path\":\"/.env\",\"size\":9},{\"digest\":\"sha256:e965a9a0d423f2454e1311e4741f7ad9c8838345bfaa943b5a2534a5b97dfe44\",\"mediaType\":\"application/octet-stream\",\"path\":\"/.html\",\"size\":39},{\"digest\":\"sha256:578c05eae46cb1dfaf27d47f7a5ccb7876c2eb5aa6fa93671ea2724f00349f95\",\"mediaType\":\"application/octet-stream\",\"path\":\"/README\",\"size\":13},{\"digest\":\"sha256:87bcdd44f7d4d2605074cefe3f0a5e41dfdab2700c027148a4e8273fb1d4284a\",\"mediaType\":\"application/octet-stream\",\"path\":\"/archive.json.gz\",\"size\":8},{\"digest\":\"sha256:8bcf00fe493723bd30e6779b36daff3fcafa299945d94e6a8aefba9ff33b107f\",\"mediaType\":\"application/octet-stream\",\"path\":\"/file.xyz\",\"size\":18},{\"digest\":\"sha256:c656ce84bdfcbb6e1a6d7ba323874455fe502d0302e813a1fec5ea8418005381\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/index.html\",\"size\":39},{\"digest\":\"sha256:adc37366f403835c1470ab2df93d3837d4719372fc1ef8593d922e06f033f8b2\",\"mediaType\":\"application/octet-stream\",\"path\":\"/vendor.json/LICENSE\",\"size\":4}],\"lifecycle\":{\"expiresAt\":null},\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:4d61f5a22b119b4efb1e84fed77b4feb9e78ca060fe75fe8fc9f89d41ddcdb42",
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/.env",
+              "digest": "sha256:664049a85e2251d253ff78a9a7808b41ef4a9f14c8a1b998b6bffd40b2494808",
+              "size": 9,
+              "mediaType": "application/octet-stream"
+            },
+            {
+              "path": "/.html",
+              "digest": "sha256:e965a9a0d423f2454e1311e4741f7ad9c8838345bfaa943b5a2534a5b97dfe44",
+              "size": 39,
+              "mediaType": "application/octet-stream"
+            },
+            {
+              "path": "/README",
+              "digest": "sha256:578c05eae46cb1dfaf27d47f7a5ccb7876c2eb5aa6fa93671ea2724f00349f95",
+              "size": 13,
+              "mediaType": "application/octet-stream"
+            },
+            {
+              "path": "/archive.json.gz",
+              "digest": "sha256:87bcdd44f7d4d2605074cefe3f0a5e41dfdab2700c027148a4e8273fb1d4284a",
+              "size": 8,
+              "mediaType": "application/octet-stream"
+            },
+            {
+              "path": "/file.xyz",
+              "digest": "sha256:8bcf00fe493723bd30e6779b36daff3fcafa299945d94e6a8aefba9ff33b107f",
+              "size": 18,
+              "mediaType": "application/octet-stream"
+            },
+            {
+              "path": "/index.html",
+              "digest": "sha256:c656ce84bdfcbb6e1a6d7ba323874455fe502d0302e813a1fec5ea8418005381",
+              "size": 39,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/vendor.json/LICENSE",
+              "digest": "sha256:adc37366f403835c1470ab2df93d3837d4719372fc1ef8593d922e06f033f8b2",
+              "size": 4,
+              "mediaType": "application/octet-stream"
+            }
+          ],
+          "access": {
+            "visibility": "unlisted"
+          },
+          "lifecycle": {
+            "expiresAt": null
+          }
+        },
+        "blobDigests": [
+          "sha256:578c05eae46cb1dfaf27d47f7a5ccb7876c2eb5aa6fa93671ea2724f00349f95",
+          "sha256:664049a85e2251d253ff78a9a7808b41ef4a9f14c8a1b998b6bffd40b2494808",
+          "sha256:87bcdd44f7d4d2605074cefe3f0a5e41dfdab2700c027148a4e8273fb1d4284a",
+          "sha256:8bcf00fe493723bd30e6779b36daff3fcafa299945d94e6a8aefba9ff33b107f",
+          "sha256:adc37366f403835c1470ab2df93d3837d4719372fc1ef8593d922e06f033f8b2",
+          "sha256:c656ce84bdfcbb6e1a6d7ba323874455fe502d0302e813a1fec5ea8418005381",
+          "sha256:e965a9a0d423f2454e1311e4741f7ad9c8838345bfaa943b5a2534a5b97dfe44"
+        ]
+      }
+    },
+    {
+      "id": "pack-media-type-multiple-dots",
+      "description": "Only the suffix from the FINAL dot is the extension: archive.tar.JSON is .json (folded), jquery.min.js is .js, theme.dark.css is .css, chart.svg.PNG is .png (an earlier known-looking part is irrelevant), .hidden.html is .html (a dotfile WITH a later dot has an extension) and foo..txt is .txt (consecutive dots are ordinary characters).",
+      "input": {
+        "files": [
+          {
+            "path": "foo..txt",
+            "contentBase64": "ZG91YmxlIGRvdAo="
+          },
+          {
+            "path": "chart.svg.PNG",
+            "contentBase64": "iVBORw0KGgo="
+          },
+          {
+            "path": "index.html",
+            "contentBase64": "PCFkb2N0eXBlIGh0bWw+PHRpdGxlPmRvdHM8L3RpdGxlPgo="
+          },
+          {
+            "path": "archive.tar.JSON",
+            "contentBase64": "eyJ0YXIiOmZhbHNlfQo="
+          },
+          {
+            "path": ".hidden.html",
+            "contentBase64": "PHA+aGlkZGVuPC9wPgo="
+          },
+          {
+            "path": "theme.dark.css",
+            "contentBase64": "Ym9keXtiYWNrZ3JvdW5kOiMwMDB9Cg=="
+          },
+          {
+            "path": "jquery.min.js",
+            "contentBase64": "IWZ1bmN0aW9uKCl7fSgpOwo="
+          }
+        ],
+        "symlinks": [],
+        "entrypoint": "/index.html"
+      },
+      "expected": {
+        "canonicalJson": "{\"access\":{\"visibility\":\"unlisted\"},\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:e6054d00df2ca744dc4a738efbacbb4e6c059b56895477365905627f6def7287\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/.hidden.html\",\"size\":14},{\"digest\":\"sha256:54236c200fb842ae4d22dee0a7277361721d502103e1f054faaf885666b1e36b\",\"mediaType\":\"application/json; charset=utf-8\",\"path\":\"/archive.tar.JSON\",\"size\":14},{\"digest\":\"sha256:4c4b6a3be1314ab86138bef4314dde022e600960d8689a2c8f8631802d20dab6\",\"mediaType\":\"image/png\",\"path\":\"/chart.svg.PNG\",\"size\":8},{\"digest\":\"sha256:270f2ba0af857f5fa9b62a8c46ce0bf78f2f7c940a8bbf39e9dd6743d8964a4b\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/foo..txt\",\"size\":11},{\"digest\":\"sha256:70fe052f3c931879e00144176794a243c23c93d64b99bed847c4de77083fb9a1\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/index.html\",\"size\":35},{\"digest\":\"sha256:d9a10c1a3e1ba1e2eff7055d04b7a17038a2b8c57094a22b919c2496f9fe6526\",\"mediaType\":\"text/javascript; charset=utf-8\",\"path\":\"/jquery.min.js\",\"size\":17},{\"digest\":\"sha256:76cb1bb652a1a5a8de5f0af8136ab74f9dec325d106cbaf21671709d775e8044\",\"mediaType\":\"text/css; charset=utf-8\",\"path\":\"/theme.dark.css\",\"size\":22}],\"lifecycle\":{\"expiresAt\":null},\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:5c7e79035cd4598d9ff41cab228730895f547db68e6d480809af7c9c3cb17833",
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/.hidden.html",
+              "digest": "sha256:e6054d00df2ca744dc4a738efbacbb4e6c059b56895477365905627f6def7287",
+              "size": 14,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/archive.tar.JSON",
+              "digest": "sha256:54236c200fb842ae4d22dee0a7277361721d502103e1f054faaf885666b1e36b",
+              "size": 14,
+              "mediaType": "application/json; charset=utf-8"
+            },
+            {
+              "path": "/chart.svg.PNG",
+              "digest": "sha256:4c4b6a3be1314ab86138bef4314dde022e600960d8689a2c8f8631802d20dab6",
+              "size": 8,
+              "mediaType": "image/png"
+            },
+            {
+              "path": "/foo..txt",
+              "digest": "sha256:270f2ba0af857f5fa9b62a8c46ce0bf78f2f7c940a8bbf39e9dd6743d8964a4b",
+              "size": 11,
+              "mediaType": "text/plain; charset=utf-8"
+            },
+            {
+              "path": "/index.html",
+              "digest": "sha256:70fe052f3c931879e00144176794a243c23c93d64b99bed847c4de77083fb9a1",
+              "size": 35,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/jquery.min.js",
+              "digest": "sha256:d9a10c1a3e1ba1e2eff7055d04b7a17038a2b8c57094a22b919c2496f9fe6526",
+              "size": 17,
+              "mediaType": "text/javascript; charset=utf-8"
+            },
+            {
+              "path": "/theme.dark.css",
+              "digest": "sha256:76cb1bb652a1a5a8de5f0af8136ab74f9dec325d106cbaf21671709d775e8044",
+              "size": 22,
+              "mediaType": "text/css; charset=utf-8"
+            }
+          ],
+          "access": {
+            "visibility": "unlisted"
+          },
+          "lifecycle": {
+            "expiresAt": null
+          }
+        },
+        "blobDigests": [
+          "sha256:270f2ba0af857f5fa9b62a8c46ce0bf78f2f7c940a8bbf39e9dd6743d8964a4b",
+          "sha256:4c4b6a3be1314ab86138bef4314dde022e600960d8689a2c8f8631802d20dab6",
+          "sha256:54236c200fb842ae4d22dee0a7277361721d502103e1f054faaf885666b1e36b",
+          "sha256:70fe052f3c931879e00144176794a243c23c93d64b99bed847c4de77083fb9a1",
+          "sha256:76cb1bb652a1a5a8de5f0af8136ab74f9dec325d106cbaf21671709d775e8044",
+          "sha256:d9a10c1a3e1ba1e2eff7055d04b7a17038a2b8c57094a22b919c2496f9fe6526",
+          "sha256:e6054d00df2ca744dc4a738efbacbb4e6c059b56895477365905627f6def7287"
+        ]
+      }
+    },
+    {
+      "id": "pack-media-type-no-byte-sniffing",
+      "description": "The media type comes from the artifact path alone; file bytes are never inspected: index.html holding a PNG signature is still text/html, logo.png holding SVG text is still image/png, lib.wasm holding JSON is still application/wasm, notes.txt holding arbitrary binary is still text/plain, and README holding HTML is still application/octet-stream.",
+      "input": {
+        "files": [
+          {
+            "path": "notes.txt",
+            "contentBase64": "AAEC//4="
+          },
+          {
+            "path": "README",
+            "contentBase64": "PCFkb2N0eXBlIGh0bWw+PHRpdGxlPm5vdCBzbmlmZmVkPC90aXRsZT4K"
+          },
+          {
+            "path": "lib.wasm",
+            "contentBase64": "eyJqc29uIjp0cnVlfQo="
+          },
+          {
+            "path": "index.html",
+            "contentBase64": "iVBORw0KGgo="
+          },
+          {
+            "path": "logo.png",
+            "contentBase64": "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4K"
+          }
+        ],
+        "symlinks": [],
+        "entrypoint": "/index.html"
+      },
+      "expected": {
+        "canonicalJson": "{\"access\":{\"visibility\":\"unlisted\"},\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:63bacf84cd2390d6d2ab72e57b9599f56ad806385d7211feebfa0288a3a419de\",\"mediaType\":\"application/octet-stream\",\"path\":\"/README\",\"size\":42},{\"digest\":\"sha256:4c4b6a3be1314ab86138bef4314dde022e600960d8689a2c8f8631802d20dab6\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/index.html\",\"size\":8},{\"digest\":\"sha256:c4145e0ce1b37c13b02d731b74f324d3ec02670507b007b07b55a0ea8f3ca427\",\"mediaType\":\"application/wasm\",\"path\":\"/lib.wasm\",\"size\":14},{\"digest\":\"sha256:fb91f9a03c202c5f160eef644da6f2f704b19ac5c5f8b4c124e1b0b485ad57a0\",\"mediaType\":\"image/png\",\"path\":\"/logo.png\",\"size\":42},{\"digest\":\"sha256:aa5cd9acfab25f643fb1cedb67f8770417ac9ce0b02cfe72a62fa1ec20e9f60a\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/notes.txt\",\"size\":5}],\"lifecycle\":{\"expiresAt\":null},\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:4e26e91197460f51d5e0020e11adeaa565726641c28b216d4fecef0572a7ab23",
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/README",
+              "digest": "sha256:63bacf84cd2390d6d2ab72e57b9599f56ad806385d7211feebfa0288a3a419de",
+              "size": 42,
+              "mediaType": "application/octet-stream"
+            },
+            {
+              "path": "/index.html",
+              "digest": "sha256:4c4b6a3be1314ab86138bef4314dde022e600960d8689a2c8f8631802d20dab6",
+              "size": 8,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/lib.wasm",
+              "digest": "sha256:c4145e0ce1b37c13b02d731b74f324d3ec02670507b007b07b55a0ea8f3ca427",
+              "size": 14,
+              "mediaType": "application/wasm"
+            },
+            {
+              "path": "/logo.png",
+              "digest": "sha256:fb91f9a03c202c5f160eef644da6f2f704b19ac5c5f8b4c124e1b0b485ad57a0",
+              "size": 42,
+              "mediaType": "image/png"
+            },
+            {
+              "path": "/notes.txt",
+              "digest": "sha256:aa5cd9acfab25f643fb1cedb67f8770417ac9ce0b02cfe72a62fa1ec20e9f60a",
+              "size": 5,
+              "mediaType": "text/plain; charset=utf-8"
+            }
+          ],
+          "access": {
+            "visibility": "unlisted"
+          },
+          "lifecycle": {
+            "expiresAt": null
+          }
+        },
+        "blobDigests": [
+          "sha256:4c4b6a3be1314ab86138bef4314dde022e600960d8689a2c8f8631802d20dab6",
+          "sha256:63bacf84cd2390d6d2ab72e57b9599f56ad806385d7211feebfa0288a3a419de",
+          "sha256:aa5cd9acfab25f643fb1cedb67f8770417ac9ce0b02cfe72a62fa1ec20e9f60a",
+          "sha256:c4145e0ce1b37c13b02d731b74f324d3ec02670507b007b07b55a0ea8f3ca427",
+          "sha256:fb91f9a03c202c5f160eef644da6f2f704b19ac5c5f8b4c124e1b0b485ad57a0"
         ]
       }
     }

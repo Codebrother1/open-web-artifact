@@ -1,17 +1,56 @@
 import { randomUUID } from 'node:crypto';
 import { lstat, readdir, readFile } from 'node:fs/promises';
-import { extname, relative, resolve, posix } from 'node:path';
+import { relative, resolve, posix } from 'node:path';
 import { OWA_MEDIA_TYPE, OWA_SPEC_VERSION, artifactDigest, compareUnicodeCodePoints, owaError, sha256, validateManifest } from '../../spec/src/index.js';
 
-function mediaType(path) {
-  const ext = extname(path).toLowerCase();
-  return ({
-    '.html':'text/html; charset=utf-8','.htm':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8',
-    '.mjs':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json; charset=utf-8',
-    '.svg':'image/svg+xml','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp',
-    '.gif':'image/gif','.txt':'text/plain; charset=utf-8','.wasm':'application/wasm','.ico':'image/x-icon',
-    '.xml':'application/xml; charset=utf-8','.pdf':'application/pdf','.woff':'font/woff','.woff2':'font/woff2'
-  })[ext] ?? 'application/octet-stream';
+// ---------------------------------------------------------------------------
+// Pack-time media type (issue #33; spec-v0.2.md "Directory packing" → "Media
+// type assignment"). PRODUCER behaviour of directory packing only: a manually
+// authored manifest may carry any nonempty `mediaType` string.
+//
+// The table is fixed and closed by the specification. No host or OS MIME
+// database, no `mime` package, no byte sniffing, no compound extensions
+// (`archive.tar.gz` uses only `.gz`, which is unlisted). Every key not listed
+// here — no extension, a dotfile, a trailing-dot name, `.gz`, `.zip`, `.md`… —
+// maps to PACK_FALLBACK_MEDIA_TYPE.
+// ---------------------------------------------------------------------------
+const PACK_MEDIA_TYPES = Object.freeze({
+  '.html': 'text/html; charset=utf-8', '.htm': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp', '.gif': 'image/gif',
+  '.txt': 'text/plain; charset=utf-8',
+  '.wasm': 'application/wasm',
+  '.ico': 'image/x-icon',
+  '.xml': 'application/xml; charset=utf-8',
+  '.pdf': 'application/pdf',
+  '.woff': 'font/woff', '.woff2': 'font/woff2'
+});
+const PACK_FALLBACK_MEDIA_TYPE = 'application/octet-stream';
+
+// Portable extension lookup key of a COMPLETE OWA artifact path, stated so that
+// any language reproduces it byte for byte (deliberately not path.extname):
+//   1. take the final segment — everything after the final "/";
+//   2. find the final U+002E "." in that segment; none → no extension;
+//   3. if that "." is the segment's FIRST character there is no extension
+//      (".env" and ".html" are dotfiles, not files with an extension);
+//   4. otherwise the candidate is the segment from that "." to its end
+//      ("foo." → ".", "archive.tar.gz" → ".gz", ".foo.html" → ".html");
+//   5. fold ASCII A–Z to a–z in the CANDIDATE only — never with locale- or
+//      Unicode-aware case conversion, and never the path itself, which is
+//      stored exactly as the filesystem exposed it ("INDEX.HTML" → ".html").
+function packExtensionKey(path) {
+  const segment = path.slice(path.lastIndexOf('/') + 1);
+  const dot = segment.lastIndexOf('.');
+  if (dot <= 0) return null;
+  return segment.slice(dot).replace(/[A-Z]/g, upper => String.fromCharCode(upper.charCodeAt(0) | 0x20));
+}
+
+function packMediaType(path) {
+  const key = packExtensionKey(path);
+  return key !== null && Object.hasOwn(PACK_MEDIA_TYPES, key) ? PACK_MEDIA_TYPES[key] : PACK_FALLBACK_MEDIA_TYPE;
 }
 
 async function walk(root, dir=root) {
@@ -30,7 +69,7 @@ export async function packDirectory(directory, entrypoint='/index.html') {
   for (const filename of await walk(root)) {
     const data=new Uint8Array(await readFile(filename)); const digest=sha256(data);
     const path='/' + relative(root,filename).split('\\').join('/');
-    blobs.set(digest,data); files.push({path,digest,size:data.byteLength,mediaType:mediaType(path)});
+    blobs.set(digest,data); files.push({path,digest,size:data.byteLength,mediaType:packMediaType(path)});
   }
   // Producer ordering (issue #8): COMPLETE artifact paths in Unicode code-point
   // lexicographic order — the relation canonical JSON uses for object keys. No
