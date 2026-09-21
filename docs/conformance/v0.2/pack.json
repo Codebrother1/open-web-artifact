@@ -452,7 +452,7 @@
     },
     {
       "id": "pack-unicode-no-normalization",
-      "description": "Filenames that look alike but are distinct code-point sequences and are NOT canonically equivalent (so they coexist on Linux, macOS and Windows): ASCII digits/letters versus superscript two (U+00B2), the fi ligature (U+FB01) and fullwidth f (U+FF46), plus 10 versus 9 versus 2. packDirectory must compare the exact strings by code point: no Unicode normalization (compatibility folding would merge them), no case folding, no natural/numeric ordering (\"10\" sorts before \"2\" and \"9\").",
+      "description": "Filenames that look alike but are distinct code-point sequences and are NOT canonically equivalent (so they coexist on Linux, macOS and Windows): ASCII digits/letters versus superscript two (U+00B2), circled digit one (U+2460) and fullwidth f (U+FF46), plus 10 versus 9 versus 2; no name has a Unicode case folding onto another (so case-insensitive filesystems keep them apart). packDirectory must compare the exact strings by code point: no Unicode normalization (compatibility folding would merge them), no case folding, no natural/numeric ordering (\"10\" sorts before \"2\" and \"9\").",
       "input": {
         "files": [
           {
@@ -480,8 +480,8 @@
             "contentBase64": "dGVuCg=="
           },
           {
-            "path": "ﬁ.txt",
-            "contentBase64": "ZmkgbGlnYXR1cmUgVStGQjAxCg=="
+            "path": "①.txt",
+            "contentBase64": "Y2lyY2xlZCBkaWdpdCBvbmUgVSsyNDYwCg=="
           },
           {
             "path": "2.txt",
@@ -496,8 +496,8 @@
         "entrypoint": "/index.html"
       },
       "expected": {
-        "canonicalJson": "{\"access\":{\"visibility\":\"unlisted\"},\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:6db0f6e1133a0debabee7bf20a2ad413d0279f891fcf74c05da928eb34863c6b\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/10.txt\",\"size\":4},{\"digest\":\"sha256:27dd8ed44a83ff94d557f9fd0412ed5a8cbca69ea04922d88c01184a07300a5a\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/2.txt\",\"size\":4},{\"digest\":\"sha256:9257872a1fba978179a9b2b5ffb6ba54d9f06aad1d4c69169f89bbe4cd0d543b\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/9.txt\",\"size\":5},{\"digest\":\"sha256:092fcfbbcfca3b5be7ae1b5e58538e92c35ab273ae13664fed0d67484c8e78a6\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/f.txt\",\"size\":2},{\"digest\":\"sha256:5835c3e95c902907d6a0d8319a709d7955165ea5ed225282d45d016b7527dafe\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/fi.txt\",\"size\":4},{\"digest\":\"sha256:f493f7cd3f25278aa2d1405275af58d4e726174a708b0872a82c0ece92d4ef20\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/index.html\",\"size\":47},{\"digest\":\"sha256:e75fb60ddfe7057d7f290dd5d8e2af0362282c3a3ee3894e82ba9d9fabb286a4\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/².txt\",\"size\":23},{\"digest\":\"sha256:ffaae709f9b0c14d1cf6124692099bc078a33887b694a333a881a69703d6eed6\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/ﬁ.txt\",\"size\":19},{\"digest\":\"sha256:fc04b5ac0e9d30555463258ec6c4bd33dfa48481398755b57689859ff4179d5f\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/ｆ.txt\",\"size\":19}],\"lifecycle\":{\"expiresAt\":null},\"specVersion\":\"owa.dev/v1\"}",
-        "artifactDigest": "sha256:328dd5a0aa0e63b752ae70ec95db4e4ff394edc7334e01abe0922f6f6f92e5c6",
+        "canonicalJson": "{\"access\":{\"visibility\":\"unlisted\"},\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:6db0f6e1133a0debabee7bf20a2ad413d0279f891fcf74c05da928eb34863c6b\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/10.txt\",\"size\":4},{\"digest\":\"sha256:27dd8ed44a83ff94d557f9fd0412ed5a8cbca69ea04922d88c01184a07300a5a\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/2.txt\",\"size\":4},{\"digest\":\"sha256:9257872a1fba978179a9b2b5ffb6ba54d9f06aad1d4c69169f89bbe4cd0d543b\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/9.txt\",\"size\":5},{\"digest\":\"sha256:092fcfbbcfca3b5be7ae1b5e58538e92c35ab273ae13664fed0d67484c8e78a6\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/f.txt\",\"size\":2},{\"digest\":\"sha256:5835c3e95c902907d6a0d8319a709d7955165ea5ed225282d45d016b7527dafe\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/fi.txt\",\"size\":4},{\"digest\":\"sha256:f493f7cd3f25278aa2d1405275af58d4e726174a708b0872a82c0ece92d4ef20\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/index.html\",\"size\":47},{\"digest\":\"sha256:e75fb60ddfe7057d7f290dd5d8e2af0362282c3a3ee3894e82ba9d9fabb286a4\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/².txt\",\"size\":23},{\"digest\":\"sha256:ada90227aece9963a217b54961eaac6e4ceb31b5e9afa52bdb86135325cb2e88\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/①.txt\",\"size\":25},{\"digest\":\"sha256:fc04b5ac0e9d30555463258ec6c4bd33dfa48481398755b57689859ff4179d5f\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/ｆ.txt\",\"size\":19}],\"lifecycle\":{\"expiresAt\":null},\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:9df37cbbd502d5018a9e4f90654ec0220d3ab2b5c58ff44983e27549826788ea",
         "manifest": {
           "specVersion": "owa.dev/v1",
           "artifactType": "application/vnd.openwebartifact.site.v1+json",
@@ -546,9 +546,9 @@
               "mediaType": "text/plain; charset=utf-8"
             },
             {
-              "path": "/ﬁ.txt",
-              "digest": "sha256:ffaae709f9b0c14d1cf6124692099bc078a33887b694a333a881a69703d6eed6",
-              "size": 19,
+              "path": "/①.txt",
+              "digest": "sha256:ada90227aece9963a217b54961eaac6e4ceb31b5e9afa52bdb86135325cb2e88",
+              "size": 25,
               "mediaType": "text/plain; charset=utf-8"
             },
             {
@@ -571,10 +571,10 @@
           "sha256:5835c3e95c902907d6a0d8319a709d7955165ea5ed225282d45d016b7527dafe",
           "sha256:6db0f6e1133a0debabee7bf20a2ad413d0279f891fcf74c05da928eb34863c6b",
           "sha256:9257872a1fba978179a9b2b5ffb6ba54d9f06aad1d4c69169f89bbe4cd0d543b",
+          "sha256:ada90227aece9963a217b54961eaac6e4ceb31b5e9afa52bdb86135325cb2e88",
           "sha256:e75fb60ddfe7057d7f290dd5d8e2af0362282c3a3ee3894e82ba9d9fabb286a4",
           "sha256:f493f7cd3f25278aa2d1405275af58d4e726174a708b0872a82c0ece92d4ef20",
-          "sha256:fc04b5ac0e9d30555463258ec6c4bd33dfa48481398755b57689859ff4179d5f",
-          "sha256:ffaae709f9b0c14d1cf6124692099bc078a33887b694a333a881a69703d6eed6"
+          "sha256:fc04b5ac0e9d30555463258ec6c4bd33dfa48481398755b57689859ff4179d5f"
         ]
       }
     }

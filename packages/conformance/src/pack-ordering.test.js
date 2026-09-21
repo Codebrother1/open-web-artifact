@@ -47,20 +47,25 @@ const codePointOrder = (a, b) => { const x = Array.from(a, c => c.codePointAt(0)
 test('packDirectory orders complete artifact paths by Unicode code point on this host, independent of locale', async t => {
   const root = await mkdtemp(join(tmpdir(), 'owa-pack-order-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  // Deliberately scrambled creation order; portable names only.
-  const names = ['\u{1F331}.txt', 'z.txt', '\u{10000}.txt', 'a/x.txt', '中.txt', 'index.html', '.txt', 'a.txt', 'Ω.txt', 'B.txt', 'b.txt', '10.txt', '2.txt', 'ﬁ.txt', 'fi.txt', 'ｆ.txt', 'f.txt'];
+  // Deliberately scrambled creation order; portable names only: no case-only pairs
+  // (case-insensitive filesystems), no canonically-equivalent pairs, no name whose
+  // Unicode case folding lands on another fixture name (APFS folds the U+FB01 "ﬁ"
+  // ligature onto "fi"), no Windows-forbidden characters. "①" (U+2460) and "ｆ"
+  // (U+FF46) are compatibility look-alikes that stay distinct files everywhere.
+  const names = ['\u{1F331}.txt', 'z.txt', '\u{10000}.txt', 'a/x.txt', '中.txt', 'index.html', '.txt', 'a.txt', 'Ω.txt', 'b.txt', '10.txt', '2.txt', '①.txt', 'fi.txt', 'ｆ.txt', 'f.txt'];
   for (const name of names) { await mkdir(dirname(join(root, name)), { recursive: true }); await writeFile(join(root, name), `${name}\n`); }
   const packed = await packDirectory(root);
   // Literal, hand-ordered expectation (not derived from production code).
   const expected = [
-    '/10.txt', '/2.txt', '/B.txt', '/a.txt', '/a/x.txt', '/b.txt', '/f.txt', '/fi.txt', '/index.html', '/z.txt',
-    '/Ω.txt', '/中.txt', '/.txt', '/ﬁ.txt', '/ｆ.txt', '/\u{10000}.txt', '/\u{1F331}.txt'
+    '/10.txt', '/2.txt', '/a.txt', '/a/x.txt', '/b.txt', '/f.txt', '/fi.txt', '/index.html', '/z.txt',
+    '/Ω.txt', '/①.txt', '/中.txt', '/.txt', '/ｆ.txt', '/\u{10000}.txt', '/\u{1F331}.txt'
   ];
+  assert.equal(packed.manifest.files.length, names.length, 'every fixture name materialized as a distinct file');
   assert.deepEqual(packed.manifest.files.map(f => f.path), expected);
   // The same list, independently sorted by a test-local code-point comparator, agrees.
   assert.deepEqual([...expected].sort(codePointOrder), expected);
   // Default UTF-16 code-unit sorting would NOT produce this order (the anchor).
-  assert.notDeepEqual([...expected].sort(), expected, 'default .sort() differs at U+E000 / U+FB01 / U+FF46 vs U+10000');
+  assert.notDeepEqual([...expected].sort(), expected, 'default .sort() differs at U+E000 / U+FF46 vs U+10000');
   // Identical trees created in the opposite order pack to the identical artifact.
   const mirror = await mkdtemp(join(tmpdir(), 'owa-pack-order-mirror-'));
   t.after(() => rm(mirror, { recursive: true, force: true }));
