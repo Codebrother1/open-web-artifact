@@ -169,19 +169,45 @@ added.
 - **`delete(digest)`** deletes one exact validated key, signed with storage
   credentials only. 404 is accepted as idempotent success.
 
-### Query signing
+### Query signing: one serialization
 
 `signedFetch` gained an optional `query` parameter. The default is no query
 string, so every pre-existing caller signs byte-identically to before and the
-publish presign path is untouched. The canonical query string is built with the
-signer's own RFC 3986 encoder and sorted independently of the URL's
-serialization, which escapes a different character set — otherwise a
-continuation token containing `+`, `=`, `/` or a space would be encoded one way
-in the URL and another in the signature.
+publish presign path is untouched.
 
-Both the LIST and DELETE signatures were verified byte-identical to botocore's
-`S3SigV4Auth`. A session token, when configured, is signed and included in
-`SignedHeaders` for both operations.
+The canonical query string — sorted, RFC 3986 encoded by the signer's own
+encoder — is **both what is signed and what is transmitted**, byte for byte.
+The request URL is assembled from that exact string; the logical query is never
+re-serialized through a second encoder. This matters because WHATWG
+`URLSearchParams` uses form encoding, where a space becomes `+` while SigV4
+canonicalization uses `%20`: two encoders would produce a valid signature for
+a *different* request, and a continuation token containing a space would be
+rejected by the provider. Continuation tokens are opaque and routinely contain
+`/`, `+`, `=`, spaces and `&`; all are encoded as `%2F`, `%2B`, `%3D`, `%20`
+and `%26` on the wire.
+
+Tests assert this on the **raw** URL string handed to `fetch`, not via
+`URL.searchParams` (which decodes `+` and `%20` to the same value and would hide
+the mismatch), and pin the resulting `Authorization` header to the value an
+independent implementation (botocore `S3SigV4Auth`) produced for the same
+request. A session token, when configured, is signed and included in
+`SignedHeaders` for both LIST and DELETE.
+
+### XML response decoding
+
+S3 XML escapes character data, so an opaque token `a&b` arrives as `a&amp;b`
+and a key under a prefix containing `&` is escaped the same way. `<Key>` and
+`<NextContinuationToken>` text is decoded with a small strict, dependency-free
+decoder before use: the five named entities (`&amp; &lt; &gt; &quot; &apos;`)
+and decimal/hexadecimal character references. Keys are decoded **before**
+prefix/grammar validation, so a prefix containing XML-significant characters
+still matches its real objects.
+
+The decoder **fails closed**. A bare `&`, an unknown or unterminated reference,
+a NUL/surrogate/out-of-range code point, or a `<` inside character data throws
+`OWA_GC_LIST_FAILED`. Because the listing throws, no follow-up request is made
+with a guessed token, pagination cannot loop, and the collector aborts before
+any deletion rather than sweeping from an incomplete candidate set.
 
 Provider error bodies, signed URLs, credentials and `Authorization` values are
 never surfaced: storage failures become fixed `OWA_GC_*` codes.

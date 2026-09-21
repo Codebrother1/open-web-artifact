@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import {
   FilesystemBlobStore, FilesystemLeaseStore, FilesystemMetadataStore
 } from '../../storage-filesystem/src/index.js';
-import { S3BlobStore } from '../../storage-s3/src/index.js';
+import { S3BlobStore, decodeXmlText } from '../../storage-s3/src/index.js';
 import { PUBLISH_LEASE_TTL_SECONDS, commitManifest, planManifest, publishDirectory } from '../../core/src/index.js';
 import { artifactDigest, canonicalJson, validateManifest } from '../../spec/src/index.js';
 import { DEFAULT_GRACE_SECONDS, GcError, collectGarbage, formatReport } from '../src/index.js';
@@ -496,7 +496,10 @@ function s3Fixture({ pages = [], onRequest = () => {}, prefix = 'owa' } = {}) {
   const realFetch = globalThis.fetch;
   let page = 0;
   globalThis.fetch = async (url, options) => {
-    const record = { url: new URL(url.toString()), method: options.method, headers: options.headers };
+    // `raw` is the exact string handed to fetch. Assertions about encoding MUST
+    // use it: URL.searchParams decodes "+" and "%20" to the same value and would
+    // hide a signed-vs-transmitted mismatch.
+    const record = { raw: String(url), url: new URL(String(url)), method: options.method, headers: options.headers };
     requests.push(record);
     onRequest(record);
     if (options.method === 'GET') {
@@ -535,14 +538,24 @@ test('28-30. S3 listing is prefix-confined and ignores malformed or neighbouring
   assert.equal(query.get('list-type'), '2');
 });
 
-test('31-32. ListObjectsV2 pagination follows and signs the continuation token', async t => {
+// Fixed vector: botocore S3SigV4Auth signing the exact page-2 request below
+// (same credentials, region, fixed NOW, decoded token) produced this header.
+// It is pinned here so the signature is checked against an independent
+// implementation on every run, not only against our own signer.
+const PAGE2_TOKEN = '1/abc+def=ghi & jkl';
+const PAGE2_RAW_QUERY = 'continuation-token=1%2Fabc%2Bdef%3Dghi%20%26%20jkl&list-type=2&max-keys=1000&prefix=owa%2Fblobs%2Fsha256%2F';
+const PAGE2_AUTHORIZATION = 'AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260601/auto/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=8493cebfc4643d8f8dc656316524be5c42b657081f8aba4c1be497689af68015';
+
+test('31-32. ListObjectsV2 pagination decodes the XML token and transmits exactly what it signed', async t => {
   const first = 'a'.repeat(64), second = 'b'.repeat(64);
-  // A token with characters that MUST be percent-encoded identically in the URL
-  // and in the canonical query, or the signature will not match.
-  const token = '1/abc+def=ghi jkl';
+  // The token contains every character that a form encoder and an RFC 3986
+  // encoder disagree on (space, +), characters that must be escaped (=, /), and
+  // an ampersand, which the provider MUST XML-escape in the response body.
+  const escaped = PAGE2_TOKEN.replace(/&/g, '&amp;');
+  assert.notEqual(escaped, PAGE2_TOKEN, 'the fixture really exercises XML entity decoding');
   const fixture = s3Fixture({
     pages: [
-      `<ListBucketResult>${contents(`owa/blobs/sha256/${first}`)}<IsTruncated>true</IsTruncated><NextContinuationToken>${token.replace(/&/g, '&amp;')}</NextContinuationToken></ListBucketResult>`,
+      `<ListBucketResult>${contents(`owa/blobs/sha256/${first}`)}<IsTruncated>true</IsTruncated><NextContinuationToken>${escaped}</NextContinuationToken></ListBucketResult>`,
       `<ListBucketResult>${contents(`owa/blobs/sha256/${second}`)}<IsTruncated>false</IsTruncated></ListBucketResult>`
     ]
   });
@@ -553,9 +566,82 @@ test('31-32. ListObjectsV2 pagination follows and signs the continuation token',
     '31. both pages are returned');
   assert.equal(fixture.requests.length, 2, 'exactly two list calls');
   assert.equal(fixture.requests[0].url.searchParams.get('continuation-token'), null);
-  assert.equal(fixture.requests[1].url.searchParams.get('continuation-token'), token,
-    '32. the token round-trips through URL encoding intact');
-  assert.ok(fixture.requests[1].headers.authorization.startsWith('AWS4-HMAC-SHA256 '), 'the paged request is signed');
+
+  const page2 = fixture.requests[1];
+  // The decoded, ORIGINAL opaque token is what the logical request carries.
+  assert.equal(page2.url.searchParams.get('continuation-token'), PAGE2_TOKEN,
+    '32. &amp; was decoded back to & before the token was reused');
+
+  // RAW bytes on the wire. This is the assertion that catches a signed-"%20",
+  // transmitted-"+" mismatch, which searchParams.get() above cannot see.
+  const rawQuery = page2.raw.slice(page2.raw.indexOf('?') + 1);
+  assert.equal(rawQuery, PAGE2_RAW_QUERY, 'the wire query is the exact RFC 3986 canonical string');
+  assert.ok(rawQuery.includes('%20'), 'space is %20');
+  assert.ok(!rawQuery.includes('+'), 'space is never "+" and + itself is escaped');
+  assert.ok(rawQuery.includes('%2B'), '+ is %2B');
+  assert.ok(rawQuery.includes('%3D'), '= is %3D');
+  assert.ok(rawQuery.includes('%2F'), '/ is %2F');
+  assert.ok(rawQuery.includes('%26'), '& is %26 (and not the literal &amp;)');
+  assert.ok(!rawQuery.includes('amp'), 'no XML entity text leaks onto the wire');
+
+  // Independent verification: the header botocore produced for this exact request.
+  assert.equal(page2.headers.authorization, PAGE2_AUTHORIZATION,
+    'SigV4 over the transmitted query matches an independent implementation');
+});
+
+test('decodeXmlText decodes the standard entities and numeric references, and fails closed otherwise', () => {
+  assert.equal(decodeXmlText('a&amp;b&lt;c&gt;d&quot;e&apos;f'), 'a&b<c>d"e\'f');
+  assert.equal(decodeXmlText('&#65;&#x42;&#x1F600;'), 'AB\u{1F600}');
+  assert.equal(decodeXmlText('plain text, no references'), 'plain text, no references');
+  assert.equal(decodeXmlText(''), '');
+  // Every one of these is malformed character data and must throw, never guess.
+  for (const bad of ['a&b', 'a&amp', '&bogus;', '&;', '&#;', '&#x;', '&#xZZ;', '&#0;', '&#xD800;', '&#x110000;', 'a<b', '&amp;&']) {
+    assert.throws(() => decodeXmlText(bad), error => error.code === 'OWA_GC_LIST_FAILED', `must reject ${JSON.stringify(bad)}`);
+  }
+});
+
+test('a malformed XML token fails the listing closed: no wrong request, no loop, no delete', async t => {
+  const fixture = s3Fixture({
+    pages: [
+      `<ListBucketResult>${contents(`owa/blobs/sha256/${'a'.repeat(64)}`)}<IsTruncated>true</IsTruncated><NextContinuationToken>broken &amp token</NextContinuationToken></ListBucketResult>`,
+      `<ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>`
+    ]
+  });
+  t.after(fixture.restore);
+  await assert.rejects(() => fixture.store.listBlobs(), error => error.code === 'OWA_GC_LIST_FAILED');
+  assert.equal(fixture.requests.length, 1, 'no second request is issued with a guessed token');
+  assert.equal(fixture.requests.filter(request => request.method === 'DELETE').length, 0, 'nothing is deleted');
+
+  // Through the collector: an unparseable listing must abort before any delete,
+  // even in apply mode, rather than sweep from an incomplete candidate set.
+  // A FRESH fixture, so the collector meets the malformed page itself.
+  fixture.restore();
+  const again = s3Fixture({
+    pages: [`<ListBucketResult>${contents(`owa/blobs/sha256/${'a'.repeat(64)}`)}<IsTruncated>true</IsTruncated><NextContinuationToken>broken &amp token</NextContinuationToken></ListBucketResult>`]
+  });
+  t.after(again.restore);
+  const root = await mkdtemp(join(tmpdir(), 'owa-gc-xml-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const metadata = new FilesystemMetadataStore(root);
+  await assert.rejects(
+    () => collectGarbage({ blobs: again.store, metadata, apply: true, graceSeconds: 0, now: () => NOW }),
+    error => error instanceof GcError && error.code === 'OWA_GC_LIST_FAILED');
+  assert.equal(again.requests.length, 1, 'the collector issued one list call and stopped');
+  assert.equal(again.requests.filter(request => request.method === 'DELETE').length, 0, 'still nothing deleted');
+});
+
+test('an XML-escaped <Key> is decoded before prefix validation, so an & in the prefix still matches', async t => {
+  const hex = 'c'.repeat(64);
+  const fixture = s3Fixture({
+    prefix: 'owa&gc',
+    pages: [`<ListBucketResult>${contents(`owa&amp;gc/blobs/sha256/${hex}`)}<IsTruncated>false</IsTruncated></ListBucketResult>`]
+  });
+  t.after(fixture.restore);
+  const listed = await fixture.store.listBlobs();
+  assert.deepEqual(listed.map(entry => entry.digest), [`sha256:${hex}`], 'the escaped key matched its real prefix');
+  // The prefix query parameter itself is RFC 3986 encoded on the wire.
+  const rawQuery = fixture.requests[0].raw.slice(fixture.requests[0].raw.indexOf('?') + 1);
+  assert.ok(rawQuery.includes('prefix=owa%26gc%2Fblobs%2Fsha256%2F'), 'the & in the prefix is %26 on the wire');
 });
 
 test('a truncated listing with no continuation token fails closed', async t => {

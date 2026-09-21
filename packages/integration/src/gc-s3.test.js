@@ -109,10 +109,29 @@ for (const entry of PROVIDERS) {
         'live listing returns exactly the managed-prefix objects');
       t.diagnostic(`live list: ${listed.length} objects under ${base}/managed`);
 
+      // 1b. force REAL pagination: max-keys=1 over three objects means the
+      // provider must hand back continuation tokens and we must send them
+      // back correctly signed. Count list requests; never log the tokens.
+      let listRequests = 0;
+      const realFetch = globalThis.fetch;
+      globalThis.fetch = async (url, options) => {
+        if ((options?.method ?? 'GET') === 'GET' && String(url).includes('list-type=2')) listRequests++;
+        return realFetch(url, options);
+      };
+      let paged;
+      try { paged = await store.listBlobs({ maxKeys: 1 }); } finally { globalThis.fetch = realFetch; }
+      assert.deepEqual(paged.map(object => object.digest).sort(), listed.map(object => object.digest).sort(),
+        'paginated listing equals the single-page listing');
+      assert.ok(listRequests >= 3, `pagination exchanged continuation tokens with the provider (${listRequests} list calls)`);
+      t.diagnostic(`live pagination: ${listRequests} ListObjectsV2 calls at max-keys=1 for ${paged.length} objects`);
+
       // Grace 0 with a clock just after upload: the production 24h default is
       // untouched, this run simply does not wait a day for its own objects.
+      // The collector itself is driven through pagination too.
       const gcNow = () => new Date(Date.now() + 1000);
-      const common = { blobs: store, metadata, leases, now: gcNow, graceSeconds: 0 };
+      const pagedStore = Object.create(store);
+      pagedStore.listBlobs = () => store.listBlobs({ maxKeys: 1 });
+      const common = { blobs: pagedStore, metadata, leases, now: gcNow, graceSeconds: 0 };
 
       // 2/3. dry run identifies only the orphan and deletes nothing.
       const dry = await collectGarbage({ ...common });
