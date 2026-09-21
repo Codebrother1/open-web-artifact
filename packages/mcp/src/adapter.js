@@ -89,7 +89,11 @@ export async function createAdapter(env = process.env) {
         // writers are not defended. The unchanged packer rejects child symlinks.
         const directory = await resolveDirectory(args.directory, config.root);
         fields = await remotePublishResult(directory, args.site, config.server, { activate: args.activate ?? true });
-        fields = { ...fields, url: `${config.server}/?site=${args.site}` };
+        // The adapter no longer invents a shared-origin `?site=` address and holds
+        // no content-domain policy of its own. It surfaces the server's canonical
+        // public URL when there is one, and omits `url` entirely otherwise.
+        const { contentUrl, ...rest } = fields;
+        fields = contentUrl ? { ...rest, url: contentUrl } : rest;
       } else if (tool.name === 'list_releases') {
         fields = await remoteReleasesResult(args.site, config.server);
       } else {

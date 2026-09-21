@@ -91,6 +91,25 @@ Open:
 http://hello.localhost:7331/
 ```
 
+That single-origin server is the **prototype** topology: control routes and
+artifact content share one origin and `?site=` selects a site. For the separated
+production boundary, configure a content origin and the server runs a control
+listener plus a content-only listener:
+
+```bash
+export OWA_AUTH_SECRET="$(openssl rand -hex 32)"
+export OWA_CONTENT_BASE_DOMAIN=localhost
+export OWA_CONTENT_SCHEME=http
+export OWA_CONTENT_PUBLIC_PORT=7332
+node packages/server/src/index.js
+```
+
+Artifacts are then served only from `http://hello.localhost:7332/`, bound to one
+site per `Host`, with no control route and no `?site=` selector; the control API
+stays on 7331 and serves no artifact bytes. A successful commit returns the
+canonical `contentUrl`, which the CLI and MCP adapter surface instead of building
+a URL themselves. See [control and content origins](docs/origins.md).
+
 Publish another version and roll back without uploading the old version again:
 
 ```bash
@@ -301,7 +320,7 @@ packages/
   storage-filesystem/  local blob + metadata reference backend
   storage-s3/          dependency-free S3/R2 SigV4 blob backend
   transport-oci/       OCI image-layout export/import
-  server/              artifactd HTTP control plane + gateway
+  server/              artifactd control listener + content listener
   cli/                 local/remote publish + OCI commands
   mcp/                 optional SDK-based stdio client of the HTTP API
   conformance/         protocol and portability tests
@@ -311,6 +330,7 @@ docs/
   spec-v0.2.md
   manifest.schema.json
   auth.md
+  origins.md
   mcp.md
   integration-tests.md
   test-vectors/
@@ -339,13 +359,19 @@ and commit still checks blob existence rather than ownership. Local operator CLI
 access remains gated by filesystem permissions; storage and metadata are trusted.
 
 A production deployment needs clean, cookieless, content-only per-site origins
-separate from control/admin/API services. **The prototype does not enforce that
-topology:** `?site=` can share an origin and protected APIs exist on all hosts.
+separate from control/admin/API services. **v0.4 implements that topology**: see
+[control and content origins](docs/origins.md). Configure a content origin
+(`OWA_CONTENT_BASE_DOMAIN`) and the server runs a control listener plus a
+content-only listener that binds one `Host` to one site, exposes no control
+route, and drops the `?site=` selector. **With no content origin configured the
+server still runs the legacy shared-origin prototype**, where `?site=` shares an
+origin and protected APIs exist on all hosts; it prints a warning saying so.
 No-store does not erase existing service workers, caches or saved copies. TLS,
 secret custody, safe proxy logging, quotas, garbage collection and broader isolation
 remain operator responsibilities or future work.
 
-Read the [threat model](docs/sandboxed-web-v1-threat-model.md),
+Read the [origin architecture](docs/origins.md),
+[threat model](docs/sandboxed-web-v1-threat-model.md),
 [profile contract](docs/sandboxed-web-v1.md), [auth guide](docs/auth.md), and
 [optional browser guide](docs/sandboxed-web-v1-browser-validation.md).
 Combined deterministic tests prove HTTP/auth policy and byte preservation, not

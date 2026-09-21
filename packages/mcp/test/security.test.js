@@ -290,7 +290,12 @@ function checkPublish(f, result, activate = true) {
   assert.ok(data.site === SITE && data.releaseId === RELEASE && data.artifactDigest === f.state.plans[0].artifactDigest, 'Publish must return canonical release metadata');
   assert.ok(data.uploaded === 2 && data.reused === 0, 'Publish counts must use unique blobs');
   assert.ok(data.activeReleaseId === (activate ? RELEASE : null), 'Publish activation must match request');
-  assert.ok(Object.keys(data).sort().join(',') === 'activeReleaseId,artifactDigest,ok,releaseId,reused,site,uploaded,url', 'Publish must not expose manifests, grants or arbitrary metadata');
+  // `url` appears only when the control plane returned a canonical content URL.
+  // These fixtures configure no content origin, so the adapter must omit it
+  // rather than synthesizing one; any other extra key is still a leak.
+  const keys = Object.keys(data).sort().join(',');
+  assert.ok(keys === 'activeReleaseId,artifactDigest,ok,releaseId,reused,site,uploaded', 'Publish must not expose manifests, grants or arbitrary metadata');
+  assert.ok(!Object.hasOwn(data, 'url'), 'No public URL is invented when the server provides none');
   assert.ok(f.state.puts.length === 2 && f.state.commits.length === 1 && f.state.stored.size === 2, 'Publish must upload bytes and commit over HTTP');
   assert.ok(f.state.active === (activate ? RELEASE : null), 'Commit must have the expected response effect');
   assert.ok(f.state.puts.every(put => [FILE_BYTES, ASSET_BYTES].includes(put.bytes.toString())), 'Storage must receive the actual packed file bytes');

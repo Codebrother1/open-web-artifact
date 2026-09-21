@@ -8,7 +8,11 @@ import {
   CAPS, NOW, SOURCE, CHANGED_CSS, fixture, exactKeys, resultData, expectError, assertSafe
 } from './helpers.js';
 
+// `url` is an advertised property but is NOT required: the adapter omits it when
+// the server supplies no canonical content URL rather than synthesizing one.
 const PUBLISH_KEYS = ['ok', 'site', 'artifactDigest', 'releaseId', 'activeReleaseId', 'uploaded', 'reused', 'url'];
+const PUBLISH_REQUIRED = PUBLISH_KEYS.filter(key => key !== 'url');
+const CONTENT_ORIGIN = Object.freeze({ baseDomain: 'sites.example.invalid', scheme: 'https' });
 const ACTIVATE_KEYS = ['ok', 'site', 'activeReleaseId'];
 const LIST_KEYS = ['ok', 'site', 'activeReleaseId', 'releases'];
 const RELEASE_KEYS = ['releaseId', 'artifactDigest', 'createdAt'];
@@ -20,9 +24,10 @@ const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
 const BASELINE_DIGEST = 'sha256:71e9c7a38c5d24bbd37f4cee787aba08f1bc428416e5eb3a02031142da16d660';
 const CHANGED_DIGEST = 'sha256:86fc4e2f961313653b347c655812333b2795af33498af4695c4da576402b2600';
 
-function expectPublish(result, f, { uploaded, reused, digest, active = true }) {
+function expectPublish(result, f, { uploaded, reused, digest, active = true, url = null }) {
   const data = resultData(result, f.secrets());
-  exactKeys(data, PUBLISH_KEYS);
+  // Exactly the base fields, plus `url` only when the server provided one.
+  exactKeys(data, url === null ? PUBLISH_REQUIRED : PUBLISH_KEYS);
   assert.equal(data.ok, true);
   assert.equal(data.site, 'demo');
   assert.match(data.releaseId, RELEASE_PATTERN);
@@ -31,7 +36,14 @@ function expectPublish(result, f, { uploaded, reused, digest, active = true }) {
   assert.equal(data.uploaded, uploaded);
   assert.equal(data.reused, reused);
   assert.equal(data.activeReleaseId, active ? data.releaseId : null);
-  assert.equal(data.url, `${f.origin}/?site=demo`, 'only public gateway URL is returned');
+  if (url === null) {
+    assert.equal(Object.hasOwn(data, 'url'), false, 'no URL is invented when the server provides none');
+  } else {
+    assert.equal(data.url, url, 'the server canonical content URL is returned verbatim');
+  }
+  const serialized = JSON.stringify(data);
+  assert.ok(!serialized.includes('?site='), 'the prototype query URL is never synthesized');
+  assert.ok(!serialized.includes(f.origin), 'the control origin is never returned as a public URL');
   return data;
 }
 
@@ -67,7 +79,7 @@ test('MCP initializes over official stdio and discovers exactly four closed-sche
   const peer = await f.connect();
   assert.deepEqual(peer.tools.map(tool => tool.name).sort(), ['activate', 'list_releases', 'publish', 'rollback']);
   const shapes = {
-    publish: { input: ['site', 'server', 'directory', 'activate'], required: ['site', 'server', 'directory'], output: PUBLISH_KEYS },
+    publish: { input: ['site', 'server', 'directory', 'activate'], required: ['site', 'server', 'directory'], output: PUBLISH_KEYS, requiredOutput: PUBLISH_REQUIRED },
     list_releases: { input: ['site', 'server'], required: ['site', 'server'], output: LIST_KEYS },
     activate: { input: ['site', 'server', 'releaseId'], required: ['site', 'server', 'releaseId'], output: ACTIVATE_KEYS },
     rollback: { input: ['site', 'server', 'releaseId'], required: ['site', 'server', 'releaseId'], output: ACTIVATE_KEYS }
@@ -87,7 +99,7 @@ test('MCP initializes over official stdio and discovers exactly four closed-sche
     assert.equal(tool.outputSchema.oneOf.length, 2);
     const [success, failure] = tool.outputSchema.oneOf;
     exactKeys(success.properties, expected.output, 'exact success schema fields');
-    assert.deepEqual([...success.required].sort(), [...expected.output].sort());
+    assert.deepEqual([...success.required].sort(), [...(expected.requiredOutput ?? expected.output)].sort());
     assert.equal(success.properties.ok.const, true);
     exactKeys(failure.properties, ERROR_KEYS);
     assert.equal(failure.properties.ok.const, false);
@@ -103,6 +115,8 @@ test('MCP initializes over official stdio and discovers exactly four closed-sche
       assert.equal(success.properties.uploaded.type, 'integer');
       assert.equal(success.properties.reused.type, 'integer');
       assert.equal(success.properties.uploaded.minimum, 0);
+      assert.equal(success.properties.url.type, 'string');
+      assert.ok(!success.required.includes('url'), 'discovery advertises url as optional');
     } else if (tool.name === 'list_releases') {
       assert.equal(success.properties.releases.type, 'array');
       exactKeys(success.properties.releases.items.properties, RELEASE_KEYS);
@@ -355,4 +369,42 @@ test('MCP invalid input and local packing failures map safely without HTTP or st
   assert.deepEqual(f.exchanges, [], 'invalid input never reaches even the plan endpoint');
   await f.assertNoWrites();
   assert.ok(Object.keys(SOURCE).length === 3, 'fixture source remains deterministic');
+});
+
+// Issue #14: the adapter must surface the SERVER's canonical content URL and
+// must invent nothing when the server has no content origin. Both halves run
+// through the real official SDK client against a real HTTP server.
+test('MCP publish returns the server canonical content URL when a content origin is configured', { timeout: 20_000 }, async t => {
+  // `duplicate` matches the fixed BASELINE_DIGEST fixture (4 files, 3 unique blobs).
+  const f = await fixture(t, { duplicate: true, content: CONTENT_ORIGIN });
+  const peer = await f.connect(f.mint(CAPS));
+  const value = expectPublish(await peer.call('publish', f.args({ directory: 'site' })), f,
+    { uploaded: 3, reused: 0, digest: BASELINE_DIGEST, url: 'https://demo.sites.example.invalid/' });
+
+  // The URL is the content origin, never the control origin the client dialed,
+  // and carries no credential, query selector or storage grant material.
+  const url = new URL(value.url);
+  assert.equal(url.origin, 'https://demo.sites.example.invalid');
+  assert.equal(url.pathname, '/');
+  assert.equal(url.search, '');
+  assert.equal(url.username, '');
+  assert.equal(url.password, '');
+  assert.notEqual(url.origin, new URL(f.origin).origin);
+  assertSafe(value.url, f.secrets());
+
+  // structuredContent projection must validate against the optional-url schema.
+  const republish = expectPublish(await peer.call('publish', f.args({ directory: 'site' })), f,
+    { uploaded: 0, reused: 3, digest: BASELINE_DIGEST, url: 'https://demo.sites.example.invalid/' });
+  assert.equal(republish.url, value.url, 'the canonical URL is stable across publishes');
+});
+
+test('MCP publish omits url entirely when the server provides no canonical content URL', { timeout: 20_000 }, async t => {
+  const f = await fixture(t, { duplicate: true }); // No content origin on the server.
+  const peer = await f.connect(f.mint(CAPS));
+  const value = expectPublish(await peer.call('publish', f.args({ directory: 'site' })), f,
+    { uploaded: 3, reused: 0, digest: BASELINE_DIGEST });
+
+  assert.equal(Object.hasOwn(value, 'url'), false, 'absent, not null and not fabricated');
+  assert.equal(value.ok, true, 'omitting the URL does not fail the call or its schema projection');
+  assert.ok(!JSON.stringify(value).includes('?site='), 'the retired prototype URL is never reconstructed');
 });
