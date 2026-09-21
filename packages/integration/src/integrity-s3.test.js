@@ -11,6 +11,7 @@ import { S3BlobStore, uploadHeadersFor } from '../../storage-s3/src/index.js';
 import { commitManifest, planManifest } from '../../core/src/index.js';
 import { createControlServer } from '../../server/src/index.js';
 import { createToken } from '../../server/src/auth.js';
+import { providerConfiguration } from './providers.js';
 import { meterRequests, withRequestLimits } from './requests.js';
 
 // Live commit-boundary integrity evidence (issue #10) against real S3-compatible
@@ -30,27 +31,17 @@ import { meterRequests, withRequestLimits } from './requests.js';
 // the scenario below runs its uploads through a REAL artifactd control listener:
 // the publisher receives only artifactd's scoped bearer grant, artifactd hashes
 // the bytes and writes them with its own storage credentials.
+// OWA_TEST_REQUIRE_PROVIDERS (test-harness only) turns a would-be skip into a
+// failure for the listed providers, so CI can prove a case ran.
 const PROVIDERS = [
   { name: 'Cloudflare R2', provider: 'R2', region: 'auto' },
   { name: 'MinIO', provider: 'MINIO', region: 'us-east-1' }
 ];
 
 function configuration(entry) {
-  const prefix = `OWA_TEST_${entry.provider}_`;
-  const required = ['ENDPOINT', 'BUCKET', 'ACCESS_KEY_ID', 'SECRET_ACCESS_KEY'];
-  const missing = required.filter(key => !process.env[prefix + key]);
-  if (missing.length) return { skip: `set ${missing.map(key => prefix + key).join(', ')}` };
-  return {
-    runId: randomUUID(),
-    options: {
-      endpoint: process.env[prefix + 'ENDPOINT'], bucket: process.env[prefix + 'BUCKET'],
-      region: process.env[prefix + 'REGION'] || entry.region,
-      accessKeyId: process.env[prefix + 'ACCESS_KEY_ID'], secretAccessKey: process.env[prefix + 'SECRET_ACCESS_KEY'],
-      sessionToken: process.env[prefix + 'SESSION_TOKEN'] || null, addressingStyle: 'path',
-      checksumEvidence: process.env[prefix + 'CHECKSUM_EVIDENCE'] || undefined,
-      directUploadIntegrity: process.env[prefix + 'DIRECT_UPLOAD_INTEGRITY'] || undefined
-    }
-  };
+  const resolved = providerConfiguration(entry);
+  if (!resolved.options) return resolved;
+  return { ...resolved, runId: randomUUID(), options: { ...resolved.options, addressingStyle: 'path' } };
 }
 
 const bytesOf = text => Buffer.from(text, 'utf8');
@@ -66,8 +57,9 @@ function manifestFor(bytes, { size = bytes.length } = {}) {
 }
 
 for (const entry of PROVIDERS) {
-  const { skip, options, runId } = configuration(entry);
+  const { skip, fail, options, runId } = configuration(entry);
   test(`${entry.name}: live commit-boundary integrity in an isolated prefix`, { skip, timeout: 240_000 }, async t => {
+    if (fail) assert.fail(fail); // Required by OWA_TEST_REQUIRE_PROVIDERS but unconfigured.
     const root = await mkdtemp(join(tmpdir(), 'owa-integrity-live-'));
     const store = new S3BlobStore({ ...options, prefix: `owa-integrity-integration/${runId}` });
     const metadata = new FilesystemMetadataStore(root), leases = new FilesystemLeaseStore(root);

@@ -8,6 +8,7 @@ import { artifactDigest, sha256, validateManifest } from '../../spec/src/index.j
 import { FilesystemLeaseStore, FilesystemMetadataStore } from '../../storage-filesystem/src/index.js';
 import { S3BlobStore } from '../../storage-s3/src/index.js';
 import { collectGarbage } from '../../gc/src/index.js';
+import { providerConfiguration } from './providers.js';
 import { withRequestLimits } from './requests.js';
 
 // Live GC validation against a real S3/R2-compatible service. Opt-in through the
@@ -17,26 +18,19 @@ import { withRequestLimits } from './requests.js';
 // Every object this test creates lives under a UUID-isolated prefix of its own,
 // separate from the publishing suite's prefix, so a GC bug cannot reach another
 // run's objects — and so the "neighbouring keys survive" assertion is real.
-const PROVIDERS = [{ name: 'Cloudflare R2', provider: 'R2', region: 'auto' }];
+// Both providers: the GC contract is provider-neutral and MinIO is what CI
+// provisions. OWA_TEST_REQUIRE_PROVIDERS (test-harness only) makes a listed
+// provider's case fail rather than skip when it is unconfigured.
+const PROVIDERS = [
+  { name: 'Cloudflare R2', provider: 'R2', region: 'auto' },
+  { name: 'MinIO', provider: 'MINIO', region: 'us-east-1' }
+];
 const NOW = new Date('2026-06-01T12:00:00.000Z');
 
 function configuration(entry) {
-  const prefix = `OWA_TEST_${entry.provider}_`;
-  const required = ['ENDPOINT', 'BUCKET', 'ACCESS_KEY_ID', 'SECRET_ACCESS_KEY'];
-  const missing = required.filter(key => !process.env[prefix + key]);
-  if (missing.length) return { skip: `set ${missing.map(key => prefix + key).join(', ')}` };
-  return {
-    runId: randomUUID(),
-    options: {
-      endpoint: process.env[prefix + 'ENDPOINT'],
-      bucket: process.env[prefix + 'BUCKET'],
-      region: process.env[prefix + 'REGION'] || entry.region,
-      accessKeyId: process.env[prefix + 'ACCESS_KEY_ID'],
-      secretAccessKey: process.env[prefix + 'SECRET_ACCESS_KEY'],
-      sessionToken: process.env[prefix + 'SESSION_TOKEN'] || null,
-      addressingStyle: 'path'
-    }
-  };
+  const resolved = providerConfiguration(entry);
+  if (!resolved.options) return resolved;
+  return { ...resolved, runId: randomUUID(), options: { ...resolved.options, addressingStyle: 'path' } };
 }
 
 const bytesOf = text => Buffer.from(text, 'utf8');
@@ -58,8 +52,9 @@ function manifestFor(files) {
 }
 
 for (const entry of PROVIDERS) {
-  const { skip, options, runId } = configuration(entry);
+  const { skip, fail, options, runId } = configuration(entry);
   test(`${entry.name}: live mark/sweep GC inside an isolated prefix`, { skip, timeout: 180_000 }, async t => {
+    if (fail) assert.fail(fail); // Required by OWA_TEST_REQUIRE_PROVIDERS but unconfigured.
     const root = await mkdtemp(join(tmpdir(), 'owa-gc-live-'));
     // Two sibling prefixes under one isolated run root. GC is pointed at ONLY
     // the first; the second stands in for unrelated bucket contents.

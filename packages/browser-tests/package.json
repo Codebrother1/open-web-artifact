@@ -8,6 +8,7 @@
   "scripts": {
     "test": "playwright test",
     "install-browsers": "playwright install chromium firefox webkit",
+    "install-browsers:deps": "playwright install --with-deps chromium firefox webkit",
     "versions": "node lib/versions.js"
   },
   "devDependencies": {

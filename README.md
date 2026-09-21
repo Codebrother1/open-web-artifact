@@ -306,6 +306,23 @@ npm run test:browser                                          # OWA_BROWSERS=chr
 The dated evidence record — exact engines and versions actually executed, and
 any engine not run — lives in [browser validation](docs/sandboxed-web-v1-browser-validation.md).
 
+### Continuous integration
+
+Three independent, **secretless** GitHub Actions workflows run on every pull
+request, every push to `main`, and on demand (`pull_request`, never
+`pull_request_target`; read-only token; no repository secrets):
+
+| Workflow | What it proves |
+| --- | --- |
+| `CI` — `offline (<os>, node <22\|24>)` | every ordinary suite plus the package-local MCP suite on Ubuntu, macOS and Windows × Node 22 and 24; the live suite runs unconfigured and must skip |
+| `MinIO` — `minio (mediated + enforced, node 24)` | a real MinIO built from the pinned source commit of `RELEASE.2025-10-15T17-29-55Z`, disposable in-job credentials, the live suite in both default-mediated and explicitly-enforced modes, with skips turned into failures |
+| `Browsers` — `browsers (chromium, firefox, webkit)` | the `packages/browser-tests` suite in all three real Playwright engines, including WebKit |
+
+Cloudflare R2 is intentionally **not** part of automatic CI: its credentials are
+never exposed to pull-request code, and R2 remains operator-run evidence. Every
+action is pinned to a commit SHA. Details, exact versions and how to reproduce
+each lane locally: [docs/ci.md](docs/ci.md).
+
 ## OCI / ORAS transport
 
 Export the exact same OWA artifact as an OCI image layout:

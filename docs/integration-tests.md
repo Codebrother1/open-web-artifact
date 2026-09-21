@@ -175,9 +175,10 @@ npm test
 npm run test:integration
 ```
 
-Without R2 configuration or a virtual endpoint, only the MinIO path-style case
-runs; the other two explicitly skip. The generated local admin credential is for
-a disposable loopback server only, not a recommendation for hosted services.
+Without R2 configuration or a virtual endpoint, the three MinIO path-style cases
+(publishing, integrity, GC) run; the R2 cases and the virtual-host case
+explicitly skip. The generated local admin credential is for a disposable
+loopback server only, not a recommendation for hosted services.
 
 ### Optional MinIO virtual-host case
 
@@ -230,44 +231,68 @@ or delete markers beyond these targeted DELETE operations.
 
 ## CI invocation
 
-Run the offline suite on every PR. Run live tests only in trusted, protected or
-manually triggered jobs that can reach the configured storage endpoints. Never
-provide live credentials to untrusted PR code. Configure the variables above from
-CI secrets; the local artifactd process needs no externally exposed port.
+The repository's automatic CI is described in [ci.md](ci.md). In short: the
+offline suite runs on every pull request on three operating systems, and a
+**real, disposable MinIO** built from a pinned source commit runs the live suite
+in both trust modes — with no repository secrets, because the service and its
+credentials live only inside the job. Cloudflare R2 is **not** part of automatic
+CI: live credentials are never provided to pull-request code.
 
-For example, this GitHub Actions job can be placed in a trusted manual workflow
-with `on: workflow_dispatch`. Supply all four R2 secrets before running it:
+### Requiring a provider instead of skipping
+
+A configured-but-absent provider normally makes its cases skip, which is right
+for a developer's machine but wrong for a job that provisioned the service: an
+all-skipped run would look green. The **test-harness-only** variable
+`OWA_TEST_REQUIRE_PROVIDERS` lists requirement tokens whose cases must run:
+
+| Token | Cases it makes mandatory |
+| --- | --- |
+| `MINIO` | MinIO path-style publishing, MinIO integrity, MinIO GC |
+| `MINIO_VIRTUAL` | MinIO virtual-host publishing (`OWA_TEST_MINIO_VIRTUAL_ENDPOINT`) |
+| `R2` | the three Cloudflare R2 cases |
+
+With a token listed, a case whose variables are missing **fails** with a message
+naming the missing variable names (never their values) instead of skipping.
+Unknown tokens are a configuration error. Production code never reads this
+variable; it lives in `packages/integration/src/providers.js` and is covered by
+the offline harness checks.
+
+### A trusted, manually triggered R2 job
+
+Run live R2 tests only in a trusted, protected or manually triggered workflow
+that supplies the four `OWA_TEST_R2_*` values from CI secrets. Pin every action
+to a commit SHA (as the automatic workflows do) and use `on: workflow_dispatch`,
+never `pull_request_target`:
 
 ```yaml
 jobs:
   r2-integration:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          node-version: '22'
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
       - run: npm test
-      - name: Require R2 configuration and run the live suite
+      - name: Run the live suite; R2 cases must run, not skip
         env:
+          OWA_TEST_REQUIRE_PROVIDERS: R2
           OWA_TEST_R2_ENDPOINT: ${{ secrets.OWA_TEST_R2_ENDPOINT }}
           OWA_TEST_R2_BUCKET: ${{ secrets.OWA_TEST_R2_BUCKET }}
           OWA_TEST_R2_ACCESS_KEY_ID: ${{ secrets.OWA_TEST_R2_ACCESS_KEY_ID }}
           OWA_TEST_R2_SECRET_ACCESS_KEY: ${{ secrets.OWA_TEST_R2_SECRET_ACCESS_KEY }}
-        run: |
-          test -n "$OWA_TEST_R2_ENDPOINT"
-          test -n "$OWA_TEST_R2_BUCKET"
-          test -n "$OWA_TEST_R2_ACCESS_KEY_ID"
-          test -n "$OWA_TEST_R2_SECRET_ACCESS_KEY"
-          npm run test:integration
+        run: npm run test:integration
 ```
 
-The explicit CI preflight prevents a missing required secret from producing an
-all-skipped green live-validation job. Use the equivalent `OWA_TEST_MINIO_*`
-variables for a MinIO CI job; provision the service/bucket first and require
-`OWA_TEST_MINIO_VIRTUAL_ENDPOINT` as well when that job promises virtual coverage.
-No dependency install step is needed.
+`OWA_TEST_REQUIRE_PROVIDERS=R2` is the preflight: a missing secret produces a
+failing job, never an all-skipped green one. Such a workflow is **not** part of
+this repository yet; adding it is a separate, reviewed decision. No dependency
+install step is needed for the live suite.
 
 ## Cleanup and limitations
 

@@ -10,6 +10,7 @@ import { artifactDigest, canonicalJson, sha256 } from '../../spec/src/index.js';
 import { FilesystemBlobStore, FilesystemMetadataStore } from '../../storage-filesystem/src/index.js';
 import { S3BlobStore } from '../../storage-s3/src/index.js';
 import { createArtifactServer } from '../../server/src/index.js';
+import { providerConfiguration } from './providers.js';
 import { meterRequests, withRequestLimits } from './requests.js';
 
 // These explicit opt-in variables never fall back to artifactd's OWA_S3_* settings.
@@ -17,28 +18,21 @@ import { meterRequests, withRequestLimits } from './requests.js';
 // to enforce the direct final-CAS grant contract; otherwise the store's default
 // applies (R2 auto-enforced; any other host mediated, so uploads travel through
 // artifactd, which hashes the bytes before writing them with its own credentials).
+// OWA_TEST_REQUIRE_PROVIDERS (test-harness only) turns a would-be skip into a
+// failure for the listed requirement tokens, so CI can prove a case ran.
 const cases = [
-  { name: 'MinIO path-style', provider: 'MINIO', style: 'path', endpoint: 'ENDPOINT', region: 'us-east-1' },
-  { name: 'MinIO virtual-host', provider: 'MINIO', style: 'virtual', endpoint: 'VIRTUAL_ENDPOINT', region: 'us-east-1' },
-  { name: 'Cloudflare R2 path-style', provider: 'R2', style: 'path', endpoint: 'ENDPOINT', region: 'auto' }
+  { name: 'MinIO path-style', provider: 'MINIO', style: 'path', endpoint: 'ENDPOINT', region: 'us-east-1', requirement: 'MINIO' },
+  { name: 'MinIO virtual-host', provider: 'MINIO', style: 'virtual', endpoint: 'VIRTUAL_ENDPOINT', region: 'us-east-1', requirement: 'MINIO_VIRTUAL' },
+  { name: 'Cloudflare R2 path-style', provider: 'R2', style: 'path', endpoint: 'ENDPOINT', region: 'auto', requirement: 'R2' }
 ];
 
 function configuration(entry) {
-  const prefix = `OWA_TEST_${entry.provider}_`;
-  const required = [entry.endpoint, 'BUCKET', 'ACCESS_KEY_ID', 'SECRET_ACCESS_KEY'];
-  const missing = required.filter(key => !process.env[prefix + key]);
-  if (missing.length) return { skip: `set ${missing.map(key => prefix + key).join(', ')}` };
-  return { options: {
-    endpoint: process.env[prefix + entry.endpoint],
-    bucket: process.env[prefix + 'BUCKET'],
-    region: process.env[prefix + 'REGION'] || entry.region,
-    accessKeyId: process.env[prefix + 'ACCESS_KEY_ID'],
-    secretAccessKey: process.env[prefix + 'SECRET_ACCESS_KEY'],
-    sessionToken: process.env[prefix + 'SESSION_TOKEN'] || null,
+  const resolved = providerConfiguration(entry);
+  if (!resolved.options) return resolved;
+  return { ...resolved, options: {
+    ...resolved.options,
     addressingStyle: entry.style,
-    prefix: `owa-integration/${entry.provider.toLowerCase()}/${entry.style}/${randomUUID()}`,
-    checksumEvidence: process.env[prefix + 'CHECKSUM_EVIDENCE'] || undefined,
-    directUploadIntegrity: process.env[prefix + 'DIRECT_UPLOAD_INTEGRITY'] || undefined
+    prefix: `owa-integration/${entry.provider.toLowerCase()}/${entry.style}/${randomUUID()}`
   } };
 }
 
@@ -106,8 +100,9 @@ async function verifyServed(base, slug, packed) {
 }
 
 for (const entry of cases) {
-  const { skip, options } = configuration(entry);
+  const { skip, fail, options } = configuration(entry);
   test(`${entry.name}: plan -> presigned PUT -> commit -> serve`, { skip }, async t => {
+    if (fail) assert.fail(fail); // Required by OWA_TEST_REQUIRE_PROVIDERS but unconfigured.
     validateEndpoint(options);
     const store = new S3BlobStore(options);
     const direct = store.canCreateSafeDirectUpload();
