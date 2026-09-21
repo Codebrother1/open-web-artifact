@@ -88,12 +88,15 @@ There is no fallback to production configuration.
 | `OWA_TEST_MINIO_SECRET_ACCESS_KEY` | Required for either MinIO case |
 | `OWA_TEST_MINIO_REGION` | Optional, defaults to `us-east-1` |
 | `OWA_TEST_MINIO_SESSION_TOKEN` | Optional, only for temporary credentials |
+| `OWA_TEST_MINIO_CHECKSUM_EVIDENCE` | Optional; `enforced` only after the probe proved the service validates `x-amz-checksum-sha256` against stored bytes. Default: the store's conservative `advisory` (rehash). |
+| `OWA_TEST_MINIO_DIRECT_UPLOAD_INTEGRITY` | Optional; `enforced` only after the probe proved the complete direct final-CAS grant contract. Default: `mediated` — the live suites then route every upload through a real artifactd listener and assert no presigned request reaches the service. Run the suites both ways to cover both modes. |
 | `OWA_TEST_R2_ENDPOINT` | Required for R2; account S3 API origin such as `https://<account-id>.r2.cloudflarestorage.com` |
 | `OWA_TEST_R2_BUCKET` | Required for R2; existing disposable test bucket |
 | `OWA_TEST_R2_ACCESS_KEY_ID` | Required for R2; S3 API access key ID |
 | `OWA_TEST_R2_SECRET_ACCESS_KEY` | Required for R2; S3 API secret access key |
 | `OWA_TEST_R2_REGION` | Optional, defaults to `auto` |
 | `OWA_TEST_R2_SESSION_TOKEN` | Optional, only if supplied with temporary credentials |
+| `OWA_TEST_R2_CHECKSUM_EVIDENCE`, `OWA_TEST_R2_DIRECT_UPLOAD_INTEGRITY` | Optional; R2 is live-proven and auto-selects `enforced` for both, so these are only needed to force the safe path (`advisory` / `mediated`) for comparison. |
 
 Endpoints must be HTTP(S) origins with no embedded credentials, path, query, or
 fragment. Bucket names must be DNS-compatible, especially for the virtual case.
@@ -288,6 +291,8 @@ No dependency install step is needed.
 - The offline `test:integration:harness` checks cancellation unwinding before
   cleanup, fresh cleanup deadlines, fetch restoration, and safe network errors.
   It needs no live endpoint and is separate from `npm test` and the live matrix.
-- Record Node and MinIO versions, which matrix cases passed/skipped, and any
-  inability to obtain service binaries or credentials with the test evidence.
+- Record Node and MinIO versions, which matrix cases passed/skipped, which
+  direct-upload mode (`direct` or `mediated`, printed in each case's diagnostics)
+  each case ran in, and any inability to obtain service binaries or credentials
+  with the test evidence.
   Passing conformance, auth, or test-harness checks alone is not live MinIO/R2 proof.

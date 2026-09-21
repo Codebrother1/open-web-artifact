@@ -193,7 +193,10 @@ async function fixture(t, options = {}) {
             endpoint: state.mode.sameOrigin ? origin : storage, bucket: 'fake-bucket',
             region: state.mode.region ?? 'auto', accessKeyId: 'SYNTHETIC_ACCESS_KEY',
             secretAccessKey: 'synthetic-s3-secret-never-real', sessionToken: 'synthetic-s3-session-token',
-            now: () => new Date('2025-01-02T03:04:05.000Z')
+            now: () => new Date('2025-01-02T03:04:05.000Z'),
+            // This fixture control plane models a live-proven provider, so it
+            // may sign direct grants; a generic endpoint would be mediated.
+            directUploadIntegrity: 'enforced'
           });
           // Only sign. All bytes must pass through the real MCP child and HTTP.
           grant = await store.createUpload(digest, { expires: 600 });

@@ -109,8 +109,9 @@ between the `has()` that called it reusable and the lease that protects it.
   protects the blobs regardless of the lease, so the lease is simply allowed to
   expire. `--prune-expired-leases` removes expired records during an apply run.
 - **The lease also covers integrity repair.** When plan finds an existing object
-  whose bytes do not hash to its own key it mints a checksum-bound *repair* grant
-  (see [integrity.md](integrity.md)) — it never deletes the object. The lease
+  whose bytes do not hash to its own key it mints a *repair* upload — a
+  checksum-bound direct grant on a proven provider, artifactd's own mediated
+  grant otherwise (see [integrity.md](integrity.md)) — it never deletes the object. The lease
   taken above keeps a concurrent GC sweep from collecting the digest while the
   replacement upload is in flight.
 

@@ -435,15 +435,19 @@ test('local grant uses remaining lifetime after an asynchronous existence check'
   assert.ok(new URL(upload.url).searchParams.get('expires') === String(NOW + 60), 'local grant never outlives the bearer');
 });
 
-for (const [provider, endpoint, region] of [
-  ['R2', 'https://account.r2.cloudflarestorage.com', 'auto'],
-  ['AWS', 'https://s3.us-east-1.amazonaws.com', 'us-east-1']
+// Direct grants are a declared store capability: R2 is live-proven and selects
+// it automatically; an AWS endpoint is mediated by default and gets direct
+// grants only under an explicit operator assertion (security-integrity covers
+// the mediated default). Either way the grant shape below is what escapes.
+for (const [provider, endpoint, region, capability] of [
+  ['R2', 'https://account.r2.cloudflarestorage.com', 'auto', {}],
+  ['AWS', 'https://s3.us-east-1.amazonaws.com', 'us-east-1', { directUploadIntegrity: 'enforced' }]
 ]) {
   for (const addressingStyle of ['path', 'virtual']) {
     for (const lifetime of [60, 3600]) {
       test(`${provider} ${addressingStyle} presign is bearer-free and bounded at lifetime ${lifetime}`, async t => {
         const stores = memoryStores(); let f, grants = 0, requestedTtl;
-        const blobs = new S3BlobStore({ endpoint, bucket: 'artifacts', region, addressingStyle, accessKeyId: 'SYNTHETICACCESS', secretAccessKey: Buffer.alloc(32, 0x35).toString('hex'), now: () => new Date(f.clock.value * 1000) });
+        const blobs = new S3BlobStore({ endpoint, bucket: 'artifacts', region, addressingStyle, accessKeyId: 'SYNTHETICACCESS', secretAccessKey: Buffer.alloc(32, 0x35).toString('hex'), now: () => new Date(f.clock.value * 1000), ...capability });
         blobs.has = async () => { await Promise.resolve(); f.clock.value = NOW + 5; return false; };
         blobs.signedFetch = async () => { throw new Error('External provider I/O is forbidden in this fixture'); };
         const originalCreateUpload = blobs.createUpload.bind(blobs);

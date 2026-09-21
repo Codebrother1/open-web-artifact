@@ -13,7 +13,7 @@ import {
   IntegrityError, commitManifest, expectedBlobSizes, planManifest, publishDirectory, verifyStoredBlob
 } from '../../core/src/index.js';
 import { artifactDigest, canonicalJson, sha256, validateManifest } from '../../spec/src/index.js';
-import { createContentServer, createControlServer } from '../../server/src/index.js';
+import { createContentServer, createControlServer, createDefaultStores } from '../../server/src/index.js';
 import { createToken } from '../../server/src/auth.js';
 import { remotePublishResult } from '../../cli/src/remote.js';
 
@@ -69,10 +69,13 @@ function presignedSignature(url, sentHeaders, secret, region) {
  * (403), If-None-Match honoured (412), SHA-256 evidence on HEAD only when the
  * last write was checksum-validated, GetObjectAttributes unsupported.
  */
-// `checksumEvidence` defaults to 'enforced' because this mock DOES enforce the
-// checksum, like R2. `echo` models a lax provider that stores the caller's
-// claimed checksum without validating it and later echoes it on HEAD.
-async function mockS3(t, { region = 'auto', checksumEvidence = 'enforced', echo = false } = {}) {
+// `checksumEvidence` and `directUploadIntegrity` default to 'enforced' because
+// this mock DOES enforce the full contract, like R2; pass 'auto' to exercise the
+// store's own conservative defaults for its loopback endpoint. `echo` models a
+// lax provider that stores the caller's claimed checksum without validating it
+// and later echoes it on HEAD; `weak` additionally ignores If-None-Match — an
+// unknown provider with no usable direct-upload semantics at all.
+async function mockS3(t, { region = 'auto', checksumEvidence = 'enforced', directUploadIntegrity = 'enforced', echo = false, weak = false } = {}) {
   const objects = new Map();
   const log = [];
   let fail = null;
@@ -95,9 +98,9 @@ async function mockS3(t, { region = 'auto', checksumEvidence = 'enforced', echo 
         const expected = presignedSignature(url, req.headers, PROVIDER_SECRET, region);
         if (expected === null || expected !== url.searchParams.get('X-Amz-Signature')) { res.writeHead(403); return res.end(xml('SignatureDoesNotMatch')); }
       }
-      if (req.headers['if-none-match'] === '*' && objects.has(key)) { res.writeHead(412); return res.end(xml('PreconditionFailed')); }
+      if (!weak && req.headers['if-none-match'] === '*' && objects.has(key)) { res.writeHead(412); return res.end(xml('PreconditionFailed')); }
       const claimed = req.headers['x-amz-checksum-sha256'];
-      if (!echo && claimed !== undefined && claimed !== b64(body)) { res.writeHead(400); return res.end(xml('BadDigest')); }
+      if (!echo && !weak && claimed !== undefined && claimed !== b64(body)) { res.writeHead(400); return res.end(xml('BadDigest')); }
       objects.set(key, { bytes: body, checksum: claimed !== undefined ? claimed : null });
       res.writeHead(200); return res.end();
     }
@@ -120,15 +123,17 @@ async function mockS3(t, { region = 'auto', checksumEvidence = 'enforced', echo 
   await once(server, 'listening');
   t.after(() => new Promise(resolve => { server.closeAllConnections(); server.close(() => resolve()); }));
   const origin = `http://127.0.0.1:${server.address().port}`;
-  const store = new S3BlobStore({ endpoint: origin, bucket: 'bucket', region, accessKeyId: ACCESS, secretAccessKey: PROVIDER_SECRET, prefix: 'owa', now: () => FIXED, checksumEvidence });
+  const auto = value => value === 'auto' ? undefined : value;
+  const store = new S3BlobStore({ endpoint: origin, bucket: 'bucket', region, accessKeyId: ACCESS, secretAccessKey: PROVIDER_SECRET, prefix: 'owa', now: () => FIXED, checksumEvidence: auto(checksumEvidence), directUploadIntegrity: auto(directUploadIntegrity) });
   return {
     origin, store, objects, log,
     /** A second store over the same objects with a different trust setting. */
-    storeWith(evidence) { return new S3BlobStore({ endpoint: origin, bucket: 'bucket', region, accessKeyId: ACCESS, secretAccessKey: PROVIDER_SECRET, prefix: 'owa', now: () => FIXED, checksumEvidence: evidence }); },
+    storeWith(evidence, extra = {}) { return new S3BlobStore({ endpoint: origin, bucket: 'bucket', region, accessKeyId: ACCESS, secretAccessKey: PROVIDER_SECRET, prefix: 'owa', now: () => FIXED, checksumEvidence: evidence, directUploadIntegrity: 'enforced', ...extra }); },
     deletes() { return log.filter(r => r.method === 'DELETE').length; },
     writes() { return log.filter(r => r.method === 'PUT').length; },
     /** Plant an object directly, bypassing every OWA write path. */
     plant(digest, bytes, { checksum = false } = {}) { objects.set(store.urlForKey(store.key(digest)).pathname, { bytes: Buffer.from(bytes), checksum: checksum ? b64(bytes) : null }); },
+    remove(digest) { objects.delete(store.urlForKey(store.key(digest)).pathname); },
     bytesOf(digest) { return objects.get(store.urlForKey(store.key(digest)).pathname)?.bytes ?? null; },
     setFail(mode) { fail = mode; },
     reset() { log.length = 0; }
@@ -461,7 +466,7 @@ test('30-31. presign without headers is unchanged and deterministic; session tok
   assert.notEqual(withHeaders.searchParams.get('X-Amz-Signature'), a.searchParams.get('X-Amz-Signature'), 'signing headers changes the signature');
 
   const m = await mockS3(t);
-  const withToken = new S3BlobStore({ endpoint: m.origin, bucket: 'bucket', region: 'auto', accessKeyId: ACCESS, secretAccessKey: PROVIDER_SECRET, sessionToken: 'session-token-value', now: () => FIXED });
+  const withToken = new S3BlobStore({ endpoint: m.origin, bucket: 'bucket', region: 'auto', accessKeyId: ACCESS, secretAccessKey: PROVIDER_SECRET, sessionToken: 'session-token-value', now: () => FIXED, directUploadIntegrity: 'enforced' });
   const grant = await withToken.createUpload(sha256(Buffer.from('y')), { expires: 600 });
   assert.equal(new URL(grant.url).searchParams.get('X-Amz-Security-Token'), 'session-token-value', '31. grant carries the session token');
   m.plant(sha256(Buffer.from('y')), Buffer.from('y'), { checksum: true });
@@ -787,4 +792,290 @@ test('GATE 2: provider checksum trust is explicit, auto-detected conservatively,
     assert.deepEqual(await m.storeWith('enforced').verifyBlob({ digest: D, size: good.length }), { ok: true, method: 'provider-checksum' });
     assert.deepEqual(m.log.map(r => r.method), ['HEAD']);
   });
+});
+
+// =========================================================== FINAL GATE ====
+// Whether a publisher may HOLD a presigned grant on a final CAS key is a
+// capability separate from checksum-evidence trust. A still-valid grant outlives
+// commit; on a provider not proven to enforce the signed checksum and
+// create-once semantics, a replay could overwrite a verified, ACTIVE release.
+// An unknown provider therefore gets no direct grant at all: bytes travel
+// through artifactd, which hashes them before put(). Only proven providers
+// (R2 automatically, or an explicit operator assertion) keep the direct path.
+
+const mint = (capabilities, sites, jti = `${capabilities.join('-')}-${sites.join('-')}`) =>
+  createToken({ secret: SECRET, jti, exp: NOW + 600, sites, capabilities, now: () => NOW });
+
+/** A REAL control listener over the given store, plus the requests a publisher makes. */
+async function controlFor(t, blobs) {
+  const root = await mkdtemp(join(tmpdir(), 'owa-final-gate-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const metadata = new FilesystemMetadataStore(root), leases = new FilesystemLeaseStore(root);
+  const server = createControlServer({ blobs, metadata, leases, uploadSecret: UPLOAD_SECRET, auth: { secret: SECRET, now: () => NOW } });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  t.after(() => new Promise(r => { server.closeAllConnections(); server.close(() => r()); }));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const post = (slug, operation, manifest, token) => fetch(`${origin}/v1/sites/${slug}/publish/${operation}`, {
+    method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ manifest, artifactDigest: artifactDigest(manifest) })
+  }).then(async r => ({ status: r.status, body: await r.json() }));
+  return {
+    origin, metadata, leases,
+    plan: (slug, manifest, token) => post(slug, 'plan', manifest, token),
+    commit: (slug, manifest, token) => post(slug, 'commit', manifest, token),
+    /** Relay bytes to an artifactd grant exactly as the CLI does for a local bearer grant. */
+    put: (url, token, bytes) => fetch(url, { method: 'PUT', headers: token ? { authorization: `Bearer ${token}` } : {}, body: bytes })
+      .then(async r => { const text = await r.text(); return { status: r.status, body: text ? JSON.parse(text) : null }; })
+  };
+}
+/** The ONLY grant shape a mediated backend may return: artifactd's own scoped local grant. */
+function assertMediatedGrant(grant, { origin, digest, slug, storageOrigin }) {
+  assert.equal(grant.digest, digest); assert.equal(grant.method, 'PUT');
+  assert.equal(grant.authorization, 'bearer', 'marked local bearer grant, the shape the CLI already knows');
+  assert.ok(!Object.hasOwn(grant, 'headers'), 'no storage grant headers');
+  const url = new URL(grant.url);
+  assert.equal(url.origin, origin, 'same control origin');
+  assert.equal(url.pathname, `/v1/uploads/${encodeURIComponent(digest)}`);
+  assert.deepEqual([...url.searchParams.keys()].sort(), ['expires', 'sig', 'site'], 'local signed expiry/site query only');
+  assert.equal(url.searchParams.get('site'), slug);
+  assert.match(url.searchParams.get('sig'), /^[0-9a-f]{64}$/);
+  assert.ok(![...url.searchParams.keys()].some(k => /^x-amz-/i.test(k)), 'not an S3 presigned URL');
+  assert.notEqual(url.port, new URL(storageOrigin).port, 'does not point at storage');
+  assert.ok(Number(url.searchParams.get('expires')) <= NOW + 600 && grant.expiresIn <= 600, 'bounded by the bearer');
+}
+const status = promise => promise.then(async r => { await r.arrayBuffer(); return r.status; });
+
+test('FINAL GATE: direct-upload integrity is a separate explicit capability — safe default, R2 auto, operator assertion, no bypass', async t => {
+  const make = (endpoint, extra = {}) => new S3BlobStore({ endpoint, bucket: 'b', accessKeyId: ACCESS, secretAccessKey: PROVIDER_SECRET, ...extra });
+  const r2 = make('https://acct.r2.cloudflarestorage.com');
+  assert.equal(r2.directUploadIntegrity, 'enforced'); assert.equal(r2.canCreateSafeDirectUpload(), true, 'R2 is live-proven: direct grants by default');
+  for (const generic of ['http://127.0.0.1:9000', 'https://s3.us-east-1.amazonaws.com', 'https://minio.internal.example:9000', 'https://storage.example.com']) {
+    const store = make(generic);
+    assert.equal(store.directUploadIntegrity, 'mediated', `${generic} is not proven → mediated`);
+    assert.equal(store.canCreateSafeDirectUpload(), false);
+    await assert.rejects(store.createUpload(sha256(Buffer.from('x')), { expires: 60 }), /mediated/, 'a mediated store refuses to sign a direct grant even when asked');
+  }
+  // The two capabilities are independent: checksum-evidence trust alone never
+  // unlocks direct grants, and a direct-upload assertion alone never unlocks the
+  // HEAD fast path.
+  const evidenceOnly = make('http://127.0.0.1:9000', { checksumEvidence: 'enforced' });
+  assert.equal(evidenceOnly.checksumEvidence, 'enforced'); assert.equal(evidenceOnly.directUploadIntegrity, 'mediated');
+  const directOnly = make('http://127.0.0.1:9000', { directUploadIntegrity: 'enforced' });
+  assert.equal(directOnly.directUploadIntegrity, 'enforced'); assert.equal(directOnly.checksumEvidence, 'advisory');
+  assert.equal(directOnly.canCreateSafeDirectUpload(), true, 'a verified MinIO/operator deployment may assert the direct contract');
+  assert.equal(make('https://acct.r2.cloudflarestorage.com', { directUploadIntegrity: 'mediated' }).canCreateSafeDirectUpload(), false, 'an operator may force the safe path even on a proven host');
+  for (const bad of ['off', 'skip', 'unsafe', 'trust-all', 'direct', 'true', '', true, 1, null]) {
+    assert.throws(() => make('http://127.0.0.1:9000', { directUploadIntegrity: bad }), /Unsupported S3 directUploadIntegrity/, `no bypass value: ${String(bad)}`);
+  }
+
+  await t.test('artifactd startup: a generic endpoint defaults to mediated; an invalid value fails construction', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'owa-final-gate-startup-'));
+    t.after(() => rm(dataDir, { recursive: true, force: true }));
+    const keys = ['OWA_STORAGE', 'OWA_S3_ENDPOINT', 'OWA_S3_BUCKET', 'OWA_S3_ACCESS_KEY_ID', 'OWA_S3_SECRET_ACCESS_KEY', 'OWA_S3_DIRECT_UPLOAD_INTEGRITY', 'OWA_S3_CHECKSUM_EVIDENCE'];
+    const saved = Object.fromEntries(keys.map(k => [k, process.env[k]]));
+    t.after(() => { for (const k of keys) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } });
+    Object.assign(process.env, { OWA_STORAGE: 's3', OWA_S3_ENDPOINT: 'http://127.0.0.1:9000', OWA_S3_BUCKET: 'b', OWA_S3_ACCESS_KEY_ID: ACCESS, OWA_S3_SECRET_ACCESS_KEY: PROVIDER_SECRET });
+    delete process.env.OWA_S3_DIRECT_UPLOAD_INTEGRITY; delete process.env.OWA_S3_CHECKSUM_EVIDENCE;
+    const auto = await createDefaultStores({ dataDir });
+    assert.equal(auto.storageKind, 's3'); assert.equal(auto.blobs.directUploadIntegrity, 'mediated'); assert.equal(auto.blobs.checksumEvidence, 'advisory');
+    process.env.OWA_S3_DIRECT_UPLOAD_INTEGRITY = 'enforced';
+    assert.equal((await createDefaultStores({ dataDir })).blobs.canCreateSafeDirectUpload(), true, 'explicit operator assertion');
+    for (const bad of ['off', 'skip', 'unsafe', 'trust-all']) {
+      process.env.OWA_S3_DIRECT_UPLOAD_INTEGRITY = bad;
+      await assert.rejects(createDefaultStores({ dataDir }), /Unsupported S3 directUploadIntegrity/, `startup rejects ${bad}`);
+    }
+    process.env.OWA_S3_DIRECT_UPLOAD_INTEGRITY = 'mediated'; process.env.OWA_S3_CHECKSUM_EVIDENCE = 'off';
+    await assert.rejects(createDefaultStores({ dataDir }), /Unsupported S3 checksumEvidence/);
+  });
+});
+
+test('FINAL GATE (generic S3, real server): missing blob → artifactd-mediated grant; wrong bytes never reach storage; commit; replay cannot corrupt', async t => {
+  const m = await mockS3(t, { checksumEvidence: 'auto', directUploadIntegrity: 'auto' }); // the store's own defaults for an unknown endpoint
+  assert.equal(m.store.checksumEvidence, 'advisory'); assert.equal(m.store.directUploadIntegrity, 'mediated');
+  let directAsked = 0;
+  const guarded = Object.create(m.store);
+  guarded.createUpload = async () => { directAsked++; throw new Error('must not be asked'); };
+  const c = await controlFor(t, guarded);
+  const token = mint(['plan', 'upload', 'commit', 'activate'], ['site-m']);
+  const G = Buffer.from('bytes relayed through artifactd'), D = sha256(G), wrong = Buffer.from('BYTES relayed through artifactd');
+  const manifest = single(G);
+
+  // 1. plan: a mediated scoped grant, not an S3 presigned URL
+  const planned = await c.plan('site-m', manifest, token);
+  assert.equal(planned.status, 200); assert.equal(planned.body.reused, 0); assert.equal(planned.body.uploads.length, 1);
+  const grant = planned.body.uploads[0];
+  assertMediatedGrant(grant, { origin: c.origin, digest: D, slug: 'site-m', storageOrigin: m.origin });
+  assert.equal(directAsked, 0, 'the server never asked the store for a direct grant');
+  assert.equal(m.writes(), 0, 'plan minted nothing on storage'); assert.equal(m.log.filter(r => r.presigned).length, 0);
+
+  // 2. wrong body: artifactd rejects before blobs.put
+  const rejected = await c.put(grant.url, token, wrong);
+  assert.equal(rejected.status, 400); assert.equal(rejected.body.error, 'blob digest mismatch');
+  assert.equal(m.writes(), 0, 'zero S3 PUT'); assert.equal(m.bytesOf(D), null, 'no CAS object created');
+
+  // 3. correct body: exactly one backend write, by artifactd, with storage credentials and a declared checksum
+  assert.equal((await c.put(grant.url, token, G)).status, 204);
+  assert.equal(m.writes(), 1, 'exactly one backend storage write');
+  const write = m.log.find(r => r.method === 'PUT');
+  assert.ok(!write.presigned && write.authScheme === 'AWS4-HMAC-SHA256' && write.hasChecksumHeader && !write.hasIfNoneMatch, 'a trusted put(): storage credentials, checksum declared, overwrite-capable by design');
+  assert.ok(m.bytesOf(D).equals(G));
+  const committed = await c.commit('site-m', manifest, token);
+  assert.equal(committed.status, 201);
+  assert.deepEqual(Object.keys(committed.body).sort(), ['activeReleaseId', 'artifactDigest', 'releaseId', 'slug'], 'commit response shape unchanged');
+  assert.equal(committed.body.artifactDigest, artifactDigest(manifest)); assert.equal(committed.body.activeReleaseId, committed.body.releaseId);
+  assert.deepEqual(await m.store.verifyBlob({ digest: D, size: G.length }), { ok: true, method: 'rehash' }, 'stored bytes verify; advisory trust rehashes');
+  const site = await c.metadata.getSite('site-m');
+  const release = await c.metadata.getRelease(site.id, committed.body.releaseId);
+  assert.deepEqual(release.manifest, manifest); assert.equal(release.artifactDigest, committed.body.artifactDigest);
+  const snapshot = JSON.stringify({ site, release });
+  assert.ok(await servesBytes(t, { blobs: m.store, metadata: c.metadata }, 'site-m.localhost', G), 'served through a real content listener');
+
+  // 4. replay the SAME still-unexpired artifactd grant after commit
+  m.reset();
+  const replay = await c.put(grant.url, token, wrong);
+  assert.equal(replay.status, 400, 'the digest check still rejects');
+  assert.equal(m.writes(), 0, 'zero corrupt backend write'); assert.ok(m.bytesOf(D).equals(G), 'committed CAS bytes unchanged');
+  assert.equal((await c.put(grant.url, token, G)).status, 204, 'correct bytes while still authorized: permitted…');
+  assert.equal(m.writes(), 1); assert.ok(m.bytesOf(D).equals(G), '…but it can only write the identical bytes');
+  assert.equal(JSON.stringify({ site: await c.metadata.getSite('site-m'), release: await c.metadata.getRelease(site.id, committed.body.releaseId) }), snapshot, 'active release remains healthy');
+  assert.ok(await servesBytes(t, { blobs: m.store, metadata: c.metadata }, 'site-m.localhost', G));
+  assert.equal(m.log.filter(r => r.presigned).length, 0, 'no presigned request in the whole flow');
+  assert.ok(m.log.every(r => r.authScheme !== 'Bearer'), 'no OWA bearer reached storage');
+});
+
+test('FINAL GATE (generic S3, real server): a genuinely corrupt object is repaired through artifactd — no delete, no overwrite-capable direct grant', async t => {
+  const m = await mockS3(t, { checksumEvidence: 'auto', directUploadIntegrity: 'auto' });
+  const c = await controlFor(t, m.store);
+  const token = mint(['plan', 'upload', 'commit', 'activate'], ['site-r']);
+  const G = Buffer.from('the bytes site-r expects'), D = sha256(G), corrupt = Buffer.from('THE BYTES site-r expects');
+  m.plant(D, corrupt); m.reset();
+  const planned = await c.plan('site-r', single(G), token);
+  assert.equal(planned.status, 200); assert.equal(planned.body.reused, 0, 'a proven-corrupt object is never reusable'); assert.equal(planned.body.uploads.length, 1);
+  assert.deepEqual(m.log.map(r => r.method), ['HEAD', 'HEAD', 'GET'], 'has(), then a verification that rehashes and identifies digest corruption');
+  assert.equal(m.deletes(), 0, 'not deleted'); assert.equal(m.writes(), 0, 'not overwritten'); assert.ok(m.bytesOf(D).equals(corrupt), 'left in place for the repair');
+  const repair = planned.body.uploads[0];
+  assertMediatedGrant(repair, { origin: c.origin, digest: D, slug: 'site-r', storageOrigin: m.origin });
+  assert.equal(m.log.filter(r => r.presigned).length, 0, 'no direct S3 repair URL escaped to the client');
+  assert.equal((await c.put(repair.url, token, Buffer.from('the bytes SITE-R expects'))).status, 400, 'wrong repair bytes rejected');
+  assert.equal(m.writes(), 0); assert.ok(m.bytesOf(D).equals(corrupt));
+  assert.equal((await c.put(repair.url, token, G)).status, 204, 'correct repair bytes overwrite the key through blobs.put()');
+  assert.equal(m.writes(), 1); assert.ok(m.bytesOf(D).equals(G));
+  assert.equal((await c.commit('site-r', single(G), token)).status, 201);
+  m.reset();
+  const again = await c.plan('site-r', single(G), mint(['plan'], ['site-r']));
+  assert.equal(again.status, 200); assert.equal(again.body.reused, 1); assert.equal(again.body.uploads.length, 0, 'a subsequent identical plan reuses normally');
+  assert.equal(m.writes() + m.deletes(), 0);
+});
+
+test('FINAL GATE (generic S3, real server): a plan-only token obtains neither a direct nor a mediated grant; CAS is untouched', async t => {
+  const m = await mockS3(t, { checksumEvidence: 'auto', directUploadIntegrity: 'auto' });
+  const c = await controlFor(t, m.store);
+  const planOnly = mint(['plan'], ['site-p']);
+  const G = Buffer.from('never uploaded by a plan-only token'), D = sha256(G), corrupt = Buffer.from('NEVER uploaded by a plan-only token');
+  const noGrant = body => assert.ok(!Object.hasOwn(body, 'uploads') && !JSON.stringify(body).includes('/v1/uploads/') && !JSON.stringify(body).includes('X-Amz'), 'no grant of any kind');
+
+  await t.test('missing object', async () => {
+    m.reset();
+    const res = await c.plan('site-p', single(G), planOnly);
+    assert.equal(res.status, 403); assert.equal(res.body.code, 'OWA_AUTH_CAPABILITY'); noGrant(res.body);
+    assert.equal(m.writes() + m.deletes(), 0); assert.equal(m.log.filter(r => r.presigned).length, 0); assert.equal(m.bytesOf(D), null);
+  });
+  await t.test('corrupt object that would need a repair', async () => {
+    m.plant(D, corrupt); m.reset();
+    const res = await c.plan('site-p', single(G), planOnly);
+    assert.equal(res.status, 403); assert.equal(res.body.code, 'OWA_AUTH_CAPABILITY'); noGrant(res.body);
+    assert.equal(m.writes() + m.deletes(), 0); assert.ok(m.bytesOf(D).equals(corrupt), 'CAS unchanged');
+  });
+  await t.test('a mediated grant minted for an authorized publisher cannot be exercised without upload authority', async () => {
+    const grant = (await c.plan('site-p', single(G), mint(['plan', 'upload'], ['site-p']))).body.uploads[0];
+    assertMediatedGrant(grant, { origin: c.origin, digest: D, slug: 'site-p', storageOrigin: m.origin });
+    m.reset();
+    const denied = await c.put(grant.url, planOnly, G);
+    assert.equal(denied.status, 403); assert.equal(denied.body.code, 'OWA_AUTH_CAPABILITY');
+    const anonymous = await c.put(grant.url, null, G);
+    assert.equal(anonymous.status, 401); assert.equal(anonymous.body.code, 'OWA_AUTH_MISSING');
+    assert.equal(m.writes(), 0); assert.ok(m.bytesOf(D).equals(corrupt), 'still the corrupt bytes: nothing was written');
+  });
+});
+
+test('FINAL GATE (proven provider, real server): an enforced store still issues direct grants with the exact normal and repair shapes; the local upload route stays closed', async t => {
+  const m = await mockS3(t); // enforced/enforced: the contract R2 was proven to have
+  assert.equal(m.store.canCreateSafeDirectUpload(), true);
+  const c = await controlFor(t, m.store);
+  const token = mint(['plan', 'upload', 'commit', 'activate'], ['site-d']);
+  const G = Buffer.from('direct grant bytes'), D = sha256(G), wrong = Buffer.from('DIRECT grant bytes');
+  const normal = (await c.plan('site-d', single(G), token)).body.uploads[0];
+  assert.ok(!Object.hasOwn(normal, 'authorization'), 'a storage grant forwards no bearer');
+  const nu = new URL(normal.url);
+  assert.equal(nu.origin, m.origin, 'points at storage, not artifactd');
+  assert.equal(nu.searchParams.get('X-Amz-SignedHeaders'), 'host;if-none-match;x-amz-checksum-sha256');
+  assert.deepEqual(normal.headers, uploadHeadersFor(D), 'normal grant: checksum + if-none-match: *');
+  m.plant(D, wrong); // same length, corrupt, no evidence
+  const repair = (await c.plan('site-d', single(G), token)).body.uploads[0];
+  const ru = new URL(repair.url);
+  assert.equal(ru.origin, m.origin);
+  assert.equal(ru.searchParams.get('X-Amz-SignedHeaders'), 'host;x-amz-checksum-sha256');
+  assert.deepEqual(repair.headers, uploadHeadersFor(D, { repair: true }), 'repair grant: checksum only');
+  assert.ok(!Object.hasOwn(repair.headers, 'if-none-match'));
+  // The artifactd upload route does not exist for a direct store, whatever the URL claims.
+  const local = await c.put(`${c.origin}/v1/uploads/${encodeURIComponent(D)}?expires=${NOW + 600}&sig=${'a'.repeat(64)}&site=site-d`, token, G);
+  assert.equal(local.status, 404); assert.equal(m.writes(), 0);
+  // The existing TOCTOU proof holds end to end through the real listener.
+  assert.equal(await status(fetch(repair.url, { method: 'PUT', headers: repair.headers, body: wrong })), 400, 'wrong bytes under the repair grant: refused by the provider');
+  assert.equal(await status(fetch(repair.url, { method: 'PUT', headers: repair.headers, body: G })), 200);
+  assert.equal((await c.commit('site-d', single(G), token)).status, 201);
+  assert.equal(await status(fetch(repair.url, { method: 'PUT', headers: repair.headers, body: wrong })), 400, 'post-commit repair replay cannot write wrong bytes');
+  assert.equal(await status(fetch(normal.url, { method: 'PUT', headers: normal.headers, body: wrong })), 412, 'post-commit normal replay: create-once refuses');
+  assert.ok(m.bytesOf(D).equals(G), 'committed bytes intact');
+});
+
+test('FINAL GATE (weak provider): an endpoint that ignores checksum validation and If-None-Match never receives a direct final-CAS grant by default; the mediated path keeps the committed object intact', async t => {
+  const m = await mockS3(t, { checksumEvidence: 'auto', directUploadIntegrity: 'auto', weak: true });
+  assert.equal(m.store.directUploadIntegrity, 'mediated'); assert.equal(m.store.checksumEvidence, 'advisory');
+  const G = Buffer.from('weak provider bytes'), D = sha256(G), wrong = Buffer.from('WEAK PROVIDER BYTES');
+  const grantPut = (grant, body) => status(fetch(grant.url, { method: 'PUT', headers: grant.headers, body }));
+
+  await t.test('the hazard: a store WRONGLY asserted enforced hands out a grant the weak provider lets corrupt after commit', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'owa-final-gate-weak-'));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const misconfigured = m.storeWith('advisory', { directUploadIntegrity: 'enforced' });
+    const grant = await misconfigured.createUpload(D, { expires: 600 });
+    assert.equal(await grantPut(grant, G), 200);
+    await commitManifest({ slug: 'weak-direct', manifest: single(G), blobs: misconfigured, metadata: new FilesystemMetadataStore(root) }); // rehash: correct at time T
+    assert.equal(await grantPut(grant, wrong), 200, 'the weak provider accepts the replay: checksum unvalidated, If-None-Match ignored');
+    assert.ok(m.bytesOf(D).equals(wrong), 'the ACTIVE release now serves corrupt CAS bytes — exactly the hole the default closes');
+    assert.equal(await codeOf(misconfigured.verifyBlob({ digest: D, size: G.length })), 'OWA_BLOB_INTEGRITY', 'detectable only at the next verification, too late for the release');
+    m.remove(D);
+  });
+
+  await t.test('the default: mediated flow; wrong bytes never reach the provider; replay cannot corrupt', async () => {
+    m.reset();
+    const c = await controlFor(t, m.store);
+    const token = mint(['plan', 'upload', 'commit', 'activate'], ['weak']);
+    const grant = (await c.plan('weak', single(G), token)).body.uploads[0];
+    assertMediatedGrant(grant, { origin: c.origin, digest: D, slug: 'weak', storageOrigin: m.origin });
+    assert.equal((await c.put(grant.url, token, wrong)).status, 400); assert.equal(m.writes(), 0, 'wrong bytes never reached the provider');
+    assert.equal((await c.put(grant.url, token, G)).status, 204); assert.equal(m.writes(), 1);
+    assert.equal((await c.commit('weak', single(G), token)).status, 201);
+    assert.equal((await c.put(grant.url, token, wrong)).status, 400); assert.equal(m.writes(), 1, 'no second write');
+    assert.ok(m.bytesOf(D).equals(G), 'committed bytes intact on a provider that enforces nothing');
+    assert.deepEqual(await m.store.verifyBlob({ digest: D, size: G.length }), { ok: true, method: 'rehash' });
+    assert.equal(m.log.filter(r => r.presigned).length, 0, 'no presigned request in the entire default flow');
+  });
+});
+
+test('FINAL GATE (CLI): against a mediated S3 backend the CLI sees only the local bearer grant it already knows, and artifactd relays verified bytes', async t => {
+  const m = await mockS3(t, { checksumEvidence: 'auto', directUploadIntegrity: 'auto' });
+  const c = await cliEnv(t, m);
+  await writeFile(join(c.directory, 'index.html'), '<h1>mediated cli</h1>');
+  await writeFile(join(c.directory, 'app.js'), 'console.log(2)');
+  const result = await remotePublishResult(c.directory, 'demo', c.origin);
+  assert.equal(result.uploaded, 2); assert.equal(result.reused, 0);
+  const puts = m.log.filter(r => r.method === 'PUT');
+  assert.equal(puts.length, 2, 'one storage write per blob, by artifactd');
+  assert.ok(puts.every(r => !r.presigned && r.authScheme === 'AWS4-HMAC-SHA256' && r.hasChecksumHeader && !r.hasIfNoneMatch), 'trusted writes with storage credentials; nothing presigned');
+  assert.ok(m.log.every(r => r.authScheme !== 'Bearer'), 'no OWA bearer reached storage');
+  m.reset();
+  const again = await remotePublishResult(c.directory, 'demo', c.origin);
+  assert.equal(again.reused, 2); assert.equal(again.uploaded, 0); assert.equal(m.writes(), 0);
 });

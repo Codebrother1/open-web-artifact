@@ -2,8 +2,13 @@
 
 Issue #10. This document defines the **host integrity invariant** the reference
 server enforces when it turns a manifest into an immutable release, how each
-storage backend satisfies it, and — just as importantly — how a still-valid
-direct-upload grant is prevented from corrupting a committed object afterwards.
+storage backend satisfies it, and — just as importantly — how an upload grant
+still held by the publisher is prevented from corrupting a committed object
+afterwards. For S3-compatible storage that rests on two **separate, explicit
+provider capabilities**: whether a provider-returned checksum counts as proof
+(`checksumEvidence`), and whether a publisher may hold a direct grant on a
+final CAS key at all (`directUploadIntegrity`). Both default to the safe side
+for any endpoint that has not been proven live.
 
 This is a **host storage rule**. It changes no portable OWA semantics: manifest
 schema, `specVersion`, media type, canonical JSON, artifact digest, release
@@ -159,9 +164,11 @@ region `us-east-1`, Node v24.14.1:
 
 So both tested providers enforce the checksum against payload bytes, honour
 create-once, and return validated evidence on `HEAD`. Even so, **the reference
-implementation does not assume this of an arbitrary endpoint** — see the trust
-boundary below. Invariant A (commit integrity) never depends on provider
-enforcement; only the post-commit grant guarantee does.
+implementation does not assume this of an arbitrary endpoint** — see the two
+capabilities below. Invariant A (commit integrity) never depends on provider
+enforcement. The post-commit grant guarantee depends on it only where a direct
+grant is issued at all, and a direct grant is issued only where the contract is
+proven.
 
 ### Provider checksum trust boundary
 
@@ -184,6 +191,74 @@ run here, so it defaults to `advisory`). Any other value is rejected. There is
 direction costs bandwidth, never correctness. Asserting `enforced` for a
 provider that does not actually validate is the one way to weaken this, and it
 is an explicit operator claim, not a default.
+
+### Direct-upload integrity capability
+
+Checksum evidence answers "can a `HEAD` replace a rehash?". A different question
+decides whether the publisher may **hold a presigned grant on a final CAS key at
+all**. A grant lives up to 900 s, so it outlives commit. Commit can rehash the
+object and be perfectly correct at time *T*; if the provider does not actually
+enforce the signed checksum and `If-None-Match`, the same grant replayed at
+*T+1* overwrites the key with arbitrary bytes and an **active release now serves
+corrupt content**. The repair grant is the sharpest case: it intentionally omits
+create-once, so its post-commit safety rests entirely on checksum enforcement —
+and for an unknown provider that enforcement is precisely what has not been
+established. `S3BlobStore` therefore carries a second capability,
+`directUploadIntegrity`:
+
+| Value | Meaning |
+| --- | --- |
+| `enforced` | The provider is known to enforce the **complete** direct-grant contract: the signed `x-amz-checksum-sha256` is validated against the payload; a signed header cannot be omitted or altered; `If-None-Match: *` refuses overwrite on a presigned PUT; a checksum-only repair grant still cannot write bytes that fail the checksum. Publishers receive direct presigned grants. |
+| `mediated` | The publisher receives **no storage credential**. Plan issues artifactd's own scoped upload grant; the client sends the bytes to artifactd, which verifies `sha256(bytes) === digest` and only then writes them with its storage credentials through `put()`. |
+| unset (default) | Automatic: only hosts proven live — currently `*.r2.cloudflarestorage.com` — are `enforced`; **every other endpoint is `mediated`**. |
+
+`OWA_S3_DIRECT_UPLOAD_INTEGRITY=enforced` is the operator's explicit assertion
+after verifying a provider. MinIO at the tag above qualifies, but an arbitrary
+MinIO endpoint cannot be recognised from its hostname, so it is never assumed.
+Any other value (`off`, `skip`, `unsafe`, `trust-all`, …) fails at
+construction/startup; there is no value that weakens integrity. The two
+capabilities are **independent**: asserting one never unlocks the other. A
+`checksumEvidence: enforced` store on a mediated endpoint still relays bytes
+through artifactd; a `directUploadIntegrity: enforced` store with advisory
+evidence still rehashes at verification. Getting either wrong in the safe
+direction costs bandwidth or control-plane transfer, never correctness.
+
+The decision is **explicit, not inferred**. The server does not ask whether the
+store *implements* `createUpload()` — an S3 store always does — but whether it
+*declares* the capability: `blobs.canCreateSafeDirectUpload()`. A store without
+that method is mediated. In mediated mode the store's `createUpload()` also
+refuses to sign, so a publisher-held grant cannot escape through any caller.
+Core (`planManifest`) is unaware of all of this: it calls the same
+`uploadFactory` for a missing object and for a repair, and the server decides
+what that factory returns.
+
+#### The mediated path
+
+```
+publisher ──POST plan───▶ artifactd: authorize(plan); per missing/corrupt digest:
+                                     authorize(plan, upload) → scoped local grant
+publisher ──PUT bytes───▶ artifactd: local signature + site scope + `upload`;
+                                     read body; re-check bearer and grant expiry;
+                                     sha256(bytes) === digest, else 400;
+                                     blobs.put(digest, bytes)   ← storage credentials
+publisher ──POST commit─▶ artifactd: verifyBlob(digest, size) per unique digest
+```
+
+This is the filesystem backend's existing upload route, unchanged; it merely no
+longer refuses S3 stores that run mediated. It already has the right shape: the
+OWA `upload` capability is required at plan and again at upload; the grant is
+scoped to the site and expires; the digest is verified before any backend
+write; the publisher never sees a storage URL, header or credential; a replay
+with wrong bytes fails the digest check before storage; a replay with the
+correct bytes while still authorized can only restore identical content. That
+artifactd then writes to S3 is fine — the publisher no longer owns a
+post-commit storage credential. A repair uses the very same grant: `put()`
+overwrites the corrupt key with the verified bytes.
+
+The client sees exactly the local bearer grant shape it already knows
+(`authorization: "bearer"`, same control origin,
+`/v1/uploads/:digest?expires&sig&site`, no `headers`). The CLI gains no
+S3-specific fallback logic, and MCP inherits CLI behavior unchanged.
 
 ### Verification: `S3BlobStore.verifyBlob`
 
@@ -209,8 +284,8 @@ credentials only — no OWA bearer is ever sent to storage.
 
 ### Direct upload: checksum-bound, create-once grants
 
-`createUpload(digest)` presigns a PUT on the final content-addressed key whose
-**SigV4 signed headers** are:
+Where `directUploadIntegrity` is `enforced`, `createUpload(digest)` presigns a
+PUT on the final content-addressed key whose **SigV4 signed headers** are:
 
 ```
 x-amz-checksum-sha256: <base64 SHA-256 the digest names>
@@ -245,9 +320,20 @@ arbitrary bytes and the *verified* release would serve corrupt content. Here:
 - after commit, reuse fails with `412` before the checksum is even consulted;
 - the committed object is therefore byte-identical to what commit verified.
 
-This is proven offline against an enforcing mock and live against R2: after
-commit, the still-valid grant is replayed with wrong bytes and with the right
-bytes, both are refused, and the stored bytes are unchanged.
+This is proven offline against an enforcing mock and live against R2 and MinIO
+(explicit `enforced`): after commit, the still-valid grant is replayed with
+wrong bytes and with the right bytes, both are refused, and the stored bytes are
+unchanged.
+
+On a provider **not** proven to enforce those semantics none of this can be
+relied upon — which is why such a provider never issues a direct grant in the
+first place. The mediated path closes the same TOCTOU differently: the only
+credential that can write the final key stays inside artifactd, and the
+publisher's grant is honoured only for bytes that hash to the digest. An offline
+regression models a provider that stores an unvalidated checksum, echoes it on
+`HEAD` and ignores `If-None-Match`: a store *wrongly* asserted `enforced` lets a
+replayed grant corrupt the committed object, while the default (mediated) flow
+on the same provider keeps it byte-identical.
 
 ### Corrupt existing object: non-destructive repair
 
@@ -260,22 +346,27 @@ releases. The decision turns on *why* verification failed:
 | Verification outcome | Meaning | Plan does |
 | --- | --- | --- |
 | verifies | reusable | reuse, no grant |
-| `INTEGRITY` / `digest` | stored bytes do **not** hash to their own key: the **object** is corrupt and cannot serve any release naming it | mint a **repair grant** |
+| `INTEGRITY` / `digest` | stored bytes do **not** hash to their own key: the **object** is corrupt and cannot serve any release naming it | mint a **repair upload**: a direct repair grant where `directUploadIntegrity` is `enforced`, artifactd's mediated grant otherwise |
 | `INTEGRITY` / `size` | bytes hash to the key; the **submitted manifest** declared the wrong size; the object is valid | **fail the plan**; nothing minted, nothing touched |
 | `UNVERIFIED` | no proof either way | fail the plan; nothing touched |
 | `MISSING` | gone since `has()` | ordinary upload grant |
 
-A **repair grant** is a presigned PUT on the same key with the signed
-`x-amz-checksum-sha256` header but **without** `If-None-Match: *`, because
-replacement is the point. It remains bound to the digest exactly as strongly as
-a normal grant: it can only ever write bytes whose SHA-256 is the digest, wrong
-bytes are refused by the provider, and replaying it after commit — even with the
-correct bytes — can only restore the identical content. Repair grants are minted
-through the same `uploadFactory` as normal grants, so the `upload` capability
-check precedes any CAS-affecting instrument; a token holding only `plan` can
-neither delete, overwrite, nor obtain a repair grant. On the filesystem backend
-the local upload route already writes only bytes that hash to the digest and
-overwrites in place, so it is the repair path there.
+On an enforced provider a **repair grant** is a presigned PUT on the same key
+with the signed `x-amz-checksum-sha256` header but **without** `If-None-Match: *`,
+because replacement is the point. It remains bound to the digest exactly as
+strongly as a normal grant: it can only ever write bytes whose SHA-256 is the
+digest, wrong bytes are refused by the provider, and replaying it after commit —
+even with the correct bytes — can only restore the identical content. Because it
+is overwrite-capable by design, it is exactly the grant that must never reach a
+publisher on an unproven provider: in mediated mode the repair is artifactd's own
+scoped grant, the upload route hashes the bytes and `put()` overwrites the
+corrupt key, and no overwrite-capable storage credential reaches the client.
+Repair uploads of either kind are minted through the same `uploadFactory` as
+normal ones, so the `upload` capability check precedes any CAS-affecting
+instrument; a token holding only `plan` can neither delete, overwrite, nor
+obtain a direct or mediated grant. On the filesystem backend — and on S3 in
+mediated mode — the local upload route already writes only bytes that hash to
+the digest and overwrites in place, so it is the repair path there.
 
 The wrong-size case was a real bug in the first revision of this work: a
 manifest that lied about the size of a valid, shared object caused plan to
@@ -298,8 +389,10 @@ an empty object, headers on a local bearer grant — is `OWA_CLI_GRANT` and no
 byte is sent. A `412` on a create-once upload is treated as "already present":
 the object can only have been written through a checksum-bound grant for the
 same digest, and commit verifies it regardless. Grants without `headers`
-(older servers) still work. MCP inherits all of this through the CLI and gains
-no integrity logic of its own.
+(older servers) still work. A mediated S3 backend returns the marked local
+bearer grant, so the CLI's existing local-grant validation applies unchanged and
+the CLI never learns which storage backend it is publishing to. MCP inherits all
+of this through the CLI and gains no integrity or provider logic of its own.
 
 ## Cost
 
@@ -321,19 +414,31 @@ checksum algorithm). A generic endpoint left at the default `advisory` trust pay
 one streaming GET per unique blob per plan and per commit — the price of not
 assuming what the provider has not proven.
 
+Upload-path cost, by `directUploadIntegrity`:
+
+| | `enforced` (direct) | `mediated` |
+| --- | --- | --- |
+| Payload bytes through artifactd | none | every uploaded blob, once (buffered, as the filesystem route already does) |
+| Storage requests per uploaded blob | 1 presigned PUT by the publisher | 1 authenticated PUT by artifactd |
+| Publisher-held storage credential | a checksum-bound presigned grant, ≤ 900 s | **none** |
+| Wrong bytes | reach the provider and are refused there | refused by artifactd; never reach the provider |
+| Post-commit replay of the grant | refused by the provider (`412`/`400`) | refused by artifactd's digest check |
+
 Measured live (integrity scenario: wrong-size attack, corrupt → repair → commit →
-replays, fresh normal grant, re-plan, legacy rehash), isolated prefixes:
+replays, fresh grant, re-plan, legacy rehash), isolated prefixes:
 
-| Provider / trust | PUT | HEAD | GET | Bearer to storage |
-| --- | --- | --- | --- | --- |
-| MinIO, `advisory` (default) | 11 | 15 | 14 | 0 |
-| MinIO, `enforced` (operator-asserted) | 11 | 15 | 10 | 0 |
-| Cloudflare R2, `enforced` (auto) | 11 | 15 | 10 | 0 |
+| Provider / capabilities | PUT | HEAD | GET | Presigned | Bearer to storage |
+| --- | --- | --- | --- | --- | --- |
+| MinIO, default (`advisory` + `mediated`) | 6 | 15 | 15 | **0** | 0 |
+| MinIO, explicit `enforced` + `enforced` | 11 | 15 | 10 | 8 | 0 |
+| Cloudflare R2, auto (`enforced` + `enforced`) | 11 | 15 | 10 | 8 | 0 |
 
-The four fewer GETs under `enforced` are exactly the fast-path verifications;
-commit issued zero GETs there. There is **no configuration switch to skip
-verification**. Production behavior fails closed; test fixtures use purpose-built
-mocks.
+Under the defaults the five wrong-byte attempts of the scenario never reach the
+provider (5 fewer PUTs, 0 presigned requests), while advisory trust rehashes at
+each verification (the extra GETs). Under `enforced` the four fewer GETs are
+exactly the fast-path verifications; commit issued zero GETs there. There is
+**no configuration switch to skip verification**. Production behavior fails
+closed; test fixtures use purpose-built mocks.
 
 ## Relationship to other mechanisms
 
@@ -348,7 +453,9 @@ mocks.
   reading image layouts. This work brings the host commit boundary to the same
   standard; OCI identity and duplicate-path behavior (issue #9) are untouched.
 - **Auth / origins / sandbox:** unchanged. The grant headers are storage grant
-  material; they create no OWA capability and never carry a bearer.
+  material; they create no OWA capability and never carry a bearer. Mediated S3
+  uploads reuse the existing `upload` capability, local grant signature and
+  `PUT /v1/uploads/:digest` route: no new capability, token field or route.
 
 ## Threat model and residual limits
 
@@ -356,8 +463,13 @@ mocks.
 
 - a client that uploads wrong bytes, truncated bytes, or bytes for the wrong
   digest — rejected by the provider before storage, and by commit regardless;
-- a still-valid grant replayed after commit — refused (`412`/`400`), object
-  unchanged;
+- a still-valid direct grant replayed after commit — refused (`412`/`400`),
+  object unchanged;
+- a still-valid mediated grant replayed after commit with wrong bytes — refused
+  by artifactd's digest check before any storage write; with the correct bytes it
+  can only restore identical content;
+- an S3-compatible endpoint whose direct-upload semantics are unknown — receives
+  no direct final-CAS grant at all;
 - a corrupt object already at a CAS key — never released, repaired by the next
   publish;
 - a symlink or non-regular object where a blob should be — never verified,
@@ -373,13 +485,15 @@ mocks.
   administrator. On R2 such an overwrite at least drops the SHA-256 evidence, so
   the next verification falls back to a rehash and fails — but a release that is
   already active is served from storage without re-verification per request.
-- **A provider that silently ignores `x-amz-checksum-sha256` or `If-None-Match`,
-  or echoes an unvalidated checksum.** Under the default `advisory` trust,
-  invariant A still holds — commit rehashes and refuses corrupt bytes, and a
-  regression proves an echoed checksum on corrupt bytes is caught. The
-  post-commit grant guarantee, however, needs the provider to enforce the
-  headers. R2 and MinIO (tag above) are proven; AWS S3 documents it; asserting
-  `enforced` for an unproven provider is an operator claim outside this model.
+- **An operator asserting `enforced` for a provider that does not actually
+  enforce.** Under the defaults a provider that silently ignores
+  `x-amz-checksum-sha256` or `If-None-Match`, or echoes an unvalidated checksum,
+  is `advisory` + `mediated`: commit rehashes and refuses corrupt bytes, and no
+  publisher ever holds a grant on its final CAS keys, so there is nothing to
+  replay — regressions prove both. What the model cannot protect is an explicit
+  `enforced` claim for such a provider; a regression shows exactly what that
+  misconfiguration costs. R2 and MinIO (tag above) are proven; AWS S3 documents
+  the behavior but was not run here and therefore defaults to the safe path.
 - **Serving-time integrity.** Verification happens at plan and commit, not on
   every public GET.
 - **A concurrent local filesystem attacker** racing `lstat` against the

@@ -37,6 +37,16 @@ export class S3OperationError extends Error {
 
 /** Hosts proven LIVE to validate x-amz-checksum-sha256 against payload bytes. */
 const CHECKSUM_ENFORCING_HOSTS = [/\.r2\.cloudflarestorage\.com$/i];
+/**
+ * Hosts proven LIVE to enforce the COMPLETE direct final-CAS grant contract:
+ * the signed x-amz-checksum-sha256 is validated against the payload; a signed
+ * header cannot be omitted or altered; If-None-Match: * refuses overwrite on a
+ * presigned PUT; and a checksum-only (repair) grant still cannot write bytes
+ * that fail the checksum. MinIO was proven too, but an arbitrary MinIO endpoint
+ * cannot be recognised from its hostname, so it needs an explicit operator
+ * assertion (directUploadIntegrity: 'enforced') after verification.
+ */
+const DIRECT_UPLOAD_ENFORCING_HOSTS = [/\.r2\.cloudflarestorage\.com$/i];
 
 const XML_NAMED = Object.freeze({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" });
 
@@ -72,10 +82,11 @@ export function decodeXmlText(text) {
 }
 
 export class S3BlobStore {
-  constructor({endpoint,bucket,region='auto',accessKeyId,secretAccessKey,sessionToken=null,prefix='owa',addressingStyle='path',now=()=>new Date(),checksumEvidence=undefined}) {
+  constructor({endpoint,bucket,region='auto',accessKeyId,secretAccessKey,sessionToken=null,prefix='owa',addressingStyle='path',now=()=>new Date(),checksumEvidence=undefined,directUploadIntegrity=undefined}) {
     if (!endpoint || !bucket || !accessKeyId || !secretAccessKey) throw new Error('S3 endpoint, bucket, accessKeyId, and secretAccessKey are required');
     this.endpoint=endpoint.replace(/\/$/,''); this.bucket=bucket; this.region=region; this.accessKeyId=accessKeyId; this.secretAccessKey=secretAccessKey; this.sessionToken=sessionToken; this.prefix=prefix.replace(/^\/+|\/+$/g,''); this.addressingStyle=addressingStyle; this.now=now;
     if(!['path','virtual'].includes(addressingStyle))throw new Error(`Unsupported S3 addressingStyle: ${addressingStyle}`);
+    const hostname=new URL(this.endpoint).hostname;
     // PROVIDER CHECKSUM TRUST BOUNDARY. A returned x-amz-checksum-sha256 is
     // strong proof only if the provider validated it against the bytes it
     // stored. 'enforced' allows the zero-byte HEAD fast path; 'advisory' treats
@@ -84,8 +95,26 @@ export class S3BlobStore {
     // other endpoint is 'advisory'. Getting this wrong in the safe direction
     // costs bandwidth, never correctness — there is no way to skip verification.
     if(checksumEvidence!==undefined&&!['enforced','advisory'].includes(checksumEvidence))throw new Error(`Unsupported S3 checksumEvidence: ${checksumEvidence}`);
-    this.checksumEvidence=checksumEvidence??(CHECKSUM_ENFORCING_HOSTS.some(pattern=>pattern.test(new URL(this.endpoint).hostname))?'enforced':'advisory');
+    this.checksumEvidence=checksumEvidence??(CHECKSUM_ENFORCING_HOSTS.some(pattern=>pattern.test(hostname))?'enforced':'advisory');
+    // DIRECT-UPLOAD INTEGRITY CAPABILITY. A separate question from the one
+    // above: not "can a HEAD checksum replace a rehash?" but "may a publisher
+    // hold a presigned grant on a FINAL CAS key at all?". Such a grant outlives
+    // commit, so it is safe only where the provider is known to enforce the
+    // signed checksum and create-once semantics; on an unknown provider a
+    // replay could overwrite a verified, active release. 'enforced' issues
+    // direct grants; 'mediated' never does — bytes travel through artifactd,
+    // which hashes them before put(). Unset selects automatically: proven hosts
+    // are 'enforced'; every other endpoint is 'mediated'. Again the safe
+    // direction only costs bandwidth; there is no value that weakens integrity.
+    if(directUploadIntegrity!==undefined&&!['enforced','mediated'].includes(directUploadIntegrity))throw new Error(`Unsupported S3 directUploadIntegrity: ${directUploadIntegrity}`);
+    this.directUploadIntegrity=directUploadIntegrity??(DIRECT_UPLOAD_ENFORCING_HOSTS.some(pattern=>pattern.test(hostname))?'enforced':'mediated');
   }
+  /**
+   * Declared capability the server consults before minting ANY publisher-held
+   * storage grant. Explicit on purpose: implementing createUpload() is not the
+   * same as being allowed to use it.
+   */
+  canCreateSafeDirectUpload() { return this.directUploadIntegrity==='enforced'; }
   key(digest) { const [algorithm,hex]=digest.split(':'); return `${this.prefix}/blobs/${algorithm}/${hex}`; }
   urlForKey(key) {
     const url=new URL(this.endpoint);
@@ -165,6 +194,9 @@ export class S3BlobStore {
    * The `headers` field tells the client exactly what it must send.
    */
   async createUpload(digest,{expires=900,repair=false}={}) {
+    // Fail closed at the store boundary as well as in the server: a mediated
+    // store signs no publisher-held grant on a final CAS key, whoever asks.
+    if(!this.canCreateSafeDirectUpload()) throw new Error('S3 direct uploads are mediated for this endpoint; bytes must pass through artifactd');
     const headers=uploadHeadersFor(digest,{repair});
     return {digest,method:'PUT',url:this.presign('PUT',this.key(digest),{expires,headers}),expiresIn:expires,headers};
   }

@@ -695,6 +695,9 @@ test('37. S3/R2 presigned upload grants are unchanged by content-origin configur
     async has() { return false; },
     async get() { throw new Error('unused'); },
     async put() {},
+    // Direct grants are a DECLARED capability; an adapter that merely
+    // implements createUpload without declaring it is routed mediated.
+    canCreateSafeDirectUpload() { return true; },
     async createUpload(digestValue, options) {
       const grant = { digest: digestValue, method: 'PUT', url: `https://bucket.r2.invalid/${digestValue}?X-Amz-Signature=${'f'.repeat(64)}`, expiresIn: options.expires };
       grants.push(grant);

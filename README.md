@@ -252,6 +252,26 @@ export OWA_S3_REGION='us-east-1'
 export OWA_S3_ADDRESSING_STYLE='virtual'
 ```
 
+Two independent provider capabilities decide how much `artifactd` trusts an
+S3-compatible endpoint (details in [docs/integrity.md](docs/integrity.md)):
+
+```bash
+# May a HEAD-returned x-amz-checksum-sha256 replace a rehash at verification?
+export OWA_S3_CHECKSUM_EVIDENCE='enforced'         # or 'advisory'
+# May publishers hold direct presigned grants on final CAS keys?
+export OWA_S3_DIRECT_UPLOAD_INTEGRITY='enforced'   # or 'mediated'
+```
+
+Cloudflare R2 (`*.r2.cloudflarestorage.com`) is live-proven and selects
+`enforced` for both automatically. **Any other endpoint** — AWS S3, MinIO, another
+compatible service — defaults to `advisory` + `mediated`: verification rehashes
+the stored bytes, and uploads travel through `artifactd`, which checks the
+SHA-256 before writing with its own storage credentials, so a publisher never
+holds a storage credential that could corrupt a committed object later. Set
+`enforced` only after verifying the provider (the MinIO tag recorded in
+integrity.md qualifies). Any other value fails startup; no value skips
+verification. The safe defaults cost bandwidth, never correctness.
+
 The S3 signer is implemented directly with Node's cryptographic primitives and is checked against Amazon's published Signature V4 presign test vector.
 
 ### Live storage integration tests
@@ -358,7 +378,7 @@ rewriting bytes. The profile does not make interactive apps work or enable scrip
 
 Health and artifact GET/HEAD remain public; `read` protects control-plane metadata,
 not public artifact access. Shared CAS deduplication is not tenant-private storage,
-and commit still checks blob existence rather than ownership. Local operator CLI
+and commit verifies each blob's digest and size, not its ownership. Local operator CLI
 access remains gated by filesystem permissions; storage and metadata are trusted.
 
 A production deployment needs clean, cookieless, content-only per-site origins

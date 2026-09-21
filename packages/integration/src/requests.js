@@ -1,3 +1,33 @@
+/**
+ * Count requests to ONE storage host by method and Authorization scheme, and
+ * whether any OWA bearer material reached it. Records nothing else — never a
+ * URL, header value, signature or body. Install before withRequestLimits so the
+ * limiter wraps the meter; call restore() after the limited run has finished.
+ */
+export function meterRequests(endpointHost) {
+  const counts = { methods: {}, schemes: {}, bearer: 0 };
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    const target = String(url);
+    if (new URL(target).host === endpointHost) {
+      const method = (options.method ?? 'GET').toUpperCase();
+      counts.methods[method] = (counts.methods[method] ?? 0) + 1;
+      const auth = new Headers(options.headers ?? {}).get('authorization');
+      const scheme = auth ? auth.split(' ')[0] : (target.includes('X-Amz-Signature=') ? 'presigned' : 'none');
+      counts.schemes[scheme] = (counts.schemes[scheme] ?? 0) + 1;
+      if (/^bearer$/i.test(scheme) || /owa1\./.test(target)) counts.bearer++;
+    }
+    return real(url, options);
+  };
+  return {
+    counts,
+    snapshot: () => ({ ...counts.methods }),
+    /** Requests of one method since a snapshot. */
+    since: (before, method) => (counts.methods[method] ?? 0) - (before[method] ?? 0),
+    restore: () => { globalThis.fetch = real; }
+  };
+}
+
 // Test-only global fetch replacement: callers must run suites and requests sequentially.
 // Await every publishing operation in run; detached work cannot be unwound here.
 export async function withRequestLimits({

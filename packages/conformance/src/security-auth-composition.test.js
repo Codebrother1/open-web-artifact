@@ -380,16 +380,19 @@ function expectedStorageSignature(url, key, region, headers = {}) {
   const derived = hmac(hmac(hmac(hmac(`AWS4${key}`, date), region), 's3'), 'aws4_request');
   return createHmac('sha256', derived).update(signing).digest('hex');
 }
-for (const [provider, endpoint, region] of [
-  ['S3', 'https://s3.us-east-1.amazonaws.com', 'us-east-1'],
-  ['R2', 'https://account.r2.cloudflarestorage.com', 'auto']
+// Direct grants are a declared store capability: R2 selects it automatically;
+// a generic AWS endpoint is mediated by default and presigns only under an
+// explicit operator assertion (the mediated default is covered elsewhere).
+for (const [provider, endpoint, region, capability] of [
+  ['S3', 'https://s3.us-east-1.amazonaws.com', 'us-east-1', { directUploadIntegrity: 'enforced' }],
+  ['R2', 'https://account.r2.cloudflarestorage.com', 'auto', {}]
 ]) {
   for (const addressingStyle of ['path', 'virtual']) {
     for (const lifetime of [37, 1200]) {
       test(`composition: ${provider} ${addressingStyle} real offline presign at lifetime ${lifetime} is bearer-free with policy`, async t => {
         let f, externalRequests = 0;
         const providerKey = Buffer.alloc(32, 0x35).toString('hex'), signingInputs = [];
-        const blobs = new S3BlobStore({ endpoint, bucket: 'artifacts', region, addressingStyle, accessKeyId: 'SYNTHETICCOMPOSITION', secretAccessKey: providerKey, now: () => new Date(f.clock.value * 1000) });
+        const blobs = new S3BlobStore({ endpoint, bucket: 'artifacts', region, addressingStyle, accessKeyId: 'SYNTHETICCOMPOSITION', secretAccessKey: providerKey, now: () => new Date(f.clock.value * 1000), ...capability });
         blobs.has = async () => { await Promise.resolve(); f.clock.value = NOW + 5; return false; };
         const forbiddenNetwork = async () => { externalRequests++; throw new Error('External provider I/O forbidden'); };
         blobs.signedFetch = forbiddenNetwork;

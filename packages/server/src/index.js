@@ -32,6 +32,15 @@ function routeSite(segment) {
   try { site = decodeURIComponent(segment); } catch { return null; }
   return isSiteScope(site) ? site : null;
 }
+/**
+ * May a publisher hold a storage grant on a final CAS key? This is a DECLARED
+ * store capability, never inferred from the presence of createUpload(): an S3
+ * store may implement it yet run mediated, where bytes must pass through
+ * artifactd's digest check before put(). No capability means mediated.
+ */
+function directUploads(blobs) {
+  return typeof blobs.canCreateSafeDirectUpload === 'function' && blobs.canCreateSafeDirectUpload() === true;
+}
 function safeSiteRecord(site, slug) {
   // Metadata remains operator-trusted; do not let an index redirect this request
   // into another site's namespace or a filesystem path outside the store.
@@ -56,7 +65,12 @@ export async function createDefaultStores({dataDir=resolve(process.env.OWA_DATA_
       addressingStyle:process.env.OWA_S3_ADDRESSING_STYLE??'path',
       // Provider checksum trust: 'enforced' | 'advisory'. Unset = automatic
       // (only live-proven hosts are enforced). Cannot disable verification.
-      checksumEvidence:process.env.OWA_S3_CHECKSUM_EVIDENCE||undefined
+      checksumEvidence:process.env.OWA_S3_CHECKSUM_EVIDENCE||undefined,
+      // Direct final-CAS grants: 'enforced' | 'mediated'. Unset = automatic
+      // (only live-proven hosts are enforced; every other endpoint is mediated,
+      // so blob bytes pass through artifactd's digest check before storage).
+      // Invalid values fail startup here; there is no bypass value.
+      directUploadIntegrity:process.env.OWA_S3_DIRECT_UPLOAD_INTEGRITY||undefined
     });
     return {blobs,metadata,leases,storageKind:'s3'};
   }
@@ -131,7 +145,11 @@ function createRuntime({blobs,metadata,leases=null,uploadSecret=randomBytes(32).
         // the upload capability always precedes it — including repair grants.
         const claims=authorize(req,slug,['plan','upload']);
         const {expiresIn,expires}=uploadLifetime(claims);
-        if(typeof blobs.createUpload==='function')return blobs.createUpload(digest,{expires:expiresIn,repair});
+        if(directUploads(blobs))return blobs.createUpload(digest,{expires:expiresIn,repair});
+        // Mediated (filesystem, or S3 without a proven direct-upload contract):
+        // the same scoped artifactd grant for a missing object and for a repair.
+        // No storage credential leaves artifactd; the upload route hashes the
+        // bytes before put(), which writes verified bytes in place either way.
         const scoped=authorizer.mode==='required';
         const sig=uploadSignature(localKey,digest,expires,scoped?slug:null);
         return {digest,method:'PUT',url:`${origin}/v1/uploads/${encodeURIComponent(digest)}?expires=${expires}&sig=${sig}${scoped?`&site=${encodeURIComponent(slug)}`:''}`,expiresIn,
@@ -145,7 +163,7 @@ function createRuntime({blobs,metadata,leases=null,uploadSecret=randomBytes(32).
 
     const uploadMatch=url.pathname.match(/^\/v1\/uploads\/(sha256%3A[0-9a-f]{64}|sha256:[0-9a-f]{64})$/i);
     if(req.method==='PUT'&&uploadMatch){
-      if(typeof blobs.createUpload==='function'){json(res,404,{error:'direct S3 uploads do not pass through artifactd'});return true;}
+      if(directUploads(blobs)){json(res,404,{error:'direct S3 uploads do not pass through artifactd'});return true;}
       const scoped=authorizer.mode==='required';
       const sites=url.searchParams.getAll('site');
       if (scoped && (sites.length!==1 || !isSiteScope(sites[0]))) { json(res,400,{error:'Invalid upload scope',code:'OWA_INVALID_SITE'}); return true; }
