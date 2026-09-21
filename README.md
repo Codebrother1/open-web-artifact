@@ -8,7 +8,7 @@ The thesis: an AI agent, CLI, CI job, or application should be able to produce o
 
 | | |
 | --- | --- |
-| **Software / reference implementation** | **v0.4.0 release candidate** — experimental; see [CHANGELOG](CHANGELOG.md) and the [release checklist](docs/release.md) |
+| **Software / reference implementation** | **v0.4.0** — experimental; see [CHANGELOG](CHANGELOG.md) and the [release checklist](docs/release.md) |
 | **Specification** | **v0.2 draft** ([docs/spec-v0.2.md](docs/spec-v0.2.md)); manifest `specVersion` **`owa.dev/v1`**, media type `application/vnd.openwebartifact.site.v1+json` |
 | **Runtime** | Node.js **22+** |
 | **CI** | **9 required checks**, all secretless: Linux/macOS/Windows × Node 22/24, real MinIO, Chromium/Firefox/WebKit, real ORAS + Zot ([docs/ci.md](docs/ci.md)) |
