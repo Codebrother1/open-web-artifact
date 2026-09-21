@@ -15,17 +15,28 @@ function checksumFor(digest) { return Buffer.from(digest.slice('sha256:'.length)
  * overwrite an existing object. Together: a grant can only ever create the one
  * correct object, and a still-valid grant cannot corrupt it after commit.
  */
-export function uploadHeadersFor(digest) { return { 'x-amz-checksum-sha256': checksumFor(digest), 'if-none-match': '*' }; }
+export function uploadHeadersFor(digest, { repair = false } = {}) {
+  const headers = { 'x-amz-checksum-sha256': checksumFor(digest) };
+  // A REPAIR grant replaces an object proven corrupt relative to its own key,
+  // so create-once is deliberately omitted; the checksum binding stays signed,
+  // so even a replayed repair grant can only ever write the one correct object.
+  if (!repair) headers['if-none-match'] = '*';
+  return headers;
+}
 function canonicalQuery(params) { return [...params.entries()].sort(([a,av],[b,bv])=>a===b?av.localeCompare(bv):a.localeCompare(b)).map(([k,v])=>`${enc(k)}=${enc(v)}`).join('&'); }
 
 /** Fixed-shape storage failure. Never carries a provider body, URL or credential. */
 export class S3OperationError extends Error {
-  constructor(code) {
+  constructor(code, reason = null) {
     super(`storage operation failed: ${code}`);
     this.name = 'S3OperationError';
     this.code = code;
+    this.reason = reason; // Internal attribution ('digest' | 'size'); see core IntegrityError.
   }
 }
+
+/** Hosts proven LIVE to validate x-amz-checksum-sha256 against payload bytes. */
+const CHECKSUM_ENFORCING_HOSTS = [/\.r2\.cloudflarestorage\.com$/i];
 
 const XML_NAMED = Object.freeze({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" });
 
@@ -61,10 +72,19 @@ export function decodeXmlText(text) {
 }
 
 export class S3BlobStore {
-  constructor({endpoint,bucket,region='auto',accessKeyId,secretAccessKey,sessionToken=null,prefix='owa',addressingStyle='path',now=()=>new Date()}) {
+  constructor({endpoint,bucket,region='auto',accessKeyId,secretAccessKey,sessionToken=null,prefix='owa',addressingStyle='path',now=()=>new Date(),checksumEvidence=undefined}) {
     if (!endpoint || !bucket || !accessKeyId || !secretAccessKey) throw new Error('S3 endpoint, bucket, accessKeyId, and secretAccessKey are required');
     this.endpoint=endpoint.replace(/\/$/,''); this.bucket=bucket; this.region=region; this.accessKeyId=accessKeyId; this.secretAccessKey=secretAccessKey; this.sessionToken=sessionToken; this.prefix=prefix.replace(/^\/+|\/+$/g,''); this.addressingStyle=addressingStyle; this.now=now;
     if(!['path','virtual'].includes(addressingStyle))throw new Error(`Unsupported S3 addressingStyle: ${addressingStyle}`);
+    // PROVIDER CHECKSUM TRUST BOUNDARY. A returned x-amz-checksum-sha256 is
+    // strong proof only if the provider validated it against the bytes it
+    // stored. 'enforced' allows the zero-byte HEAD fast path; 'advisory' treats
+    // the header as informational and ALWAYS rehashes. Unset selects
+    // automatically: only hosts proven live to enforce are 'enforced'; every
+    // other endpoint is 'advisory'. Getting this wrong in the safe direction
+    // costs bandwidth, never correctness — there is no way to skip verification.
+    if(checksumEvidence!==undefined&&!['enforced','advisory'].includes(checksumEvidence))throw new Error(`Unsupported S3 checksumEvidence: ${checksumEvidence}`);
+    this.checksumEvidence=checksumEvidence??(CHECKSUM_ENFORCING_HOSTS.some(pattern=>pattern.test(new URL(this.endpoint).hostname))?'enforced':'advisory');
   }
   key(digest) { const [algorithm,hex]=digest.split(':'); return `${this.prefix}/blobs/${algorithm}/${hex}`; }
   urlForKey(key) {
@@ -144,8 +164,8 @@ export class S3BlobStore {
    * headers bind it to this digest's checksum and to create-once semantics.
    * The `headers` field tells the client exactly what it must send.
    */
-  async createUpload(digest,{expires=900}={}) {
-    const headers=uploadHeadersFor(digest);
+  async createUpload(digest,{expires=900,repair=false}={}) {
+    const headers=uploadHeadersFor(digest,{repair});
     return {digest,method:'PUT',url:this.presign('PUT',this.key(digest),{expires,headers}),expiresIn:expires,headers};
   }
 
@@ -166,9 +186,19 @@ export class S3BlobStore {
     catch { throw new S3OperationError('OWA_BLOB_UNVERIFIED'); }
     if(head.status===404) throw new S3OperationError('OWA_BLOB_MISSING');
     if(!head.ok) throw new S3OperationError('OWA_BLOB_UNVERIFIED');
-    const length=Number(head.headers.get('content-length'));
-    if(!Number.isSafeInteger(length)||length!==size) throw new S3OperationError('OWA_BLOB_INTEGRITY');
-    if(head.headers.get('x-amz-checksum-sha256')===checksumFor(digest)) return {ok:true,method:'provider-checksum'};
+    const actualSize=Number(head.headers.get('content-length'));
+    if(!Number.isSafeInteger(actualSize)||actualSize<0) throw new S3OperationError('OWA_BLOB_UNVERIFIED');
+    // Zero-byte fast path ONLY where the provider is known to have validated
+    // the checksum against the stored bytes. Then the object matches its key,
+    // and any size disagreement is the submitted manifest's fault, not the
+    // object's — never a reason to touch the object.
+    if(this.checksumEvidence==='enforced'&&head.headers.get('x-amz-checksum-sha256')===checksumFor(digest)){
+      if(actualSize!==size) throw new S3OperationError('OWA_BLOB_INTEGRITY','size');
+      return {ok:true,method:'provider-checksum'};
+    }
+    // Otherwise the header is advisory at best: rehash the ACTUAL object,
+    // streamed and bounded by its real length, so a size disagreement can be
+    // attributed to the object ('digest') or to the manifest ('size').
     let res;
     try { res=await this.signedFetch('GET',key); } catch { throw new S3OperationError('OWA_BLOB_UNVERIFIED'); }
     if(res.status===404){ await res.arrayBuffer().catch(()=>{}); throw new S3OperationError('OWA_BLOB_MISSING'); }
@@ -177,11 +207,13 @@ export class S3BlobStore {
     try {
       for await (const chunk of res.body) {
         count+=chunk.byteLength;
-        if(count>size) throw new S3OperationError('OWA_BLOB_INTEGRITY'); // Longer than declared: stop.
+        if(count>actualSize) throw new S3OperationError('OWA_BLOB_UNVERIFIED'); // Changed underneath us.
         hash.update(chunk);
       }
     } catch(error) { throw error instanceof S3OperationError ? error : new S3OperationError('OWA_BLOB_UNVERIFIED'); }
-    if(count!==size||hash.digest('hex')!==digest.slice('sha256:'.length)) throw new S3OperationError('OWA_BLOB_INTEGRITY');
+    if(count!==actualSize) throw new S3OperationError('OWA_BLOB_UNVERIFIED');
+    if(hash.digest('hex')!==digest.slice('sha256:'.length)) throw new S3OperationError('OWA_BLOB_INTEGRITY','digest');
+    if(actualSize!==size) throw new S3OperationError('OWA_BLOB_INTEGRITY','size');
     return {ok:true,method:'rehash'};
   }
 

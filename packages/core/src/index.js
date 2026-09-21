@@ -86,7 +86,7 @@ export const INTEGRITY_CODES = Object.freeze(['OWA_BLOB_MISSING', 'OWA_BLOB_INTE
  * collapse to UNVERIFIED so a backend cannot invent a passing-looking failure.
  */
 export class IntegrityError extends Error {
-  constructor(code, digest = null) {
+  constructor(code, digest = null, reason = null) {
     const safe = INTEGRITY_CODES.includes(code) ? code : 'OWA_BLOB_UNVERIFIED';
     const subject = typeof digest === 'string' ? ` ${digest}` : '';
     super(safe === 'OWA_BLOB_MISSING' ? `Missing blob${subject}`
@@ -95,6 +95,14 @@ export class IntegrityError extends Error {
     this.name = 'IntegrityError';
     this.code = safe;
     this.digest = typeof digest === 'string' ? digest : null;
+    // INTERNAL attribution for OWA_BLOB_INTEGRITY, never sent to clients:
+    //   'digest' — the stored bytes do not hash to their own CAS key; the
+    //              OBJECT is corrupt and cannot serve any release naming it;
+    //   'size'   — the bytes DO hash to the key, but the SUBMITTED manifest
+    //              declared a different size; the object is valid and the
+    //              manifest is wrong.
+    // Only 'digest' may ever justify a repair. Anything else fails closed.
+    this.reason = safe === 'OWA_BLOB_INTEGRITY' && (reason === 'digest' || reason === 'size') ? reason : null;
   }
 }
 
@@ -126,7 +134,7 @@ export async function verifyStoredBlob(blobs, digest, size) {
   if (typeof blobs.verifyBlob === 'function') {
     let result;
     try { result = await blobs.verifyBlob({ digest, size }); }
-    catch (error) { throw new IntegrityError(error?.code, digest); }
+    catch (error) { throw new IntegrityError(error?.code, digest, error?.reason); }
     if (!result || result.ok !== true || typeof result.method !== 'string') throw new IntegrityError('OWA_BLOB_UNVERIFIED', digest);
     return result;
   }
@@ -135,7 +143,9 @@ export async function verifyStoredBlob(blobs, digest, size) {
   try { bytes = await blobs.get(digest); } catch { throw new IntegrityError('OWA_BLOB_UNVERIFIED', digest); }
   if (bytes == null) throw new IntegrityError('OWA_BLOB_MISSING', digest);
   const body = Buffer.from(bytes);
-  if (body.byteLength !== size || sha256(body) !== digest) throw new IntegrityError('OWA_BLOB_INTEGRITY', digest);
+  // Digest first: it decides whether the OBJECT or the MANIFEST is at fault.
+  if (sha256(body) !== digest) throw new IntegrityError('OWA_BLOB_INTEGRITY', digest, 'digest');
+  if (body.byteLength !== size) throw new IntegrityError('OWA_BLOB_INTEGRITY', digest, 'size');
   return { ok: true, method: 'rehash' };
 }
 
@@ -152,22 +162,29 @@ export async function planManifest({manifest, blobs, uploadFactory, leases=null,
       // Integrity-aware reuse. "Present" is not "reusable": an existing object
       // with wrong bytes would otherwise be reported reusable forever, commit
       // would reject it forever, and the client could never repair it.
+      //
+      // PLAN IS NON-DESTRUCTIVE. It never deletes or overwrites CAS state; the
+      // CAS is global and this object may be serving other sites' releases.
       try { await verifyStoredBlob(blobs, fileDigest, sizes.get(fileDigest)); reused++; continue; }
       catch (error) {
         if (!(error instanceof IntegrityError)) throw error;
-        // UNVERIFIED (provider error, non-regular object) is not proof of
-        // corruption: fail the plan rather than destroy a possibly-valid object.
-        if (error.code === 'OWA_BLOB_UNVERIFIED') throw error;
-        // INTEGRITY: proven wrong. Remove it so a fresh create-once grant can
-        // replace it; the lease taken above keeps GC away from this digest.
-        // MISSING: vanished between has() and verify — just grant an upload.
-        if (error.code === 'OWA_BLOB_INTEGRITY') {
-          if (typeof blobs.delete !== 'function') throw error;
-          await blobs.delete(fileDigest);
+        if (error.code === 'OWA_BLOB_INTEGRITY' && error.reason === 'digest') {
+          // The stored bytes do not hash to their own key: the OBJECT is corrupt
+          // and cannot satisfy any release. Mint a checksum-bound REPAIR grant
+          // that may replace the key. It can only ever write bytes that hash to
+          // this digest, so it cannot corrupt anything — and it is minted by
+          // uploadFactory, so the upload capability check precedes it.
+          uploads.push(await uploadFactory(fileDigest, { repair: true }));
+          continue;
         }
+        // 'size': the bytes hash correctly; the SUBMITTED manifest lied about
+        // the size. A valid object is never touched for someone else's mistake.
+        // UNVERIFIED: no proof either way. Both fail the plan with nothing minted.
+        if (error.code !== 'OWA_BLOB_MISSING') throw error;
+        // MISSING: vanished between has() and verify — ordinary upload below.
       }
     }
-    uploads.push(await uploadFactory(fileDigest));
+    uploads.push(await uploadFactory(fileDigest, { repair: false }));
   }
   return {artifactDigest:digest,uploads,reused};
 }
@@ -199,7 +216,13 @@ export async function publishDirectory({directory,slug,blobs,metadata,leases=nul
       // bytes just packed; an UNVERIFIED one (e.g. a non-regular filesystem
       // object) fails closed rather than being written through.
       try { await verifyStoredBlob(blobs,digest,data.byteLength); reused++; continue; }
-      catch(error){ if(!(error instanceof IntegrityError)||error.code==='OWA_BLOB_UNVERIFIED') throw error; }
+      catch(error){
+        // Only an object that fails to hash to ITS OWN key is rewritten (with the
+        // bytes just packed, which do hash to it). Unverifiable state fails closed.
+        const repairable=error instanceof IntegrityError
+          &&(error.code==='OWA_BLOB_MISSING'||(error.code==='OWA_BLOB_INTEGRITY'&&error.reason==='digest'));
+        if(!repairable) throw error;
+      }
     }
     await blobs.put(digest,data);uploaded++;
   }

@@ -13,10 +13,11 @@ const SLUG = /^[a-z0-9][a-z0-9_-]{0,62}$/;
 
 /** Fixed-shape operational failure: never carries a provider body or a path. */
 export class StorageOperationError extends Error {
-  constructor(code) {
+  constructor(code, reason = null) {
     super(`storage operation failed: ${code}`);
     this.name = 'StorageOperationError';
     this.code = code;
+    this.reason = reason; // Internal attribution ('digest' | 'size'); see core IntegrityError.
   }
 }
 
@@ -110,16 +111,22 @@ export class FilesystemBlobStore{
     try { stats=await lstat(path); }
     catch(error){ throw new StorageOperationError(error?.code==='ENOENT'?'OWA_BLOB_MISSING':'OWA_BLOB_UNVERIFIED'); }
     if(stats.isSymbolicLink()||!stats.isFile()) throw new StorageOperationError('OWA_BLOB_UNVERIFIED');
-    if(stats.size!==size) throw new StorageOperationError('OWA_BLOB_INTEGRITY');
+    // A size disagreement alone does NOT prove the object is corrupt — the
+    // submitted manifest may simply be wrong about a valid object. Hash the
+    // ACTUAL bytes (streamed, bounded by the real on-disk size) so the caller
+    // can tell "corrupt object" from "wrong manifest declaration".
+    const actualSize=stats.size;
     const hash=createHash('sha256'); let count=0;
     try {
       for await (const chunk of createReadStream(path)) {
         count+=chunk.length;
-        if(count>size) break; // Longer than declared: stop reading, fail below.
+        if(count>actualSize) break; // Grew underneath us: stop, fail below.
         hash.update(chunk);
       }
     } catch { throw new StorageOperationError('OWA_BLOB_UNVERIFIED'); }
-    if(count!==size||`sha256:${hash.digest('hex')}`!==digest) throw new StorageOperationError('OWA_BLOB_INTEGRITY');
+    if(count!==actualSize) throw new StorageOperationError('OWA_BLOB_UNVERIFIED');
+    if(`sha256:${hash.digest('hex')}`!==digest) throw new StorageOperationError('OWA_BLOB_INTEGRITY','digest');
+    if(actualSize!==size) throw new StorageOperationError('OWA_BLOB_INTEGRITY','size');
     return {ok:true,method:'rehash'};
   }
 

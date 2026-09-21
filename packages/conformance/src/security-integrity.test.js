@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, createHmac } from 'node:crypto';
 import { once } from 'node:events';
-import { createServer } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -13,7 +13,7 @@ import {
   IntegrityError, commitManifest, expectedBlobSizes, planManifest, publishDirectory, verifyStoredBlob
 } from '../../core/src/index.js';
 import { artifactDigest, canonicalJson, sha256, validateManifest } from '../../spec/src/index.js';
-import { createControlServer } from '../../server/src/index.js';
+import { createContentServer, createControlServer } from '../../server/src/index.js';
 import { createToken } from '../../server/src/auth.js';
 import { remotePublishResult } from '../../cli/src/remote.js';
 
@@ -69,7 +69,10 @@ function presignedSignature(url, sentHeaders, secret, region) {
  * (403), If-None-Match honoured (412), SHA-256 evidence on HEAD only when the
  * last write was checksum-validated, GetObjectAttributes unsupported.
  */
-async function mockS3(t, { region = 'auto' } = {}) {
+// `checksumEvidence` defaults to 'enforced' because this mock DOES enforce the
+// checksum, like R2. `echo` models a lax provider that stores the caller's
+// claimed checksum without validating it and later echoes it on HEAD.
+async function mockS3(t, { region = 'auto', checksumEvidence = 'enforced', echo = false } = {}) {
   const objects = new Map();
   const log = [];
   let fail = null;
@@ -94,7 +97,7 @@ async function mockS3(t, { region = 'auto' } = {}) {
       }
       if (req.headers['if-none-match'] === '*' && objects.has(key)) { res.writeHead(412); return res.end(xml('PreconditionFailed')); }
       const claimed = req.headers['x-amz-checksum-sha256'];
-      if (claimed !== undefined && claimed !== b64(body)) { res.writeHead(400); return res.end(xml('BadDigest')); }
+      if (!echo && claimed !== undefined && claimed !== b64(body)) { res.writeHead(400); return res.end(xml('BadDigest')); }
       objects.set(key, { bytes: body, checksum: claimed !== undefined ? claimed : null });
       res.writeHead(200); return res.end();
     }
@@ -117,9 +120,13 @@ async function mockS3(t, { region = 'auto' } = {}) {
   await once(server, 'listening');
   t.after(() => new Promise(resolve => { server.closeAllConnections(); server.close(() => resolve()); }));
   const origin = `http://127.0.0.1:${server.address().port}`;
-  const store = new S3BlobStore({ endpoint: origin, bucket: 'bucket', region, accessKeyId: ACCESS, secretAccessKey: PROVIDER_SECRET, prefix: 'owa', now: () => FIXED });
+  const store = new S3BlobStore({ endpoint: origin, bucket: 'bucket', region, accessKeyId: ACCESS, secretAccessKey: PROVIDER_SECRET, prefix: 'owa', now: () => FIXED, checksumEvidence });
   return {
     origin, store, objects, log,
+    /** A second store over the same objects with a different trust setting. */
+    storeWith(evidence) { return new S3BlobStore({ endpoint: origin, bucket: 'bucket', region, accessKeyId: ACCESS, secretAccessKey: PROVIDER_SECRET, prefix: 'owa', now: () => FIXED, checksumEvidence: evidence }); },
+    deletes() { return log.filter(r => r.method === 'DELETE').length; },
+    writes() { return log.filter(r => r.method === 'PUT').length; },
     /** Plant an object directly, bypassing every OWA write path. */
     plant(digest, bytes, { checksum = false } = {}) { objects.set(store.urlForKey(store.key(digest)).pathname, { bytes: Buffer.from(bytes), checksum: checksum ? b64(bytes) : null }); },
     bytesOf(digest) { return objects.get(store.urlForKey(store.key(digest)).pathname)?.bytes ?? null; },
@@ -270,7 +277,7 @@ test('15-17. filesystem: a corrupt existing CAS object is repaired by the next p
   const plan = await planManifest({ manifest, blobs: e.blobs, leases: e.leases, uploadFactory: async d => { grants++; return { digest: d, method: 'PUT', url: 'http://127.0.0.1/x', expiresIn: 60 }; } });
   assert.equal(plan.reused, 0, '15. a corrupt object is NOT reported reusable');
   assert.equal(plan.uploads.length, 1);
-  assert.equal(await e.blobs.has(digest), false, 'the proven-corrupt object was removed so a create-once upload can replace it');
+  assert.equal(await e.blobs.has(digest), true, 'plan is NON-destructive: the corrupt object is left in place for the repair upload');
   assert.equal(grants, 1);
   // Client uploads the right bytes (local route path) and commits.
   await e.blobs.put(digest, good);
@@ -318,11 +325,21 @@ test('18-23. S3 verification: wrong size, wrong content, missing, redaction, sto
   await t.test('20. missing', async () => {
     assert.equal(await codeOf(m.store.verifyBlob({ digest, size: good.length })), 'OWA_BLOB_MISSING');
   });
-  await t.test('18. wrong size fails on HEAD alone — no payload transfer', async () => {
+  await t.test('18. a valid object with provider evidence and a WRONG declared size is a manifest fault, decided on HEAD alone', async () => {
+    m.plant(digest, good, { checksum: true });
+    m.reset();
+    let caught; try { await m.store.verifyBlob({ digest, size: good.length + 1 }); } catch (error) { caught = error; }
+    assert.equal(caught?.code, 'OWA_BLOB_INTEGRITY');
+    assert.equal(caught?.reason, 'size', 'the OBJECT is valid; the declared size is wrong');
+    assert.deepEqual(m.log.map(r => r.method), ['HEAD'], 'no payload transfer needed');
+  });
+  await t.test('18b. a shorter object with no evidence is rehashed and attributed to the OBJECT', async () => {
     m.plant(digest, Buffer.from('short'));
     m.reset();
-    assert.equal(await codeOf(m.store.verifyBlob({ digest, size: good.length })), 'OWA_BLOB_INTEGRITY');
-    assert.deepEqual(m.log.map(r => r.method), ['HEAD'], 'size mismatch is decided without a GET');
+    let caught; try { await m.store.verifyBlob({ digest, size: good.length }); } catch (error) { caught = error; }
+    assert.equal(caught?.code, 'OWA_BLOB_INTEGRITY');
+    assert.equal(caught?.reason, 'digest', 'the bytes do not hash to the key');
+    assert.deepEqual(m.log.map(r => r.method), ['HEAD', 'GET']);
   });
   await t.test('19. same-size wrong content with no provider evidence is caught by streaming rehash', async () => {
     m.plant(digest, Buffer.from('S3 INTEGRITY PAYLOAD'));
@@ -342,9 +359,11 @@ test('18-23. S3 verification: wrong size, wrong content, missing, redaction, sto
     assert.deepEqual(await m.store.verifyBlob({ digest, size: good.length }), { ok: true, method: 'rehash' });
     assert.deepEqual(m.log.map(r => r.method), ['HEAD', 'GET']);
   });
-  await t.test('an object longer than declared is rejected without reading it all', async () => {
+  await t.test('an object longer than declared is rehashed in full and attributed to the OBJECT', async () => {
     m.plant(digest, Buffer.concat([good, Buffer.from('extra')]));
-    assert.equal(await codeOf(m.store.verifyBlob({ digest, size: good.length })), 'OWA_BLOB_INTEGRITY');
+    let caught; try { await m.store.verifyBlob({ digest, size: good.length }); } catch (error) { caught = error; }
+    assert.equal(caught?.code, 'OWA_BLOB_INTEGRITY');
+    assert.equal(caught?.reason, 'digest');
   });
   await t.test('21. provider failures are redacted to a fixed code', async () => {
     m.plant(digest, good);
@@ -408,13 +427,24 @@ test('S3 recovery: a corrupt existing CAS object is deleted by plan, replaced th
   const good = Buffer.from('s3 repairable bytes'), digest = sha256(good);
   m.plant(digest, Buffer.from('S3 REPAIRABLE BYTES')); // same length, wrong, no evidence
   const manifest = single(good);
-  const plan = await planManifest({ manifest, blobs: m.store, leases, uploadFactory: d => m.store.createUpload(d, { expires: 600 }) });
+  const plan = await planManifest({ manifest, blobs: m.store, leases, uploadFactory: (d, options) => m.store.createUpload(d, { expires: 600, ...options }) });
   assert.equal(plan.reused, 0, 'corrupt object is not reusable');
   assert.equal(plan.uploads.length, 1);
-  assert.equal(m.bytesOf(digest), null, 'the proven-corrupt object was removed');
-  const status = await fetch(plan.uploads[0].url, { method: 'PUT', headers: plan.uploads[0].headers, body: good }).then(async r => { await r.arrayBuffer(); return r.status; });
-  assert.equal(status, 200, 'the create-once grant now succeeds');
+  assert.equal(m.deletes(), 0, 'plan issued no DELETE');
+  assert.ok(m.bytesOf(digest).equals(Buffer.from('S3 REPAIRABLE BYTES')), 'plan is NON-destructive: the corrupt object is left in place');
+  const repair = plan.uploads[0];
+  assert.deepEqual(repair.headers, uploadHeadersFor(digest, { repair: true }), 'a REPAIR grant: checksum-bound, without create-once');
+  assert.deepEqual(Object.keys(repair.headers), ['x-amz-checksum-sha256']);
+  const put = (body, headers = repair.headers) => fetch(repair.url, { method: 'PUT', headers, body }).then(async r => { await r.arrayBuffer(); return r.status; });
+  assert.equal(await put(Buffer.from('S3 REPAIRABLE BYTES')), 400, 'the repair grant still refuses wrong bytes');
+  assert.equal(await put(good, {}), 403, 'and still requires its signed checksum header');
+  assert.equal(await put(good), 200, 'correct bytes replace the corrupt object');
+  assert.ok(m.bytesOf(digest).equals(good));
   await commitManifest({ slug: 's3repair', manifest, blobs: m.store, metadata });
+  // Repair-grant replay after commit: wrong bytes fail; correct bytes are harmless.
+  assert.equal(await put(Buffer.from('S3 REPAIRABLE BYTES')), 400, 'post-commit replay with wrong bytes is refused');
+  assert.equal(await put(good), 200, 'post-commit replay with the same correct bytes is allowed and harmless');
+  assert.ok(m.bytesOf(digest).equals(good), 'committed bytes remain correct after both replays');
   const again = await planManifest({ manifest, blobs: m.store, leases, uploadFactory: async () => { throw new Error('must not upload'); } });
   assert.equal(again.reused, 1, 'repaired object is reused; no infinite reuse/reject loop');
 });
@@ -544,5 +574,217 @@ test('CLI rejects grants whose headers are not exactly the integrity-binding set
     const code = await codeOf(remotePublishResult(directory, 'demo', origin));
     assert.notEqual(code, 'OWA_CLI_GRANT');
     assert.equal(m.log.filter(r => r.method === 'PUT').length, 1, 'the genuine grant was used');
+  });
+});
+
+// ============================================================== GATE 1 ====
+// A publisher-supplied manifest that lies about the size of a VALID, globally
+// shared CAS object must never cause that object to be deleted, overwritten or
+// "repaired". Plan is non-destructive; a repair grant is minted only for an
+// object that fails to hash to its OWN key, and only after upload authority.
+
+async function seedSiteA(e, bytes) {
+  const digest = sha256(bytes);
+  await e.blobs.put(digest, bytes);
+  const { site, release } = await commitManifest({ slug: 'site-a', manifest: single(bytes), blobs: e.blobs, metadata: e.metadata });
+  return { digest, site, release, snapshot: JSON.stringify({ site: await e.metadata.getSite('site-a'), releases: await e.metadata.listAllReleases(site.id) }) };
+}
+function spyStore(base) {
+  const counts = { delete: 0, put: 0 };
+  const spy = Object.create(base);
+  spy.delete = async (...a) => { counts.delete++; return base.delete(...a); };
+  spy.put = async (...a) => { counts.put++; return base.put(...a); };
+  return { spy, counts };
+}
+/** Serve through a REAL content listener. node:http, because fetch overrides Host. */
+async function servesBytes(t, e, host, expected) {
+  const server = createContentServer({ blobs: e.blobs, metadata: e.metadata, content: { baseDomain: 'localhost', scheme: 'http' } });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  try {
+    return await new Promise((resolve, reject) => {
+      const req = httpRequest({ hostname: '127.0.0.1', port: server.address().port, path: '/', method: 'GET', headers: { host, connection: 'close' } }, res => {
+        const chunks = []; res.on('data', c => chunks.push(c)); res.on('error', reject);
+        res.on('end', () => resolve(res.statusCode === 200 && Buffer.concat(chunks).equals(expected)));
+      });
+      req.on('error', reject); req.end();
+    });
+  } finally { await new Promise(r => { server.closeAllConnections(); server.close(() => r()); }); }
+}
+
+test('GATE 1 (filesystem): a wrong submitted size cannot delete, overwrite or repair a valid shared CAS object', async t => {
+  const e = await fsEnv(t);
+  const B = Buffer.from('valid bytes shared between sites');
+  const a = await seedSiteA(e, B);
+  assert.ok(await servesBytes(t, e, 'site-a.localhost', B), 'site A serves B before the attack');
+
+  const { spy, counts } = spyStore(e.blobs);
+  let grants = 0;
+  const lying = manifestFor([{ path: '/index.html', bytes: B, size: B.length + 1 }]);
+  let caught; try { await planManifest({ manifest: lying, blobs: spy, leases: e.leases, uploadFactory: async () => { grants++; return {}; } }); } catch (error) { caught = error; }
+  assert.ok(caught instanceof IntegrityError && caught.code === 'OWA_BLOB_INTEGRITY', 'plan fails with the fixed integrity contract');
+  assert.equal(caught.reason, 'size', 'internally attributed to the manifest, not the object');
+  assert.equal(counts.delete, 0, 'zero CAS deletes');
+  assert.equal(counts.put, 0, 'zero CAS writes');
+  assert.equal(grants, 0, 'zero repair grants');
+  assert.equal(await e.blobs.has(a.digest), true, 'D still exists');
+  assert.ok(Buffer.from(await e.blobs.get(a.digest)).equals(B), 'bytes are byte-identical');
+  assert.equal(JSON.stringify({ site: await e.metadata.getSite('site-a'), releases: await e.metadata.listAllReleases(a.site.id) }), a.snapshot, 'site A release metadata and activeReleaseId unchanged');
+  assert.ok(await servesBytes(t, e, 'site-a.localhost', B), 'site A still serves B');
+  // Commit with the lying manifest fails the same way, mutating nothing.
+  assert.equal(await codeOf(commitManifest({ slug: 'site-b', manifest: lying, blobs: spy, metadata: e.metadata })), 'OWA_BLOB_INTEGRITY');
+  assert.equal(await e.metadata.getSite('site-b'), null);
+  assert.equal(counts.delete + counts.put, 0);
+});
+
+test('GATE 1 (S3-shaped): valid provider evidence + wrong submitted size → no deletion, no repair, no payload read', async t => {
+  for (const evidence of ['enforced', 'advisory']) {
+    await t.test(`store trust = ${evidence}`, async () => {
+      const m = await mockS3(t, { checksumEvidence: evidence });
+      const root = await mkdtemp(join(tmpdir(), 'owa-g1-s3-'));
+      t.after(() => rm(root, { recursive: true, force: true }));
+      const metadata = new FilesystemMetadataStore(root), leases = new FilesystemLeaseStore(root);
+      const B = Buffer.from('valid s3 bytes shared between sites'), D = sha256(B);
+      m.plant(D, B, { checksum: true });
+      await commitManifest({ slug: 'site-a', manifest: single(B), blobs: m.store, metadata });
+      const siteA = JSON.stringify(await metadata.getSite('site-a'));
+      m.reset();
+      let grants = 0;
+      const lying = manifestFor([{ path: '/index.html', bytes: B, size: B.length + 1 }]);
+      let caught; try { await planManifest({ manifest: lying, blobs: m.store, leases, uploadFactory: async () => { grants++; return {}; } }); } catch (error) { caught = error; }
+      assert.equal(caught?.code, 'OWA_BLOB_INTEGRITY');
+      assert.equal(caught?.reason, 'size');
+      assert.equal(grants, 0, 'no repair grant');
+      assert.equal(m.deletes(), 0, 'no DELETE');
+      assert.equal(m.writes(), 0, 'no PUT');
+      // plan's has() is one HEAD; verifyBlob's checksum-mode HEAD is the second.
+      const methods = m.log.map(r => r.method);
+      if (evidence === 'enforced') assert.deepEqual(methods, ['HEAD', 'HEAD'], 'trusted evidence settles it without a GET');
+      else assert.deepEqual(methods, ['HEAD', 'HEAD', 'GET'], 'advisory trust rehashes to attribute the fault');
+      assert.ok(m.bytesOf(D).equals(B), 'object byte-identical');
+      assert.equal(JSON.stringify(await metadata.getSite('site-a')), siteA, 'site A unchanged');
+    });
+  }
+});
+
+test('GATE 1 (authorization ordering): a plan-only token cannot mutate CAS through the real control listener', async t => {
+  const m = await mockS3(t);
+  const root = await mkdtemp(join(tmpdir(), 'owa-g1-auth-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const metadata = new FilesystemMetadataStore(root), leases = new FilesystemLeaseStore(root);
+  const server = createControlServer({ blobs: m.store, metadata, leases, uploadSecret: UPLOAD_SECRET, auth: { secret: SECRET, now: () => NOW } });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  t.after(() => new Promise(r => { server.closeAllConnections(); server.close(() => r()); }));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const planOnly = createToken({ secret: SECRET, jti: 'plan-only', exp: NOW + 600, sites: ['site-b'], capabilities: ['plan'], now: () => NOW });
+  const post = manifest => fetch(`${origin}/v1/sites/site-b/publish/plan`, {
+    method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${planOnly}` },
+    body: JSON.stringify({ manifest, artifactDigest: artifactDigest(manifest) })
+  }).then(async r => ({ status: r.status, body: await r.json() }));
+
+  await t.test('wrong-size manifest against a valid shared object', async () => {
+    const B = Buffer.from('valid object behind a healthy release'), D = sha256(B);
+    m.plant(D, B, { checksum: true });
+    await commitManifest({ slug: 'site-a', manifest: single(B), blobs: m.store, metadata });
+    const before = JSON.stringify(await metadata.getSite('site-a'));
+    m.reset();
+    const res = await post(manifestFor([{ path: '/index.html', bytes: B, size: B.length + 1 }]));
+    assert.equal(res.status, 500); assert.equal(res.body.code, 'OWA_BLOB_INTEGRITY');
+    assert.ok(!JSON.stringify(res.body).includes('reason'), 'the internal attribution is never exposed');
+    assert.equal(m.deletes(), 0); assert.equal(m.writes(), 0);
+    assert.ok(m.bytesOf(D).equals(B), 'object untouched');
+    assert.equal(JSON.stringify(await metadata.getSite('site-a')), before, 'existing release stays healthy');
+    assert.equal(await metadata.getSite('site-b'), null);
+  });
+
+  await t.test('genuinely corrupt object: repair needs upload authority, which the token lacks', async () => {
+    const G = Buffer.from('bytes the manifest expects'), D = sha256(G);
+    const corrupt = Buffer.from('BYTES the manifest expects'); // same length, wrong content
+    m.plant(D, corrupt);
+    m.reset();
+    const res = await post(single(G));
+    assert.equal(res.status, 403); assert.equal(res.body.code, 'OWA_AUTH_CAPABILITY', 'the upload capability check precedes any repair instrument');
+    assert.equal(m.deletes(), 0, 'no delete before authorization'); assert.equal(m.writes(), 0, 'no overwrite before authorization');
+    assert.ok(m.bytesOf(D).equals(corrupt), 'CAS state is exactly as before the request');
+    assert.equal(m.log.filter(r => r.presigned).length, 0, 'no grant was exercised');
+  });
+});
+
+test('GATE 1 (filesystem, real server): plan-only token, valid object, wrong size → zero mutation', async t => {
+  const e = await fsEnv(t);
+  const B = Buffer.from('fs valid shared object'), a = await seedSiteA(e, B);
+  const { spy, counts } = spyStore(e.blobs);
+  const server = createControlServer({ blobs: spy, metadata: e.metadata, leases: e.leases, uploadSecret: UPLOAD_SECRET, auth: { secret: SECRET, now: () => NOW } });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  t.after(() => new Promise(r => { server.closeAllConnections(); server.close(() => r()); }));
+  const planOnly = createToken({ secret: SECRET, jti: 'plan-only-fs', exp: NOW + 600, sites: ['site-b'], capabilities: ['plan'], now: () => NOW });
+  const lying = manifestFor([{ path: '/index.html', bytes: B, size: B.length + 1 }]);
+  const res = await fetch(`http://127.0.0.1:${server.address().port}/v1/sites/site-b/publish/plan`, {
+    method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${planOnly}` },
+    body: JSON.stringify({ manifest: lying, artifactDigest: artifactDigest(lying) })
+  });
+  assert.equal(res.status, 500); assert.equal((await res.json()).code, 'OWA_BLOB_INTEGRITY');
+  assert.equal(counts.delete + counts.put, 0, 'zero CAS mutation');
+  assert.ok(Buffer.from(await e.blobs.get(a.digest)).equals(B));
+  assert.equal(JSON.stringify({ site: await e.metadata.getSite('site-a'), releases: await e.metadata.listAllReleases(a.site.id) }), a.snapshot);
+});
+
+test('GATE 1 (filesystem): a genuinely corrupt object is repaired without any destructive pre-grant step', async t => {
+  const e = await fsEnv(t);
+  const G = Buffer.from('fs bytes the manifest expects'), D = sha256(G);
+  await e.blobs.put(D, Buffer.from('FS BYTES the manifest expects')); // same length, wrong content
+  const { spy, counts } = spyStore(e.blobs);
+  let repairGrants = 0;
+  const plan = await planManifest({ manifest: single(G), blobs: spy, leases: e.leases, uploadFactory: async (d, { repair }) => { if (repair) repairGrants++; return { digest: d, method: 'PUT', url: 'http://127.0.0.1/x', expiresIn: 60 }; } });
+  assert.equal(plan.reused, 0, 'not reported reused');
+  assert.equal(repairGrants, 1, 'a REPAIR grant is requested');
+  assert.equal(counts.delete, 0, 'no destructive pre-grant delete');
+  assert.equal(await e.blobs.has(D), true);
+  await e.blobs.put(D, G); // the local upload route writes only bytes that hash to D
+  await commitManifest({ slug: 'repaired', manifest: single(G), blobs: e.blobs, metadata: e.metadata });
+  const again = await planManifest({ manifest: single(G), blobs: e.blobs, leases: e.leases, uploadFactory: async () => { throw new Error('must not upload'); } });
+  assert.equal(again.reused, 1, 'subsequent identical plan reuses normally');
+});
+
+// ============================================================== GATE 2 ====
+// A provider-returned checksum is strong proof ONLY where the provider is known
+// to validate it against stored bytes. Unknown endpoints must rehash.
+
+test('GATE 2: provider checksum trust is explicit, auto-detected conservatively, and cannot be disabled into a bypass', async t => {
+  const make = (endpoint, extra = {}) => new S3BlobStore({ endpoint, bucket: 'b', accessKeyId: ACCESS, secretAccessKey: PROVIDER_SECRET, ...extra });
+  assert.equal(make('https://acct.r2.cloudflarestorage.com').checksumEvidence, 'enforced', 'R2 is live-proven to enforce');
+  assert.equal(make('http://127.0.0.1:9000').checksumEvidence, 'advisory', 'a generic endpoint is advisory by default');
+  assert.equal(make('https://s3.us-east-1.amazonaws.com').checksumEvidence, 'advisory', 'not live-proven here → advisory until an operator asserts otherwise');
+  assert.equal(make('http://127.0.0.1:9000', { checksumEvidence: 'enforced' }).checksumEvidence, 'enforced', 'an operator may assert a verified provider');
+  for (const bad of ['off', 'trust-everything', 'skip', true, 1]) {
+    assert.throws(() => make('http://127.0.0.1:9000', { checksumEvidence: bad }), /Unsupported S3 checksumEvidence/);
+  }
+
+  await t.test('a lax provider that echoes an unvalidated checksum cannot make corrupt bytes look verified under advisory trust', async () => {
+    const m = await mockS3(t, { checksumEvidence: 'advisory', echo: true });
+    const good = Buffer.from('what the digest promises'), D = sha256(good);
+    // Corrupt bytes uploaded WITH a header claiming D's checksum; the lax provider stores the claim.
+    const status = await fetch(`${m.origin}/bucket/owa/blobs/sha256/${D.slice(7)}`, { method: 'PUT', headers: { 'x-amz-checksum-sha256': b64(good) }, body: Buffer.from('WHAT the digest promises') }).then(async r => { await r.arrayBuffer(); return r.status; });
+    assert.equal(status, 200, 'the lax provider accepted the lie');
+    m.reset();
+    let caught; try { await m.store.verifyBlob({ digest: D, size: good.length }); } catch (error) { caught = error; }
+    assert.equal(caught?.code, 'OWA_BLOB_INTEGRITY');
+    assert.equal(caught?.reason, 'digest', 'the rehash catches the corrupt bytes despite the echoed header');
+    assert.deepEqual(m.log.map(r => r.method), ['HEAD', 'GET'], 'advisory trust always rehashes');
+    // The same object seen through a store that WRONGLY asserts 'enforced' would be
+    // accepted on the echoed header alone — which is exactly why the default is advisory.
+    const misconfigured = m.storeWith('enforced');
+    assert.deepEqual(await misconfigured.verifyBlob({ digest: D, size: good.length }), { ok: true, method: 'provider-checksum' });
+  });
+
+  await t.test('advisory trust rehashes even genuine evidence; enforced trust uses it', async () => {
+    const m = await mockS3(t, { checksumEvidence: 'advisory' });
+    const good = Buffer.from('genuinely validated bytes'), D = sha256(good);
+    m.plant(D, good, { checksum: true });
+    m.reset();
+    assert.deepEqual(await m.store.verifyBlob({ digest: D, size: good.length }), { ok: true, method: 'rehash' });
+    assert.deepEqual(m.log.map(r => r.method), ['HEAD', 'GET']);
+    m.reset();
+    assert.deepEqual(await m.storeWith('enforced').verifyBlob({ digest: D, size: good.length }), { ok: true, method: 'provider-checksum' });
+    assert.deepEqual(m.log.map(r => r.method), ['HEAD']);
   });
 });

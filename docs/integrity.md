@@ -97,10 +97,16 @@ unverifiable blobs.
 3. the object is `lstat`ed and must be a **regular file**: a symlink (even one
    pointing at exactly the right bytes), a directory or any other object is
    `OWA_BLOB_UNVERIFIED`;
-4. the `lstat` size must equal the declared size (`OWA_BLOB_INTEGRITY` otherwise);
-5. the file is **streamed** through SHA-256 while counting bytes — never buffered
-   whole — stopping early if it runs longer than declared;
-6. count and digest must both match.
+4. the file is **streamed** through SHA-256 while counting bytes — never
+   buffered whole — bounded by its real on-disk size;
+5. bytes that do not hash to the key → `OWA_BLOB_INTEGRITY` attributed to the
+   **object**; bytes that hash correctly but whose size differs from the
+   declared size → `OWA_BLOB_INTEGRITY` attributed to the **manifest**;
+6. otherwise verified.
+
+A size disagreement alone is deliberately **not** treated as proof that the
+object is corrupt: the whole object is hashed so plan can tell "corrupt object"
+from "wrong manifest declaration" and never repairs a valid object.
 
 Bytes are re-read on every verification. The local upload route and
 `publishDirectory` do hash bytes at ingestion, but the filesystem offers no
@@ -133,27 +139,73 @@ So on R2: the provider **enforces** the SHA-256 checksum against payload bytes,
 the checksum is retrievable by `HEAD` without a download, a signed header cannot
 be dropped or altered, and `If-None-Match: *` is honoured on presigned PUT.
 
-**MinIO could not be tested in this environment** (no `minio` binary). Its
-documented behavior matches, but that is not evidence. The design below is
-arranged so that invariant A (commit integrity) never depends on the provider
-enforcing anything; only the post-commit grant guarantee does — see the threat
-model.
+**MinIO, measured live** — no prebuilt binary was obtainable, so MinIO was built
+from source at tag `RELEASE.2025-10-15T17-29-55Z` (commit
+`9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a`) with `go1.27.1`, run per
+[integration-tests.md](integration-tests.md) on `127.0.0.1:9000`, path-style,
+region `us-east-1`, Node v24.14.1:
+
+| Probe | MinIO result |
+| --- | --- |
+| Presigned PUT with signed `x-amz-checksum-sha256`, correct bytes | `200` |
+| **Same grant, same-length WRONG bytes, header claims the right checksum** | **`400 XAmzContentChecksumMismatch`** — object unchanged |
+| Same grant, signed checksum header omitted | `400 AccessDenied` (rejected; R2 answers `403`) |
+| Same grant, checksum header changed | `403 SignatureDoesNotMatch` |
+| `HEAD` + signed `x-amz-checksum-mode: ENABLED` after a validated PUT | `200`, `x-amz-checksum-sha256` present and equal |
+| `GetObjectAttributes` | `200` with `ChecksumSHA256` (unlike R2) |
+| Signed `If-None-Match: *`, first write / replay / header omitted | `200` / `412 PreconditionFailed` / `400 AccessDenied` |
+| The pre-change host-only grant, wrong bytes | `200` — object corrupted (same hole as R2) |
+| `HEAD` after a checksum-less write | no SHA-256 evidence |
+
+So both tested providers enforce the checksum against payload bytes, honour
+create-once, and return validated evidence on `HEAD`. Even so, **the reference
+implementation does not assume this of an arbitrary endpoint** — see the trust
+boundary below. Invariant A (commit integrity) never depends on provider
+enforcement; only the post-commit grant guarantee does.
+
+### Provider checksum trust boundary
+
+A checksum returned by `HEAD` is strong proof **only** if the provider validated
+it against the bytes it stored. A lax S3-compatible service could store a
+caller-supplied `x-amz-checksum-sha256` unvalidated and echo it back; trusting
+that would let corrupt bytes commit. `S3BlobStore` therefore carries an explicit
+capability, `checksumEvidence`:
+
+| Value | Meaning |
+| --- | --- |
+| `enforced` | The provider is known to validate the checksum against stored bytes. The zero-byte `HEAD` fast path is allowed. |
+| `advisory` | The header is informational. Verification **always** streams and rehashes the object. |
+| unset (default) | Automatic: only hosts proven live to enforce — currently `*.r2.cloudflarestorage.com` — are `enforced`; **every other endpoint is `advisory`**. |
+
+Operators set `OWA_S3_CHECKSUM_EVIDENCE=enforced` after verifying their provider
+(MinIO at the tag above qualifies; AWS S3 documents the behavior but was not
+run here, so it defaults to `advisory`). Any other value is rejected. There is
+**no** value that skips verification: the worst misconfiguration in the safe
+direction costs bandwidth, never correctness. Asserting `enforced` for a
+provider that does not actually validate is the one way to weaken this, and it
+is an explicit operator claim, not a default.
 
 ### Verification: `S3BlobStore.verifyBlob`
 
 1. One `HEAD` with a signed `x-amz-checksum-mode: ENABLED`.
    - `404` → `OWA_BLOB_MISSING`.
-   - `Content-Length` ≠ declared size → `OWA_BLOB_INTEGRITY`, with **no payload
-     transfer**.
-   - `x-amz-checksum-sha256` present **and equal** to the base64 SHA-256 the
-     digest names → verified, method `provider-checksum`, **zero payload bytes**.
-2. Otherwise — no evidence, a composite (multipart) value, or a mismatch — a
-   **streaming `GET`** through SHA-256, bounded at the declared size, method
-   `rehash`. The rehash is definitive, so an ambiguous header is never trusted
-   *or* treated as proof of corruption; the bytes decide.
+   - With `enforced` trust and `x-amz-checksum-sha256` **equal** to the expected
+     value: the object matches its key. If `Content-Length` also equals the
+     declared size → verified, method `provider-checksum`, **zero payload bytes**.
+     If not → `OWA_BLOB_INTEGRITY` attributed to the **manifest** (`size`): the
+     object is valid and is never touched.
+2. Otherwise — advisory trust, no evidence, a composite (multipart) value, or a
+   mismatch — a **streaming `GET`** through SHA-256 of the **whole actual
+   object** (bounded by its real length), method `rehash`. Then:
+   - bytes do not hash to the key → `OWA_BLOB_INTEGRITY` attributed to the
+     **object** (`digest`);
+   - bytes hash to the key but the declared size differs → attributed to the
+     **manifest** (`size`);
+   - both agree → verified.
 
-Provider error bodies never surface; every failure is a fixed code, and all
-requests use storage credentials only — no OWA bearer is ever sent to storage.
+The attribution (`reason`) is internal: HTTP clients see only
+`OWA_BLOB_INTEGRITY`. Provider bodies never surface; every request uses storage
+credentials only — no OWA bearer is ever sent to storage.
 
 ### Direct upload: checksum-bound, create-once grants
 
@@ -197,31 +249,51 @@ This is proven offline against an enforcing mock and live against R2: after
 commit, the still-valid grant is replayed with wrong bytes and with the right
 bytes, both are refused, and the stored bytes are unchanged.
 
-### Corrupt existing object: recovery
+### Corrupt existing object: non-destructive repair
 
-Plan used to report any existing key as reusable. That created a permanent loop
-for a corrupt object: plan says reused → commit rejects → re-plan says reused.
-Plan is now **integrity-aware**:
+Plan used to report any existing key as reusable, which for a corrupt object was
+a permanent loop: plan says reused → commit rejects → re-plan says reused. Plan is
+now **integrity-aware and non-destructive** — it never deletes or overwrites CAS
+state, because the CAS is global and an object may be serving other sites'
+releases. The decision turns on *why* verification failed:
 
-- exists and verifies → reused;
-- exists but **proven** wrong (`OWA_BLOB_INTEGRITY`) → the object is **deleted**
-  and an upload grant is issued, so the client's next create-once upload replaces
-  it with correct bytes; commit then succeeds and later publishes reuse normally;
-- exists but **unverifiable** (`OWA_BLOB_UNVERIFIED`: provider error, non-regular
-  filesystem object) → the plan **fails**; a possibly-valid object is never
-  deleted on a probe that proved nothing;
-- missing → upload grant.
+| Verification outcome | Meaning | Plan does |
+| --- | --- | --- |
+| verifies | reusable | reuse, no grant |
+| `INTEGRITY` / `digest` | stored bytes do **not** hash to their own key: the **object** is corrupt and cannot serve any release naming it | mint a **repair grant** |
+| `INTEGRITY` / `size` | bytes hash to the key; the **submitted manifest** declared the wrong size; the object is valid | **fail the plan**; nothing minted, nothing touched |
+| `UNVERIFIED` | no proof either way | fail the plan; nothing touched |
+| `MISSING` | gone since `has()` | ordinary upload grant |
 
-The delete happens under the publish lease plan already took for the digest, so
-GC cannot race it. `publishDirectory` behaves the same way with the bytes it
-just packed.
+A **repair grant** is a presigned PUT on the same key with the signed
+`x-amz-checksum-sha256` header but **without** `If-None-Match: *`, because
+replacement is the point. It remains bound to the digest exactly as strongly as
+a normal grant: it can only ever write bytes whose SHA-256 is the digest, wrong
+bytes are refused by the provider, and replaying it after commit — even with the
+correct bytes — can only restore the identical content. Repair grants are minted
+through the same `uploadFactory` as normal grants, so the `upload` capability
+check precedes any CAS-affecting instrument; a token holding only `plan` can
+neither delete, overwrite, nor obtain a repair grant. On the filesystem backend
+the local upload route already writes only bytes that hash to the digest and
+overwrites in place, so it is the repair path there.
+
+The wrong-size case was a real bug in the first revision of this work: a
+manifest that lied about the size of a valid, shared object caused plan to
+*delete* it — before the upload capability was even checked. Regressions now
+plant a valid object behind an active release on one site, submit a lying
+manifest for another site, and assert zero deletes, zero writes, zero grants,
+byte-identical content, unchanged release metadata, and that the first site
+still serves the bytes — on the filesystem, on an S3-shaped store in both trust
+modes, through the real control listener with a plan-only token, and live on
+R2 and MinIO.
 
 ### Client behavior
 
-The CLI accepts a grant's `headers` only if it is exactly the integrity-binding
+The CLI accepts a grant's `headers` only if it is drawn from the integrity-binding
 set: `x-amz-checksum-sha256` **equal to the base64 SHA-256 of the digest being
-uploaded** (re-derived locally, not trusted from the server) and
-`if-none-match` exactly `*`. Anything else — a foreign header, a wrong checksum,
+uploaded** (re-derived locally, not trusted from the server) and, when present,
+`if-none-match` exactly `*`. A normal grant carries both; a repair grant carries
+only the checksum. Anything else — a foreign header, a wrong checksum,
 an empty object, headers on a local bearer grant — is `OWA_CLI_GRANT` and no
 byte is sent. A `412` on a create-once upload is treated as "already present":
 the object can only have been written through a checksum-bound grant for the
@@ -231,30 +303,37 @@ no integrity logic of its own.
 
 ## Cost
 
-| | Filesystem | S3 / R2 with evidence | S3 / R2 without evidence |
+| | Filesystem | S3/R2, `enforced` trust + evidence | S3/R2, `advisory` trust or no evidence |
 | --- | --- | --- | --- |
-| Plan, existing blob | 1 streamed local read | **1 HEAD, 0 bytes** | 1 HEAD + 1 streaming GET |
+| Plan, existing blob | 1 streamed local read | **1 HEAD, 0 bytes** (plus `has()`'s HEAD) | 1 HEAD + 1 streaming GET |
 | Plan, missing blob | 1 `existsSync` | 1 HEAD (404) | 1 HEAD (404) |
-| Commit, per unique blob | 1 streamed local read | **1 HEAD, 0 bytes** | 1 HEAD + 1 streaming GET |
-| Identical re-publish | reads, no writes | **HEADs only — no payload re-download** | GETs again |
-| Payload through artifactd | read locally | **none** | streamed, never buffered whole |
+| Commit, per unique blob | 1 streamed local read | **1 HEAD, 0 bytes** | 1 HEAD + streaming GET |
+| Identical re-publish | reads only | **HEADs only — no re-download** | GETs again |
+| Payload through artifactd | local read | **none** | streamed, never buffered whole |
+| Wrong-size manifest against a valid object | full local hash | **0 bytes** (evidence settles it) | full streaming hash to attribute the fault |
 
-"With evidence" means the object's last write was SHA-256-validated by the
-provider — true for everything written by OWA after this change (grants and
-`put()` both declare the checksum). Objects written **before** this change, or by
-external tools without a checksum, carry no evidence and are re-hashed on each
-plan and commit until they are re-written through a checksum-bound path. There
-is no cheaper way to upgrade evidence in place: R2 does not support
-`CopyObject` with a checksum algorithm. Measured live against Cloudflare R2 (single-blob integrity scenario, isolated
-prefix): the whole corrupt → repair → commit → replay → re-plan sequence took
-`PUT 7, HEAD 10, GET 4, DELETE 1`; **commit itself issued zero `GET`s**, and the
-identical re-plan issued zero `GET`s. Of the four `GET`s, one was the legacy
-no-evidence rehash and the rest were the test's own byte comparisons. Across the
-full live run (publishing, GC and integrity suites, 114 provider requests) every
-request used storage SigV4 or a presigned grant; **zero** carried an OWA bearer.
+"Evidence" means the object's last write was SHA-256-validated by the provider —
+true for everything OWA writes after this change (grants and `put()` both
+declare the checksum). Objects written before it, or by external tools, carry no
+evidence and are rehashed on each plan/commit until re-written through a
+checksum-bound path; there is no in-place upgrade (R2 lacks `CopyObject` with a
+checksum algorithm). A generic endpoint left at the default `advisory` trust pays
+one streaming GET per unique blob per plan and per commit — the price of not
+assuming what the provider has not proven.
 
-There is **no configuration switch to skip verification**. Production behavior
-fails closed; test fixtures use purpose-built mocks.
+Measured live (integrity scenario: wrong-size attack, corrupt → repair → commit →
+replays, fresh normal grant, re-plan, legacy rehash), isolated prefixes:
+
+| Provider / trust | PUT | HEAD | GET | Bearer to storage |
+| --- | --- | --- | --- | --- |
+| MinIO, `advisory` (default) | 11 | 15 | 14 | 0 |
+| MinIO, `enforced` (operator-asserted) | 11 | 15 | 10 | 0 |
+| Cloudflare R2, `enforced` (auto) | 11 | 15 | 10 | 0 |
+
+The four fewer GETs under `enforced` are exactly the fast-path verifications;
+commit issued zero GETs there. There is **no configuration switch to skip
+verification**. Production behavior fails closed; test fixtures use purpose-built
+mocks.
 
 ## Relationship to other mechanisms
 
@@ -294,11 +373,13 @@ fails closed; test fixtures use purpose-built mocks.
   administrator. On R2 such an overwrite at least drops the SHA-256 evidence, so
   the next verification falls back to a rehash and fails — but a release that is
   already active is served from storage without re-verification per request.
-- **A provider that silently ignores `x-amz-checksum-sha256` or
-  `If-None-Match`.** Invariant A still holds on such a provider (commit rehashes
-  and refuses corrupt bytes), but the post-commit grant guarantee does not.
-  R2 was proven to enforce both; AWS S3 documents both; MinIO could not be
-  tested here and is unverified.
+- **A provider that silently ignores `x-amz-checksum-sha256` or `If-None-Match`,
+  or echoes an unvalidated checksum.** Under the default `advisory` trust,
+  invariant A still holds — commit rehashes and refuses corrupt bytes, and a
+  regression proves an echoed checksum on corrupt bytes is caught. The
+  post-commit grant guarantee, however, needs the provider to enforce the
+  headers. R2 and MinIO (tag above) are proven; AWS S3 documents it; asserting
+  `enforced` for an unproven provider is an operator claim outside this model.
 - **Serving-time integrity.** Verification happens at plan and commit, not on
   every public GET.
 - **A concurrent local filesystem attacker** racing `lstat` against the

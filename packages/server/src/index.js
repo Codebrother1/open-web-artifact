@@ -53,7 +53,10 @@ export async function createDefaultStores({dataDir=resolve(process.env.OWA_DATA_
       secretAccessKey:process.env.OWA_S3_SECRET_ACCESS_KEY,
       sessionToken:process.env.OWA_S3_SESSION_TOKEN??null,
       prefix:process.env.OWA_S3_PREFIX??'owa',
-      addressingStyle:process.env.OWA_S3_ADDRESSING_STYLE??'path'
+      addressingStyle:process.env.OWA_S3_ADDRESSING_STYLE??'path',
+      // Provider checksum trust: 'enforced' | 'advisory'. Unset = automatic
+      // (only live-proven hosts are enforced). Cannot disable verification.
+      checksumEvidence:process.env.OWA_S3_CHECKSUM_EVIDENCE||undefined
     });
     return {blobs,metadata,leases,storageKind:'s3'};
   }
@@ -121,12 +124,14 @@ function createRuntime({blobs,metadata,leases=null,uploadSecret=randomBytes(32).
       authorize(req,slug,['plan']); // A slow body cannot extend authorization.
       const origin=publicBaseUrl??base;
       // `leases` is operational only: it changes no request or response field.
-      const plan=await planManifest({manifest:body.manifest,blobs,leases,uploadFactory:async digest=>{
+      const plan=await planManifest({manifest:body.manifest,blobs,leases,uploadFactory:async(digest,{repair=false}={})=>{
         // Plan is not permission to mint storage grants. Check at each mint,
         // after asynchronous existence checks, including expiration at that time.
+        // This is also the ONLY place a CAS-affecting instrument is created, so
+        // the upload capability always precedes it — including repair grants.
         const claims=authorize(req,slug,['plan','upload']);
         const {expiresIn,expires}=uploadLifetime(claims);
-        if(typeof blobs.createUpload==='function')return blobs.createUpload(digest,{expires:expiresIn});
+        if(typeof blobs.createUpload==='function')return blobs.createUpload(digest,{expires:expiresIn,repair});
         const scoped=authorizer.mode==='required';
         const sig=uploadSignature(localKey,digest,expires,scoped?slug:null);
         return {digest,method:'PUT',url:`${origin}/v1/uploads/${encodeURIComponent(digest)}?expires=${expires}&sig=${sig}${scoped?`&site=${encodeURIComponent(slug)}`:''}`,expiresIn,
