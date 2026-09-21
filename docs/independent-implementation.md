@@ -37,7 +37,8 @@ same checked-in corpus; neither calls the other.
 - safe request-path resolution (decode once, strict UTF-8, reject `\`/NUL/`..`
   before SPA fallback, `/a/.` vs `/a/./`);
 - directory packing with Unicode code-point ordering of complete artifact paths,
-  symlink rejection, duplicate-content blob deduplication;
+  symlink rejection, duplicate-content blob deduplication, and the fixed
+  pack-time media-type table with its portable extension rule (issue #33);
 - the OCI image-layout boundaries the corpus exercises: canonical config blob,
   one descriptor per file entry, `dev.openwebartifact.path` identity, descriptor
   media-type mapping with the `application/octet-stream` fallback, path-aware
@@ -78,7 +79,7 @@ Every file under `docs/conformance/v0.2/` and every vector in it is executed —
 | `manifest.json` | manifest | 149 | parse → validate → canonicalize + artifact digest |
 | `path.json` | path | 25 | validate; exact original string returned |
 | `request.json` | request | 44 | validate manifest → resolve; exact file entry or null |
-| `pack.json` | pack | 12 | materialize files/symlinks in a temp dir → pack → manifest, canonical, digest, sorted unique blob digests, blob bytes |
+| `pack.json` | pack | 17 | materialize files/symlinks in a temp dir → pack (media types from the fixed table) → manifest, canonical, digest, sorted unique blob digests, blob bytes |
 | `blob.json` | blob | 10 | validate manifest → OCI write + read-back, or OCI read of a static layout → manifest, identity, blobs |
 
 Plus the immutable basic vectors (`docs/test-vectors/basic/`: whole-file SHA-256
@@ -111,8 +112,9 @@ call anywhere.
    translated. Disclosure: the same engineering session that produced this
    implementation had read parts of those files while working on earlier issues
    (#8, #9, #23); they were not opened during this work, and where the corpus
-   pins less than the reference does (see the pack media-type ambiguity below)
-   this implementation deliberately follows only what is published.
+   pinned less than the reference did (the pack media-type case, since resolved
+   — see "Resolved" below) this implementation deliberately followed only what
+   was published.
 3. No JavaScript runs at Go test time, and no Go runs inside the JavaScript
    suites. The only shared artifact is the static corpus.
 4. If a corpus result cannot be derived from the written specification, the
@@ -123,38 +125,53 @@ call anywhere.
 ## Ambiguities and interpretations found
 
 None of these blocked the corpus; each is recorded so the specification can
-decide whether to pin it.
+decide whether to pin it. Items the specification has since pinned move to
+"Resolved" below with their history.
 
-1. **Pack media-type detection is not specified.** The specification's
-   directory-packing rule defines paths and ordering but no rule for the
-   `mediaType` a packer assigns to a file. The corpus pins exactly four
-   extensions through its expected manifests (`.html`, `.css`, `.js`, `.txt`,
-   all with `; charset=utf-8`). This implementation maps exactly those four
-   (matched case-sensitively) and uses `application/octet-stream` for anything
-   else; the fallback, other extensions and extension case sensitivity are
-   *not* portable today. A second implementation packing `photo.png` or
-   `INDEX.HTML` may legitimately produce a different artifact digest from the
-   reference.
-2. **Index reference selection.** [oci.md](oci.md) says `index.json` lists the
+1. **Index reference selection.** [oci.md](oci.md) says `index.json` lists the
    manifest with `org.opencontainers.image.ref.name` set to the requested ref.
    This implementation requires an exact match and fails otherwise; behaviour
    for an index whose entries carry no `ref.name` is unspecified. The corpus
    layouts all carry `latest`.
-3. **Non-regular directory entries.** The packing rule speaks of "each
+2. **Non-regular directory entries.** The packing rule speaks of "each
    discovered regular file". Symbolic links are rejected as specified; other
    non-regular entries (sockets, devices, FIFOs) are skipped here. The corpus
    does not cover them.
-4. **Duplicate JSON member names** are explicitly outside the corpus. This
+3. **Duplicate JSON member names** are explicitly outside the corpus. This
    parser keeps the last value at the first member's position and discloses
    that policy, as the conformance guide requires.
-5. **Shortest-digit selection.** The specification's "shortest round-tripping
+4. **Shortest-digit selection.** The specification's "shortest round-tripping
    digits, closest, ties to even" is realised with `strconv.FormatFloat(v, 'e',
    -1, 64)` for the digits and an explicit implementation of the layout rules.
    Every corpus number agrees; equivalence for all binary64 values is a property
    of Go's shortest-formatting algorithm that the corpus exercises but does not
    prove exhaustively.
-6. **Filesystem names that are not valid Unicode** are out of scope by the
+5. **Filesystem names that are not valid Unicode** are out of scope by the
    specification's own statement; the packer rejects them rather than guessing.
+
+### Resolved
+
+- **Pack media-type detection** — surfaced by this implementation, resolved by
+  issue #33. The directory-packing rule originally defined paths and ordering
+  but no rule for the `mediaType` a packer assigns, and the corpus pinned only
+  `.html`, `.css`, `.js` and `.txt`; this implementation therefore mapped
+  exactly those four (case-sensitively) and documented
+  `application/octet-stream` for anything else as a local interpretation, so a
+  second packer could legitimately have produced a different artifact digest for
+  `photo.png` or `INDEX.HTML`. [spec-v0.2.md](spec-v0.2.md#media-type-assignment)
+  now defines the fixed, closed 19-extension table (the JavaScript reference's
+  existing table) and a portable extension rule: final path segment, suffix from
+  the final `.`, a leading dot alone is not an extension, ASCII-only folding of
+  the lookup key, `application/octet-stream` fallback, no host MIME database, no
+  byte inspection, no compound extensions. The four-extension interpretation was
+  deleted from `pack.go` and replaced by the full published rule, implemented
+  from the specification text (not from the reference, which was not consulted);
+  the corpus pins every table entry and the edge cases in the
+  `pack-media-type-*` vectors of `pack.json`, checked by both runners from the
+  same static bytes, and every previously published pack vector is unchanged.
+  The one name shape the rule covers but the corpus does not materialize is a
+  trailing dot (`file.`), because Windows removes it from file names; it is
+  pinned by direct anchors (`pack_media_type_test.go`) instead.
 
 ## Adopting future corpus additions
 

@@ -129,6 +129,42 @@ Traversal order of the filesystem is irrelevant: only the final sort of complete
 
 *Versioning and migration note.* Earlier v0.2 text left arbitrary-Unicode directory-pack ordering undefined (the reference used locale-sensitive collation). Defining it here closes an undefined producer behaviour inside the existing v0.2 draft: no new `specVersion`, media type or manifest field is introduced, canonical JSON and the artifact digest algorithm are unchanged, and every published v0.2 corpus and legacy artifact identity is preserved. Existing stored manifests and releases do not change. Re-packing a directory containing Unicode filenames with an older, locale-sensitive reference and with the corrected one MAY yield a different `files` order and therefore a different artifact digest; no legacy-collation compatibility mode exists because the old result depended on the host's locale/ICU and is not a portable algorithm. The packer operates on the Unicode filename strings the runtime exposes; a portable mapping for filesystem byte names that cannot be represented as such strings is out of scope.
 
+### Media type assignment
+The pack operation assigns each file entry's `mediaType` from the **complete artifact path alone**, using the extension rule and the fixed table below (issue #33). Like the ordering rule, this is producer behaviour of directory packing: it exists so that two independent packers derive the same `files` entries, canonical JSON and artifact digest from the same directory. It does **not** restrict manually authored manifests, whose `mediaType` remains any nonempty string as specified above.
+
+Given the complete artifact path of a discovered regular file, the **extension lookup key** is derived as follows:
+
+1. Take the final path segment — the text after the final `/`.
+2. Find the final U+002E FULL STOP `.` in that segment. If there is none, the file has no extension.
+3. If that final `.` is the first character of the segment, the file has no extension: `.env`, `.html` and `.gitignore` are dotfiles, not files with an extension.
+4. Otherwise the candidate extension is the substring from that final `.` through the end of the segment: `index.html` → `.html`, `INDEX.HTML` → `.HTML`, `archive.tar.gz` → `.gz`, `archive.tar.JSON` → `.JSON`, `foo.` → `.`, `foo..txt` → `.txt`, `.foo.html` → `.html`.
+5. Fold ASCII `A`–`Z` (U+0041–U+005A) to `a`–`z` (U+0061–U+007A) in the candidate, and nowhere else. This is a fixed ASCII mapping, not a locale-sensitive or Unicode-aware case conversion; non-ASCII characters are unchanged. Known extensions are therefore case-insensitive: `INDEX.HTML`, `App.MJS` and `IMAGE.PNG` map exactly as `index.html`, `app.mjs` and `image.png`.
+6. Look the folded key up in the table below. A file with no extension, and every key not listed — including the bare `.` of a trailing-dot name and unlisted extensions such as `.gz`, `.zip` or `.md` — maps to `application/octet-stream`.
+
+| Folded extension key | `mediaType` |
+| --- | --- |
+| `.html`, `.htm` | `text/html; charset=utf-8` |
+| `.js`, `.mjs` | `text/javascript; charset=utf-8` |
+| `.css` | `text/css; charset=utf-8` |
+| `.json` | `application/json; charset=utf-8` |
+| `.svg` | `image/svg+xml` |
+| `.png` | `image/png` |
+| `.jpg`, `.jpeg` | `image/jpeg` |
+| `.webp` | `image/webp` |
+| `.gif` | `image/gif` |
+| `.txt` | `text/plain; charset=utf-8` |
+| `.wasm` | `application/wasm` |
+| `.ico` | `image/x-icon` |
+| `.xml` | `application/xml; charset=utf-8` |
+| `.pdf` | `application/pdf` |
+| `.woff` | `font/woff` |
+| `.woff2` | `font/woff2` |
+| anything else, or no extension | `application/octet-stream` |
+
+The table is fixed and closed by this specification. A packer MUST NOT consult a host or operating-system MIME database (`/etc/mime.types`, Windows or macOS type registries, a `mime` library), MUST NOT fetch an external MIME registry, MUST NOT inspect file bytes, and MUST NOT apply compound-extension rules: `archive.tar.gz` uses only `.gz` (unlisted, hence `application/octet-stream`) and `archive.tar.JSON` uses only `.json`. Only the final path segment is examined, so `vendor.json/LICENSE` has no extension. The path string itself is never Unicode-normalized, case-folded or otherwise modified (rule 2 of the ordering list above still holds); only the ASCII lookup key is folded. Charset parameters appear exactly where the table shows them and nowhere else.
+
+*Versioning note.* Earlier v0.2 text did not define pack-time media-type assignment. The JavaScript reference already implemented exactly this table and rule, so every published pack vector, canonical string and artifact digest is unchanged, and defining it here closes an undefined producer behaviour inside the existing v0.2 draft: no new `specVersion`, media type, manifest field, canonical-JSON rule or digest algorithm. The [conformance corpus](conformance/README.md) pins every table entry and the edge cases (`pack-media-type-*`).
+
 ## Invariants
 1. File contents are addressed by SHA-256 digest.
 2. Manifest identity is independent of JSON object insertion order.
@@ -149,6 +185,7 @@ The [conformance guide](conformance/README.md) defines operation-specific fixtur
 
 Issue 5 did not fix the following limitations at the time; their current status is noted:
 - The reference directory packer then used locale-sensitive `localeCompare` for file ordering and pinned only lowercase ASCII expectations. Pack ordering is now defined above ([Directory packing](#directory-packing-producer-ordering), issue #8) as Unicode code-point order of complete artifact paths, with portable Unicode vectors; a manifest's array order was always fully specified once it existed and MUST be preserved.
+- Pack-time media-type assignment was likewise undefined: the reference used a fixed table, but the corpus pinned only `.html`, `.css`, `.js` and `.txt`, so a second implementation could legitimately pack `photo.png` or `INDEX.HTML` to a different artifact digest (surfaced by the independent Go implementation). It is now defined above ([Media type assignment](#media-type-assignment), issue #33) with the reference's existing table and a portable extension rule, and every table entry is corpus-pinned; all previously published vectors are unchanged.
 - OCI import at the time indexed layers by digest, collapsing entries with the same content digest and their distinct path annotations. Duplicate-content manifests were always valid; the OCI transport later resolved the round trip (issue #9) by selecting one layer descriptor per file entry through its `dev.openwebartifact.path` annotation while blob bytes stay deduplicated by digest — non-normative transport behaviour, see [oci.md](oci.md). Core manifest semantics did not change.
 - *Non-normative OCI transport note:* an OCI layer descriptor `mediaType` must be an RFC 6838 type/subtype, so the OCI transport maps the OWA `mediaType` to that form (`text/html; charset=utf-8` → `text/html`; unrepresentable values → `application/octet-stream`) in descriptors only. The canonical OWA manifest — the OCI config blob — keeps the full value, so manifest validation, canonical JSON and artifact digests are unaffected. See [oci.md](oci.md).
 - Commit then checked blob existence only. The reference host now verifies every unique referenced blob's SHA-256 digest **and** size at the commit boundary before a release is persisted (issue #10, see [integrity.md](integrity.md)); that is host behaviour, not a change to this specification. The content-mismatch conformance fixtures still exercise only the OCI read/write boundaries.

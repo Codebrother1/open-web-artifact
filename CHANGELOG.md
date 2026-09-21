@@ -6,6 +6,23 @@ remains the v0.2 specification draft and every manifest keeps `specVersion`
 There was no tagged 0.3.0 release; everything below was merged between 0.2.0 and
 0.4.0.
 
+## Unreleased
+
+Protocol identity is unchanged (spec v0.2 draft, `owa.dev/v1`,
+`application/vnd.openwebartifact.site.v1+json`, canonical JSON and artifact
+digest algorithm); no package version, tag or release.
+
+- specify pack-time media-type assignment as a portable producer rule (issue
+  #33): the reference packer's existing fixed extension table plus a
+  language-neutral extension rule — final path segment, suffix from the final
+  dot, a leading dot alone is not an extension, ASCII-only folding of the
+  lookup key, `application/octet-stream` fallback; no host MIME database, byte
+  sniffing or compound extensions. Every table entry and the edge cases are
+  pinned in the portable pack corpus, and the Go conformance implementation
+  replaces its four-extension local interpretation with the same published
+  rule. All previously published pack vectors keep their canonical JSON and
+  artifact digests; manually authored `mediaType` values are unaffected.
+
 ## 0.4.0 - 2026-09-21
 
 First tagged release of the reference implementation (source-only; repository

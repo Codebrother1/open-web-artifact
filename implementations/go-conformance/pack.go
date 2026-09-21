@@ -15,25 +15,83 @@ type Packed struct {
 	Blobs          map[string][]byte // digest -> bytes, one entry per distinct digest
 }
 
-// packMediaTypes is the extension → OWA mediaType table used by the pack
-// operation. The specification does not define media-type detection for
-// packing; the portable corpus pins exactly these four extensions through its
-// expected manifests, so this implementation maps exactly those (matched
-// case-sensitively) and uses application/octet-stream for anything else. That
-// fallback and any other extension are outside what the corpus fixes — see
-// docs/independent-implementation.md ("Ambiguities").
+// packMediaTypes is the fixed extension → OWA mediaType table of the pack
+// operation (spec-v0.2.md "Directory packing" → "Media type assignment",
+// issue #33). The table is closed by the specification: nothing outside it is
+// mapped, no host or OS MIME database is consulted (this file must never import
+// package mime), file bytes are never inspected, and there are no
+// compound-extension rules. Keys are the FOLDED extension (see
+// packExtensionKey). This is producer behaviour of directory packing only; a
+// manually authored manifest may carry any nonempty mediaType.
 var packMediaTypes = map[string]string{
-	".html": "text/html; charset=utf-8",
-	".css":  "text/css; charset=utf-8",
-	".js":   "text/javascript; charset=utf-8",
-	".txt":  "text/plain; charset=utf-8",
+	".html":  "text/html; charset=utf-8",
+	".htm":   "text/html; charset=utf-8",
+	".js":    "text/javascript; charset=utf-8",
+	".mjs":   "text/javascript; charset=utf-8",
+	".css":   "text/css; charset=utf-8",
+	".json":  "application/json; charset=utf-8",
+	".svg":   "image/svg+xml",
+	".png":   "image/png",
+	".jpg":   "image/jpeg",
+	".jpeg":  "image/jpeg",
+	".webp":  "image/webp",
+	".gif":   "image/gif",
+	".txt":   "text/plain; charset=utf-8",
+	".wasm":  "application/wasm",
+	".ico":   "image/x-icon",
+	".xml":   "application/xml; charset=utf-8",
+	".pdf":   "application/pdf",
+	".woff":  "font/woff",
+	".woff2": "font/woff2",
 }
 
-func packMediaType(path string) string {
-	if mt, ok := packMediaTypes[filepath.Ext(path)]; ok {
-		return mt
+// PackFallbackMediaType is assigned to every packed file whose folded extension
+// key is not in packMediaTypes: no extension, a dotfile, a trailing-dot name, or
+// any unlisted extension.
+const PackFallbackMediaType = "application/octet-stream"
+
+// packExtensionKey implements the specification's portable extension rule on a
+// COMPLETE artifact path and reports whether an extension exists:
+//
+//  1. take the final segment — everything after the final "/";
+//  2. find the final U+002E "." in that segment; none → no extension;
+//  3. if that "." is the segment's FIRST character there is no extension
+//     (".env" and ".html" are dotfiles, not files with an extension);
+//  4. otherwise the candidate is the segment from that "." to its end
+//     ("foo." → ".", "archive.tar.gz" → ".gz", ".foo.html" → ".html");
+//  5. fold ASCII A–Z to a–z in the candidate only — never a locale- or
+//     Unicode-aware conversion, and never the path itself ("INDEX.HTML" → ".html").
+//
+// It is deliberately not filepath.Ext, which treats ".env" as an extension.
+// Byte indexing is safe: "/" and "." are ASCII and never occur inside a
+// multi-byte UTF-8 sequence, and only the bytes 'A'..'Z' are folded.
+func packExtensionKey(path string) (string, bool) {
+	segment := path
+	if i := strings.LastIndexByte(path, '/'); i >= 0 {
+		segment = path[i+1:]
 	}
-	return OCIFallbackMedia
+	dot := strings.LastIndexByte(segment, '.')
+	if dot <= 0 {
+		return "", false
+	}
+	key := []byte(segment[dot:])
+	for i, c := range key {
+		if c >= 'A' && c <= 'Z' {
+			key[i] = c + ('a' - 'A')
+		}
+	}
+	return string(key), true
+}
+
+// packMediaType assigns the pack-time mediaType of a complete artifact path
+// from the fixed table, or PackFallbackMediaType.
+func packMediaType(path string) string {
+	if key, ok := packExtensionKey(path); ok {
+		if mt, ok := packMediaTypes[key]; ok {
+			return mt
+		}
+	}
+	return PackFallbackMediaType
 }
 
 // PackDirectory implements spec-v0.2.md "Directory packing (producer ordering)":
