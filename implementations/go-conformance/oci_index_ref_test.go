@@ -220,6 +220,17 @@ func TestIndexRefNoLatestFallback(t *testing.T) {
 	if imported.ArtifactDigest != want || imported.OCIManifestDigest != ociDigest {
 		t.Fatal("the exact ref still imports the written layout")
 	}
+	emptyOCI, err := WriteOCILayout(dir, m, blobs, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	emptyImported, err := ReadOCILayout(dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if emptyImported.ArtifactDigest != want || emptyImported.OCIManifestDigest != emptyOCI {
+		t.Fatal("explicit empty library ref must round-trip by exact equality")
+	}
 }
 
 func TestIndexRefMalformedAnnotationsNeverMatch(t *testing.T) {
