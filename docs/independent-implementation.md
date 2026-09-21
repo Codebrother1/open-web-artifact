@@ -160,8 +160,9 @@ decide whether to pin it. Items the specification has since pinned move to
   matches only through a string `ref.name` annotation exactly equal to the
   requested ref; exactly one match is required; zero matches are *not found*
   and duplicates are *ambiguous*; descriptor order never breaks a tie; a
-  missing, `null`, numeric, boolean, empty or different annotation never
-  matches; nothing is selected by digest, artifact-digest annotation, media type
+  missing, `null`, numeric, boolean or different annotation never matches; an
+  empty annotation matches only an explicitly requested empty string; nothing is
+  selected by digest, artifact-digest annotation, media type
   or position. The JavaScript `latest → manifests[0]` fallback was removed, and
   this implementation replaced its first-match loop with `selectIndexDescriptor`,
   which counts all exact matches and reports `ErrRefNotFound` / `ErrRefAmbiguous`
