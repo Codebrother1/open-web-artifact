@@ -58,9 +58,6 @@ func (e *refError) Unwrap() []error { return []error{ErrLayout, e.kind} }
 // "latest" → manifests[0] fallback, no first-match-wins, and no digest,
 // artifact-digest or media-type guessing.
 func selectIndexDescriptor(index *Value, ref string) (*Value, error) {
-	if ref == "" {
-		return nil, layoutErr("requested reference must be a nonempty string")
-	}
 	manifests := index.Get("manifests")
 	if manifests == nil || manifests.Kind != KindArray {
 		return nil, layoutErr("index.json has no manifests array")
