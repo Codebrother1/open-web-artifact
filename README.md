@@ -357,10 +357,14 @@ manifest bytes and file bytes, and the imported release serves the original
 bytes. Layer descriptors carry the RFC 6838 type/subtype of each file's media
 type (`text/html` for `text/html; charset=utf-8`) because OCI descriptors cannot
 carry parameters; the full OWA value stays in the config blob, which is the
-canonical manifest. Registry tags are mutable transport references — neither OWA
-artifact identity nor OWA releases. Details, exact commands and limitations
-(plain-HTTP loopback scope, no auth/TLS/signing claims, issue #9 duplicate-content
-paths): [docs/oci.md](docs/oci.md).
+canonical manifest. Several paths holding identical bytes stay distinct file
+entries — one layer descriptor per entry, identified by `dev.openwebartifact.path`,
+all referencing the one content-addressed blob (issue #9); the same live lane
+proves those repeated descriptors survive the registry and that each path is
+served with its own media type. Registry tags are mutable transport references —
+neither OWA artifact identity nor OWA releases. Details, exact commands and
+limitations (plain-HTTP loopback scope, no auth/TLS/signing claims):
+[docs/oci.md](docs/oci.md).
 
 ## Artifact identity
 
@@ -485,7 +489,7 @@ of universal browser security.
 2. Broader live integration evidence against R2 and MinIO/S3.
 3. Production content/control origin isolation and separately reviewed interactive security profiles.
 4. Garbage collection and retention semantics for unreferenced blobs.
-5. OCI registry interoperability beyond the tested ORAS v1.3.4 / Zot v2.1.21 pair, and duplicate-content path semantics (issue #9); registry transport itself stays with ORAS.
+5. OCI registry interoperability beyond the tested ORAS v1.3.4 / Zot v2.1.21 pair; registry transport itself stays with ORAS.
 6. Optional static capabilities (data/forms/secret proxy) only after the base lifecycle is stable.
 
 ## License

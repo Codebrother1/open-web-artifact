@@ -10,7 +10,7 @@ import {
   OWA_MEDIA_TYPE, OWA_SPEC_VERSION, artifactDigest, canonicalJson,
   validateArtifactPath, validateManifest
 } from '../../spec/src/index.js';
-import { readOciLayout, writeOciLayout } from '../../transport-oci/src/index.js';
+import { PATH_ANNOTATION, ociLayerMediaType, readOciLayout, writeOciLayout } from '../../transport-oci/src/index.js';
 
 const SEED = 0x4f574132;
 const SEED_HEX = `0x${SEED.toString(16)}`;
@@ -318,32 +318,72 @@ function blobPath(root, digest) {
   return join(root, 'blobs', 'sha256', digest.slice(7));
 }
 
-test(`seeded OCI round-trips actual bytes and rejects tampering (${ITERATIONS.oci}; ${SEED_HEX})`, async () => {
+// Duplicate content (issue #9): every fourth iteration keeps unique bytes; the
+// other three add paths whose bytes are identical to an existing file's — a pair
+// with one media type, several duplicates mixed with unique files, and identical
+// bytes under DIFFERENT media types (.js vs .txt). Paths stay lowercase ASCII.
+function withDuplicateContent(files, rng, iteration) {
+  const copy = (index, path) => ({ path, data: files[index].data });
+  switch (iteration % 4) {
+    case 1: return [...files, copy(2, `dup/${rng.word()}.txt`)];
+    case 2: return [...files, copy(1, 'mirror/app.js'), copy(1, `mirror/${rng.word()}.txt`), copy(0, 'mirror/index.html')];
+    case 3: return [...files, copy(2, 'same.js'), copy(2, 'same.txt'), copy(2, 'deeper/same.txt')];
+    default: return files;
+  }
+}
+const uniqueDigests = files => new Set(files.map(file => hash(file.data))).size;
+
+test(`seeded OCI round-trips actual bytes, duplicate-content entries and reordered descriptors, and rejects tampering (${ITERATIONS.oci}; ${SEED_HEX})`, async () => {
   await property('oci', async (rng, iteration, context) => {
-    const files = generatedFiles(rng, iteration);
+    const files = withDuplicateContent(generatedFiles(rng, iteration), rng, iteration);
     await withTemp(async root => {
       const site = join(root, 'site'), layout = join(root, 'layout');
-      context('pack unique-content files for OCI', files);
+      context('pack files for OCI (duplicate content on 3 of 4 iterations)', files);
       await createFiles(site, shuffle(files, rng));
       const packed = await packDirectory(site);
       assertPackedBytes(packed, files);
-      assert.equal(packed.blobs.size, files.length);
-      // Duplicate-content manifests are valid, but OCI's current layerByDigest
-      // path annotation lookup has a separate known limitation; do not redesign
-      // that transport behavior in this property suite.
+      assert.equal(packed.blobs.size, uniqueDigests(files), 'the packer returns one blob per distinct digest');
+      if (iteration % 4 !== 0) assert.ok(packed.blobs.size < files.length, 'this iteration really has duplicate content');
       const ref = `seeded-${iteration}`;
       const written = await writeOciLayout({ ...packed, output: layout, ref });
+      const ociManifest = JSON.parse((await readFile(blobPath(layout, written.ociManifestDigest))).toString('utf8'));
+      context('one OCI descriptor per file entry; repeated digests keep distinct path annotations and per-file media types', ociManifest.layers);
+      assert.equal(ociManifest.layers.length, packed.manifest.files.length);
+      assert.deepEqual(ociManifest.layers.map(layer => layer.annotations[PATH_ANNOTATION]), packed.manifest.files.map(file => file.path));
+      for (const file of packed.manifest.files) {
+        const layer = ociManifest.layers.find(item => item.annotations[PATH_ANNOTATION] === file.path);
+        assert.equal(layer.digest, file.digest); assert.equal(layer.size, file.size);
+        assert.equal(layer.mediaType, ociLayerMediaType(file.mediaType));
+      }
       context('read OCI and compare the original manifest, digests, and bytes', { ref, files });
       const imported = await readOciLayout({ input: layout, ref });
       assert.equal(written.artifactDigest, packed.artifactDigest);
       assert.equal(imported.artifactDigest, packed.artifactDigest);
       assert.deepEqual(imported.manifest, packed.manifest);
-      assert.equal(imported.blobs.size, files.length);
+      assert.equal(imported.blobs.size, uniqueDigests(files), 'repeated descriptors still yield one returned blob per digest');
       assertPackedBytes(imported, files);
       const config = await readFile(blobPath(layout, packed.artifactDigest));
       assert.equal(config.toString('utf8'), canonicalJson(packed.manifest));
       assert.equal(hash(config), packed.artifactDigest);
       assert.equal(hash(await readFile(blobPath(layout, written.ociManifestDigest))), written.ociManifestDigest);
+
+      // Descriptor ORDER is not OWA file identity: a shuffled layer list (same
+      // path/digest/size/mediaType per descriptor) imports the identical config.
+      const indexFile = join(layout, 'index.json');
+      const originalIndex = await readFile(indexFile);
+      const reordered = { ...ociManifest, layers: shuffle(ociManifest.layers, rng) };
+      const reorderedBytes = Buffer.from(canonicalJson(reordered), 'utf8');
+      context('reader ignores OCI layer order', reordered.layers.map(layer => layer.annotations[PATH_ANNOTATION]));
+      await writeFile(blobPath(layout, hash(reorderedBytes)), reorderedBytes);
+      const reorderedIndex = JSON.parse(originalIndex.toString('utf8'));
+      reorderedIndex.manifests[0] = { ...reorderedIndex.manifests[0], digest: hash(reorderedBytes), size: reorderedBytes.byteLength };
+      await writeFile(indexFile, JSON.stringify(reorderedIndex));
+      try {
+        const fromReordered = await readOciLayout({ input: layout, ref });
+        assert.deepEqual(fromReordered.manifest, packed.manifest);
+        assert.equal(fromReordered.artifactDigest, packed.artifactDigest);
+        assertPackedBytes(fromReordered, files);
+      } finally { await writeFile(indexFile, originalIndex); }
 
       const victim = packed.manifest.files[rng.int(packed.manifest.files.length)];
       const original = Buffer.from(packed.blobs.get(victim.digest));
