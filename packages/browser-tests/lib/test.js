@@ -34,6 +34,28 @@ export function expectProfile(response) {
 }
 
 const LOOPBACK = /^https?:\/\/(?:127\.0\.0\.1|localhost|[a-z0-9_.-]+\.localhost)(?::\d+)?\//i;
+/**
+ * Egress = a request that could leave the machine: http(s)/ws(s) to anything but
+ * loopback. `blob:`, `data:` and `about:` loads are engine-internal (WebKit, for
+ * one, loads media through `blob:null/…` URLs for a sandboxed document) and never
+ * reach a network, so they are observed and recorded but not treated as egress.
+ */
+const NETWORK_SCHEMES = new Set(['http:', 'https:', 'ws:', 'wss:']);
+export const leavesLoopback = url => NETWORK_SCHEMES.has(url.protocol) && !LOOPBACK.test(url.href);
+
+/** Inspect a (possibly blocked) child frame without ever hanging on it. */
+export async function inspectChild(frame, ms = 3000) {
+  if (!frame) return 'no child frame object';
+  const probe = frame.evaluate(() => ({
+    marker: document.getElementById('marker')?.textContent ?? null,
+    inner: document.getElementById('inner-marker') !== null,
+    capture: document.getElementById('capture-frame-marker') !== null,
+    title: document.title,
+    url: location.href,
+    length: document.documentElement?.outerHTML.length ?? 0
+  })).catch(error => `unavailable: ${String(error.message).split('\n')[0]}`);
+  return Promise.race([probe, new Promise(resolve => setTimeout(() => resolve('unavailable: no document answered'), ms))]);
+}
 
 /**
  * Per-page network observation: every request the browser ATTEMPTED (Playwright
@@ -63,7 +85,10 @@ function observe(page) {
     /** Requests that completed with an HTTP response (reached a server). */
     completed: pattern => attempts.filter(a => (typeof pattern === 'string' ? a.url === pattern : pattern.test(a.url)) && a.outcome === 'response'),
     summary: pattern => attempts.filter(a => !pattern || (typeof pattern === 'string' ? a.url === pattern : pattern.test(a.url)))
-      .map(a => `${a.type} ${new URL(a.url).pathname} → ${a.outcome}${a.status ? ` ${a.status}` : ''}${a.failure ? ` (${a.failure})` : ''}`)
+      .map(a => `${a.type} ${new URL(a.url).pathname} → ${a.outcome}${a.status ? ` ${a.status}` : ''}${a.failure ? ` (${a.failure})` : ''}`),
+    /** Engine-internal (non-network) loads such as blob: or data:, by scheme. */
+    nonNetwork: () => attempts.filter(a => !NETWORK_SCHEMES.has(new URL(a.url).protocol))
+      .reduce((acc, a) => { const scheme = new URL(a.url).protocol; acc[scheme] = (acc[scheme] ?? 0) + 1; return acc; }, {})
   };
 }
 
@@ -87,7 +112,7 @@ export const test = base.extend({
    */
   page: async ({ page }, use, testInfo) => {
     const escaped = [];
-    await page.route(url => !LOOPBACK.test(url.href), route => { escaped.push(route.request().url()); route.abort(); });
+    await page.route(leavesLoopback, route => { escaped.push(route.request().url()); route.abort(); });
     await use(page);
     expect(escaped, 'no request may leave loopback').toEqual([]);
     void testInfo;

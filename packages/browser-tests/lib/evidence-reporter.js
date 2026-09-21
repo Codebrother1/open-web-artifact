@@ -1,10 +1,15 @@
 // Prints the per-engine behavior matrix and the recorded evidence at the end of a
 // run, and optionally writes the same data as JSON (OWA_BROWSER_EVIDENCE_JSON=path).
+// Inside GitHub Actions (GITHUB_STEP_SUMMARY set) the matrix, the exact engine
+// versions and every failing cell's full error are also appended to the job
+// summary, so the result is readable from the run page.
 // Only engines that actually executed appear; a project that did not run is not
 // a pass. Cells: PASS, FAIL, SKIP (+reason), EXPECTED LIMIT (a documented limit
 // that was demonstrated, not an enforcement claim), or NOT RUN.
-import { writeFileSync } from 'node:fs';
+import { appendFileSync, writeFileSync } from 'node:fs';
 import { release, type as osType } from 'node:os';
+
+const ANSI = /\x1b\[[0-9;]*m/g;
 
 export default class EvidenceReporter {
   constructor() { this.rows = new Map(); this.projects = []; this.engines = new Map(); }
@@ -32,7 +37,11 @@ export default class EvidenceReporter {
       evidence: annotations.filter(a => a.type === 'evidence').map(a => a.description),
       limits: limit,
       notes: annotations.filter(a => a.type === 'note').map(a => a.description),
-      error: result.error?.message?.split('\n')[0] ?? null
+      error: result.error?.message?.split('\n')[0] ?? null,
+      // Full diagnostics for a failing cell: every error's message, plus the
+      // page/console context Playwright attaches, ANSI stripped.
+      errors: (result.errors ?? []).map(error => String(error.message ?? error.value ?? error).replace(ANSI, '')),
+      stdout: (result.stdout ?? []).map(chunk => String(chunk).replace(ANSI, '')).join('').slice(-2000)
     };
   }
   onEnd() {
@@ -59,6 +68,51 @@ export default class EvidenceReporter {
     }
     const text = lines.join('\n');
     console.log(text);
+    if (process.env.GITHUB_ACTIONS === 'true') {
+      // Workflow-command annotations: readable on the run page and through the
+      // public check-runs API without a sign-in. A notice records the engines that
+      // really launched; one error per failing cell (GitHub shows at most 10).
+      const escapeData = value => String(value).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+      const escapeProperty = value => escapeData(value).replace(/:/g, '%3A').replace(/,/g, '%2C');
+      const engines = this.projects.map(project => `${project}: ${this.engines.get(project) ?? 'NOT RUN'}`).join('; ');
+      const tally = {};
+      for (const row of this.rows.values()) for (const project of this.projects) { const status = row.cells[project]?.status ?? 'NOT RUN'; tally[`${project} ${status}`] = (tally[`${project} ${status}`] ?? 0) + 1; }
+      console.log(`::notice title=${escapeProperty('browser evidence')}::${escapeData(`Playwright ${this.playwright}; ${engines}; rows: ${Object.entries(tally).map(([k, v]) => `${k}=${v}`).join(', ')}`)}`);
+      let emitted = 0, failing = 0;
+      for (const row of this.rows.values()) {
+        for (const project of this.projects) {
+          const cell = row.cells[project];
+          const status = cell?.status ?? 'NOT RUN';
+          if (status === 'PASS' || status === 'EXPECTED LIMIT') continue;
+          failing++;
+          if (emitted >= 10) continue;
+          emitted++;
+          const detail = [...(cell?.errors ?? []), ...(cell?.evidence ?? []).map(fact => `evidence: ${fact}`)].join('\n');
+          console.log(`::error title=${escapeProperty(`[${project}] ${status} — ${row.title}`)}::${escapeData(detail.slice(0, 1800) || status)}`);
+        }
+      }
+      if (failing > emitted) console.log(`::error title=${escapeProperty('browser evidence')}::${failing - emitted} more failing cell(s); see the job log.`);
+    }
+    if (process.env.GITHUB_STEP_SUMMARY) {
+      const md = [];
+      md.push(`### sandboxed-web-v1 real-browser evidence — Playwright ${this.playwright}, Node ${process.version}, ${osType()} ${release()}`, '');
+      for (const project of this.projects) md.push(`- **${project}**: ${this.engines.get(project) ?? 'NOT RUN (no test executed in this engine)'}`);
+      md.push('', `| Behavior | ${this.projects.join(' | ')} |`, `| --- | ${this.projects.map(() => '---').join(' | ')} |`);
+      for (const row of this.rows.values()) md.push(`| ${row.title.replace(/\|/g, '\\|')} | ${this.projects.map(p => row.cells[p]?.status ?? 'NOT RUN').join(' | ')} |`);
+      md.push('');
+      for (const row of this.rows.values()) {
+        for (const project of this.projects) {
+          const cell = row.cells[project];
+          if (!cell || cell.status === 'PASS' || cell.status === 'EXPECTED LIMIT') continue;
+          md.push(`<details><summary>${cell.status} — ${row.title} [${project}]</summary>`, '', '```text');
+          for (const error of cell.errors ?? []) md.push(error.slice(0, 6000));
+          for (const fact of cell.evidence) md.push(`evidence: ${fact}`);
+          if (cell.stdout) md.push('', 'stdout (tail):', cell.stdout);
+          md.push('```', '', '</details>', '');
+        }
+      }
+      appendFileSync(process.env.GITHUB_STEP_SUMMARY, md.join('\n') + '\n');
+    }
     if (process.env.OWA_BROWSER_EVIDENCE_JSON) {
       writeFileSync(process.env.OWA_BROWSER_EVIDENCE_JSON, JSON.stringify({
         playwright: this.playwright, node: process.version, os: `${osType()} ${release()}`, date: new Date().toISOString(),

@@ -26,15 +26,25 @@ cleanup, blocking of all navigation, a network air gap, or protection after
 downloaded content is opened elsewhere. Do not read "browser sandbox proven
 secure" into any row.
 
-**Record — 2026-09-21.** Playwright 1.63.0 (package-local lockfile), Node
-v24.14.1, Linux 6.18 x86_64 (Amazon Linux 2023, glibc 2.34), headless, run via
-`OWA_BROWSERS=chromium,firefox npm run test:browser`; 28 tests per engine.
+**Record — 2026-09-21, GitHub Actions** (`Browsers` workflow, job
+`browsers (chromium, firefox, webkit)`, `ubuntu-latest`, Node 24; see
+[ci.md](ci.md)). Playwright 1.63.0 from the package-local lockfile, engines and
+Linux dependencies installed by Playwright's own `install --with-deps`,
+`OWA_BROWSERS=chromium,firefox,webkit`; 28 tests per engine. The job's
+postflight (`.github/scripts/assert-browser-evidence.mjs`) requires every engine
+to report a real version and every row to be `PASS` or `EXPECTED LIMIT`.
 
 | Engine | Version actually executed | Result |
 | --- | --- | --- |
 | Chromium | 153.0.8010.12 (Playwright build v1243, headless shell) | 28/28 — 25 PASS, 3 EXPECTED LIMIT |
 | Firefox | 155.0 (Playwright build v1543) | 28/28 — 25 PASS, 3 EXPECTED LIMIT |
-| WebKit | 26.6 (Playwright build v2359) — **NOT RUN** | The engine binary requires `GLIBC_2.38` (and Ubuntu-24.04 runtime libraries) that this host's glibc 2.34 cannot provide; Playwright refused to start it. No result is claimed for WebKit; rerun on a supported host (`OWA_BROWSERS=webkit`). |
+| WebKit | 26.6 (Playwright build v2359) | 28/28 — 25 PASS, 3 EXPECTED LIMIT |
+
+The same suite was first run on 2026-09-21 on the development host (Amazon Linux
+2023, glibc 2.34) for Chromium and Firefox only, with identical results; that
+host cannot start the WebKit build (it needs `GLIBC_2.38`), which is why the
+WebKit evidence comes from Actions. Every automatic CI run repeats all three
+engines.
 
 Every enforcement test first verified, through the browser's own response
 object, that the top-level response carried the exact eight profile headers and
@@ -72,11 +82,23 @@ outside the subresource policy):
 | **LIMIT** ordinary self-targeted link (C) | navigated to the capture origin; no `Referer`; destination outside the profile | same |
 | **LIMIT** pre-existing cookie for the content origin | sent on the top-level request; response still fully protected | same |
 
-Engine differences observed: Firefox surfaces no page-console message when a
-sandboxed form submission or a named-target popup is refused (Chromium does); the
-outcomes — zero requests, same document still live, one page in the context —
-were identical. Firefox represents the refused frames as empty-URL frames rather
-than an error-page URL. Neither difference changes the policy or the profile.
+**WebKit 26.6** reached the same outcome on every row of the table above (25
+enforcement rows PASS, the three documented limits demonstrated). Engine
+differences observed, none of which changes the policy or the profile:
+
+- Firefox surfaces no page-console message when a sandboxed form submission or a
+  named-target popup is refused (Chromium does); the outcomes — zero requests,
+  same document still live, one page in the context — were identical.
+- Firefox represents the refused outgoing frames as empty-URL frames rather than
+  an error-page URL.
+- WebKit drives `<audio>`/`<video>` loading for the sandboxed (opaque-origin)
+  document through engine-internal `blob:null/…` URLs — a dozen of them for three
+  elements — none of which is a network request; the media elements still end in
+  `readyState 0` / `MEDIA_ERR_SRC_NOT_SUPPORTED` and zero requests reach any
+  server. The suite records these as non-network loads.
+- In WebKit a CSP-blocked child `<iframe>` never lets the parent document's
+  `load` event fire, so the outgoing-frame case waits on the document and the
+  frame elements instead of `load`.
 
 To reproduce, see the package [README](../packages/browser-tests/README.md).
 Rerun on each browser/version you intend to support; a result for one engine is

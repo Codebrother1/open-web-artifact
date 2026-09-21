@@ -1,0 +1,55 @@
+name: Browsers
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-browsers-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browsers:
+    name: browsers (chromium, firefox, webkit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+
+      - name: Install package-local browser test dependencies
+        run: npm --prefix packages/browser-tests ci --ignore-scripts
+
+      - name: Install Chromium, Firefox, WebKit and Linux dependencies
+        run: npm --prefix packages/browser-tests run install-browsers:deps
+
+      - name: Launch every required engine and print exact versions
+        run: npm --prefix packages/browser-tests run versions -- --require chromium,firefox,webkit
+
+      - name: Run sandboxed-web-v1 in all three real engines
+        env:
+          OWA_BROWSERS: chromium,firefox,webkit
+          OWA_BROWSER_EVIDENCE_JSON: ${{ runner.temp }}/owa-browser-evidence.json
+        run: npm run test:browser
+
+      - name: Prove every required engine executed every row
+        run: node .github/scripts/assert-browser-evidence.mjs "${{ runner.temp }}/owa-browser-evidence.json" chromium,firefox,webkit
+
+      - name: Whitespace check
+        run: git diff --check
+
+      - name: Tests left the checkout clean
+        run: node .github/scripts/assert-clean-tree.mjs

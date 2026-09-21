@@ -1,0 +1,151 @@
+name: MinIO
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-minio-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  minio:
+    name: minio (mediated + enforced, node 24)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GOTOOLCHAIN: go1.24.8
+      MINIO_RELEASE_TAG: RELEASE.2025-10-15T17-29-55Z
+      MINIO_COMMIT: 9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+
+      - name: Verify Go toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          go version
+
+      - name: Fetch and verify pinned MinIO source
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/minio-src"
+          git clone --quiet --depth 1 --branch "$MINIO_RELEASE_TAG" https://github.com/minio/minio.git "$src"
+          actual="$(git -C "$src" rev-parse HEAD)"
+          if [ "$actual" != "$MINIO_COMMIT" ]; then
+            echo "MinIO tag resolved to unexpected commit: $actual" >&2
+            exit 1
+          fi
+          echo "MinIO source commit verified: $actual"
+
+      - name: Build pinned MinIO
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/minio-src"
+          ldflags="$(MINIO_RELEASE=RELEASE go run buildscripts/gen-ldflags.go)"
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64             go build -tags kqueue -trimpath --ldflags "$ldflags" -o "$RUNNER_TEMP/minio" .
+          "$RUNNER_TEMP/minio" --version
+          version="$("$RUNNER_TEMP/minio" --version | head -n 1)"
+          case "$version" in
+            *"$MINIO_RELEASE_TAG"*"$MINIO_COMMIT"*) ;;
+            *)
+              echo "MinIO binary identity did not match the pinned release/commit" >&2
+              exit 1
+              ;;
+          esac
+          sha256sum "$RUNNER_TEMP/minio"
+
+      - name: Generate disposable MinIO credentials
+        run: |
+          node --input-type=module -e "import { randomBytes } from 'node:crypto'; import { appendFileSync } from 'node:fs'; const user='owa-ci-'+randomBytes(8).toString('hex'); const pass=randomBytes(32).toString('hex'); console.log('::add-mask::'+user); console.log('::add-mask::'+pass); appendFileSync(process.env.GITHUB_ENV, [
+            'MINIO_ROOT_USER='+user,
+            'MINIO_ROOT_PASSWORD='+pass,
+            'OWA_TEST_MINIO_ENDPOINT=http://127.0.0.1:9000',
+            'OWA_TEST_MINIO_BUCKET=owa-ci-integration',
+            'OWA_TEST_MINIO_REGION=us-east-1',
+            'OWA_TEST_MINIO_ACCESS_KEY_ID='+user,
+            'OWA_TEST_MINIO_SECRET_ACCESS_KEY='+pass
+          ].join('\n')+'\n');"
+
+      - name: Prove this lane carries only disposable MinIO configuration
+        run: node .github/scripts/assert-no-live-config.mjs --allow MINIO
+
+      - name: Start MinIO
+        shell: bash
+        run: |
+          set -euo pipefail
+          data="$RUNNER_TEMP/owa-minio-data"
+          mkdir -p "$data"
+          nohup "$RUNNER_TEMP/minio" server "$data"             --address 127.0.0.1:9000             --console-address 127.0.0.1:9001             >"$RUNNER_TEMP/minio.log" 2>&1 &
+          echo "MINIO_PID=$!" >> "$GITHUB_ENV"
+
+      - name: Wait for MinIO and create disposable bucket
+        run: |
+          node .github/scripts/minio-bucket.mjs ready
+          node .github/scripts/minio-bucket.mjs create
+
+      - name: MinIO mode A — default mediated
+        env:
+          OWA_TEST_REQUIRE_PROVIDERS: MINIO
+        run: npm run test:integration
+
+      - name: Mode A cleanup postflight
+        run: node .github/scripts/minio-bucket.mjs assert-empty
+
+      - name: MinIO mode B — explicitly enforced direct
+        env:
+          OWA_TEST_REQUIRE_PROVIDERS: MINIO
+          OWA_TEST_MINIO_CHECKSUM_EVIDENCE: enforced
+          OWA_TEST_MINIO_DIRECT_UPLOAD_INTEGRITY: enforced
+        run: npm run test:integration
+
+      - name: Mode B cleanup postflight
+        run: node .github/scripts/minio-bucket.mjs assert-empty
+
+      - name: Whitespace check
+        run: git diff --check
+
+      - name: Tests left the checkout clean
+        run: node .github/scripts/assert-clean-tree.mjs
+
+      - name: Confirm MinIO stayed alive
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${MINIO_PID:-}" ]; then
+            echo "MinIO PID was never recorded" >&2
+            exit 1
+          fi
+          if ! kill -0 "$MINIO_PID" 2>/dev/null; then
+            echo "MinIO exited before controlled shutdown" >&2
+            exit 1
+          fi
+          echo "MinIO remained alive through the integration runs"
+
+      - name: Stop and remove disposable MinIO state
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          if [ -n "${MINIO_PID:-}" ] && kill -0 "$MINIO_PID" 2>/dev/null; then
+            kill "$MINIO_PID"
+            wait "$MINIO_PID"
+          fi
+          rm -rf "$RUNNER_TEMP/owa-minio-data" "$RUNNER_TEMP/minio-src" "$RUNNER_TEMP/minio" "$RUNNER_TEMP/minio.log"

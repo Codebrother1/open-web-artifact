@@ -45,7 +45,16 @@ Useful variables:
 | `OWA_BROWSER_EVIDENCE_JSON=/path/out.json` | Also write the evidence matrix as JSON. |
 
 `npm --prefix packages/browser-tests run versions` launches each engine and
-prints the exact version it reports (or why it cannot start).
+prints the exact version it reports (or why it cannot start); add
+`-- --require chromium,firefox,webkit` to make a non-launching engine a hard
+failure, as CI does. `npm --prefix packages/browser-tests run install-browsers:deps`
+is Playwright's `install --with-deps`, which also installs the Linux system
+libraries on Debian/Ubuntu hosts.
+
+In GitHub Actions the `Browsers` workflow (`.github/workflows/browser.yml`) runs
+this suite on every pull request in **all three engines** on `ubuntu-latest`,
+and a postflight rejects any engine that did not execute every row — see
+[docs/ci.md](../../docs/ci.md).
 
 ## What the suite does
 

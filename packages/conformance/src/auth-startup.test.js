@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { request as httpRequest } from 'node:http';
 import { connect } from 'node:net';
 import { mkdtemp, readdir, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { networkInterfaces, tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createToken } from '../../server/src/auth.js';
@@ -164,11 +164,22 @@ function send(state, path, { method = 'GET', token, json, headers = {} } = {}) {
   });
 }
 
-// A wildcard listener would accept another IPv4 loopback address, even though
-// 127.0.0.1 works too. Probe it directly rather than trusting Host or a log label.
+// A wildcard (0.0.0.0) listener accepts connections on EVERY local IPv4 address;
+// a strict 127.0.0.1 listener refuses all but that one. Probe a different local
+// address directly rather than trusting Host or a log label. Linux and Windows
+// answer for the whole 127/8 block, so 127.0.0.2 discriminates there; macOS
+// configures only 127.0.0.1 on lo0 and black-holes 127.0.0.2 (the connect hangs
+// instead of being refused), so prefer a real non-internal IPv4 address of this
+// host when one exists — a wildcard bind answers on it, a loopback bind does not.
+function wildcardProbeAddress() {
+  for (const entries of Object.values(networkInterfaces())) {
+    for (const entry of entries ?? []) if (entry.family === 'IPv4' && !entry.internal) return entry.address;
+  }
+  return '127.0.0.2';
+}
 async function expectLoopbackOnly(state) {
   const accepted = await new Promise((resolveProbe, reject) => {
-    const socket = connect({ host: '127.0.0.2', port: state.port });
+    const socket = connect({ host: wildcardProbeAddress(), port: state.port });
     const timer = setTimeout(() => { socket.destroy(); reject(new Error('loopback binding probe timed out')); }, WAIT_MS);
     socket.once('connect', () => { clearTimeout(timer); socket.destroy(); resolveProbe(true); });
     socket.once('error', error => {
