@@ -344,6 +344,80 @@ export function contentConfigFromEnv(env=process.env){
 
 // Exactly this text, so operators and tests can match it without parsing prose.
 export const SHARED_ORIGIN_WARNING='artifactd: no content origin configured; serving control and content on one origin with the prototype query selector. See docs/origins.md.';
+export const STARTUP_ABORTED='artifactd: startup aborted; no listener is running.';
+
+/** Fixed-shape startup failure. Carries labels only: never a cause, path or errno. */
+export class ListenerStartupError extends Error {
+  constructor(labels) {
+    super('artifactd: listener startup failed');
+    this.name = 'ListenerStartupError';
+    this.labels = Object.freeze([...labels]);
+  }
+}
+
+/** Reject anything node would silently reinterpret, e.g. NaN becoming a random port. */
+function listenPort(value, fallback) {
+  const raw = value === undefined || value === '' ? fallback : value;
+  const port = Number(raw);
+  // Canonical decimal only: no surrounding whitespace, sign, hex or leading zero.
+  if (!Number.isSafeInteger(port) || port < 0 || port > 65535 || String(port) !== String(raw)) {
+    throw new AuthError('OWA_AUTH_CONFIG');
+  }
+  return port;
+}
+
+/** Close a listener without emitting secondary teardown noise. Never rejects. */
+function closeQuietly(server) {
+  return new Promise(resolve => {
+    if (!server.listening) return resolve();
+    server.on('error', () => {}); // A cleanup-time error must not mask the real one.
+    try { server.closeAllConnections?.(); } catch {}
+    try { server.close(() => resolve()); } catch { resolve(); }
+  });
+}
+
+/**
+ * Start every listener as ONE unit.
+ *
+ * The separated control/content topology is a single deployment: a process with
+ * only one of the two bound is not a degraded server, it is a broken security
+ * boundary (a reachable control plane with no content origin, or content with no
+ * way to publish). So each binding is attempted, ALL outcomes are awaited, and if
+ * any listener failed every listener that did bind is closed again before this
+ * throws. Readiness is announced only once every listener is bound.
+ */
+export async function startListenerGroup(entries, { onReady = null, log = console } = {}) {
+  const results = await Promise.all(entries.map(entry => new Promise(resolve => {
+    let settled = false;
+    const finish = ok => { if (!settled) { settled = true; resolve({ entry, ok }); } };
+    // Attach before listen so a synchronous bind failure cannot escape as an
+    // unhandled 'error' event and kill the process before cleanup runs.
+    entry.server.once('error', () => finish(false));
+    try { entry.server.listen(entry.port, entry.host, () => finish(true)); } catch { finish(false); }
+  })));
+
+  const failed = results.filter(result => !result.ok);
+  if (failed.length) {
+    for (const { entry } of failed) log.error(`${entry.label} failed to bind`);
+    // Nothing may stay open: process.exitCode alone would leave the event loop
+    // alive on the listener that did bind, and artifactd would keep serving.
+    await Promise.all(results.map(result => closeQuietly(result.entry.server)));
+    log.error(STARTUP_ABORTED);
+    throw new ListenerStartupError(failed.map(result => result.entry.label));
+  }
+
+  for (const { entry } of results) {
+    // Post-startup: the group stays one unit. A later listener error closes the
+    // whole group rather than leaving half a topology serving.
+    entry.server.on('error', () => {
+      log.error(`${entry.label} listener error`);
+      process.exitCode = 1;
+      for (const other of results) void closeQuietly(other.entry.server);
+    });
+    onReady?.(entry);
+  }
+  return results.map(result => result.entry);
+}
 
 async function main(){
   const mode=process.argv.includes('--dev')?'dev':(process.env.OWA_AUTH_MODE??'required');
@@ -351,7 +425,7 @@ async function main(){
   createAuthorizer(auth); // Fail before opening storage or a listener.
   const content=contentConfigFromEnv();
   const stores=await createDefaultStores();
-  const controlPort=Number(process.env.OWA_CONTROL_PORT??process.env.PORT??7331);
+  const controlPort=listenPort(process.env.OWA_CONTROL_PORT??process.env.PORT,7331);
   const controlHost=mode==='dev'?'127.0.0.1':(process.env.OWA_CONTROL_HOST??process.env.HOST??'127.0.0.1');
   const listeners=[];
 
@@ -360,23 +434,36 @@ async function main(){
     // `?site=` selector is live. Announce it; this must never be mistaken for
     // the production boundary, which requires a configured content origin.
     const server=createArtifactServer({...stores,auth,publicBaseUrl:process.env.OWA_PUBLIC_BASE_URL??null});
-    listeners.push(['artifactd',server,controlPort,controlHost]);
+    listeners.push({label:'artifactd',server,port:controlPort,host:controlHost});
     // One fixed line on stderr. The readiness line on stdout is unchanged, so
     // existing supervisors keep working, but the weaker topology is never silent.
     console.warn(SHARED_ORIGIN_WARNING);
   } else {
-    const contentPort=Number(process.env.OWA_CONTENT_LISTEN_PORT??7332);
+    const contentPort=listenPort(process.env.OWA_CONTENT_LISTEN_PORT,7332);
     const contentHost=mode==='dev'?'127.0.0.1':(process.env.OWA_CONTENT_LISTEN_HOST??process.env.HOST??'127.0.0.1');
-    listeners.push(['artifactd control',createControlServer({...stores,auth,content,publicBaseUrl:process.env.OWA_PUBLIC_BASE_URL??null}),controlPort,controlHost]);
-    listeners.push(['artifactd content',createContentServer({...stores,content}),contentPort,contentHost]);
+    // Reject an identical bind pair up front. Racing two listeners for one
+    // address would otherwise make which one "wins" nondeterministic, and the
+    // surviving half would be exactly the partial topology we refuse to run.
+    if(controlHost===contentHost&&controlPort===contentPort&&controlPort!==0){
+      console.error('artifactd: control and content listeners are configured on the same host and port');
+      throw new ListenerStartupError(['artifactd control','artifactd content']);
+    }
+    listeners.push({label:'artifactd control',server:createControlServer({...stores,auth,content,publicBaseUrl:process.env.OWA_PUBLIC_BASE_URL??null}),port:controlPort,host:controlHost});
+    listeners.push({label:'artifactd content',server:createContentServer({...stores,content}),port:contentPort,host:contentHost});
   }
 
-  for(const [label,server,port,host] of listeners){
-    server.listen(port,host,()=>console.log(`${label} (${stores.storageKind}, auth ${mode}) listening on port ${server.address().port}`));
-    server.on('error',()=>{console.error(`${label} failed to listen`);process.exitCode=1;});
-  }
+  // Readiness is emitted only after EVERY listener has bound.
+  await startListenerGroup(listeners,{
+    onReady:entry=>console.log(`${entry.label} (${stores.storageKind}, auth ${mode}) listening on port ${entry.server.address().port}`)
+  });
 }
 
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href){
-  try { await main(); } catch { console.error('artifactd startup failed; check authentication and storage configuration'); process.exitCode=1; }
+  try { await main(); } catch (error) {
+    // A bind failure has already reported itself in fixed terms and closed every
+    // listener; do not mislabel it as an auth/storage problem. Either way only a
+    // fixed string is printed: no cause, errno, path, stack or secret.
+    if (!(error instanceof ListenerStartupError)) console.error('artifactd startup failed; check authentication and storage configuration');
+    process.exitCode=1;
+  }
 }

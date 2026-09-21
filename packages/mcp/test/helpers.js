@@ -95,7 +95,7 @@ async function scanStored(dir, secrets) {
 
 // Read-only fixture inspection is allowed; all lifecycle mutations below use
 // the actual MCP stdio process or the actual CLI HTTP process, never core APIs.
-export async function fixture(t, { mode = 'required', duplicate = false } = {}) {
+export async function fixture(t, { mode = 'required', duplicate = false, content = null } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'owa-mcp-lifecycle-'));
   const staging = join(root, 'staging'), directory = join(staging, 'site'), data = join(root, 'data');
   const secret = randomBytes(32), uploadSecret = randomBytes(32);
@@ -121,7 +121,9 @@ export async function fixture(t, { mode = 'required', duplicate = false } = {}) 
   for (const [name, content] of Object.entries(SOURCE)) await writeFile(join(directory, name), content);
   if (duplicate) await writeFile(join(directory, 'duplicate.js'), SOURCE['app.js']);
   const blobs = new FilesystemBlobStore(data), metadata = new FilesystemMetadataStore(data);
-  server = createArtifactServer({ blobs, metadata, uploadSecret,
+  // `content` configures the server's content ORIGIN, which is what makes commit
+  // return a canonical contentUrl. It does not change routing on this listener.
+  server = createArtifactServer({ blobs, metadata, uploadSecret, content,
     auth: mode === 'dev' ? { mode, now: () => NOW } : { mode, secret, now: () => NOW } });
   // Observe the real server without changing routing, authorization, or storage.
   // Never retain headers, query values, request bodies, signatures, or tokens in
