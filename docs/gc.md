@@ -156,7 +156,8 @@ naturally into one mark.
 
 That digest/manifest consistency check re-derives identity from metadata already
 in hand. It does **not** read or rehash blob bytes; commit-boundary blob
-integrity verification is issue #10 and is not implemented here.
+integrity verification (issue #10) lives at commit time, see
+[integrity.md](integrity.md), not in the collector.
 
 ## Filesystem blob operations
 

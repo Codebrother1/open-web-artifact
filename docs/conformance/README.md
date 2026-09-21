@@ -181,7 +181,7 @@ New expectations are checked in as static data. The runner independently hashes 
 
 ## Explicitly deferred, not fixed by issue 5
 
-- **Commit-time content verification:** commit checks existence, not the stored bytes' hash or size. Content-mismatch vectors exercise only existing OCI verification, not a new commit or S3 guarantee.
+- **Commit-time content verification:** not covered by this corpus. The content-mismatch vectors exercise only the OCI read/write boundaries; the reference host's commit-boundary digest and size verification (issue #10, [integrity.md](../integrity.md)) is host behaviour tested by its own suites (`npm run test:integrity`), not a portable corpus requirement.
 - **Duplicate JSON member names:** not included in portable corpus requirements. No first-wins or last-wins policy is silently selected; a port must disclose its parser policy rather than infer one from these tests.
 - **Unpaired-surrogate parser limitations:** the canonical cases pin exact preservation as escaped data. A port whose parser rejects those escapes must report the limitation, not replace characters or claim those cases passed.
 

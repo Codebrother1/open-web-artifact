@@ -1,7 +1,8 @@
 {
   "name": "open-web-artifact",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "private": true,
+  "engines": { "node": ">=22" },
   "type": "module",
   "scripts": {
     "test": "node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=./.github/scripts/test-summary-reporter.mjs --test-reporter-destination=stdout packages/conformance/src/*.test.js",

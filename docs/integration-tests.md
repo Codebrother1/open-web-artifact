@@ -1,7 +1,7 @@
 # Live S3-compatible integration tests
 
-These opt-in tests exercise the existing v0.2 implementation, not a replacement
-storage client. They use Node.js built-ins and the existing `S3BlobStore`,
+These opt-in tests exercise the existing reference implementation of the v0.2
+protocol draft, not a replacement storage client. They use Node.js built-ins and the existing `S3BlobStore`,
 `FilesystemMetadataStore`, and `createArtifactServer`. No AWS/vendor SDK, npm
 install, public artifact host, or production server is required. Node.js 22+ is
 required, as for the rest of the repository.

@@ -81,12 +81,15 @@ No `allow-same-origin`, `allow-scripts`, `allow-forms`, `allow-popups`,
 the same conservative no-store/indexing baseline; mutable active-site URLs do not
 become immutable cache keys merely because their underlying blobs are hashed.
 
-The minimum future architectural change for stronger isolation is a content-only
+The minimum architectural change for stronger isolation is a content-only
 listener/origin with an explicit host-to-site binding and no shared-origin query
-selector, separate from control/admin APIs. This profile documents that proposal;
-it does not implement origin management or a new routing model. The separately
-merged auth overlay protects the existing control plane, not private artifact
-retrieval or this proposed content-only topology.
+selector, separate from control/admin APIs. The reference server now provides
+exactly that when a content origin is configured (see
+[control and content origins](origins.md) and the topology note above); this
+profile itself still does not implement origin management or a routing model —
+the listener does. The separately merged auth overlay protects the existing
+control plane, not private artifact retrieval, and the legacy shared-origin
+server still lacks the content-only topology.
 
 ## Evidence requirements
 
