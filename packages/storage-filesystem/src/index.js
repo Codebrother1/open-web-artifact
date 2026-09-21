@@ -1,7 +1,7 @@
 import { lstat, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { createReadStream, existsSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 // Operational GC helpers. None of this is artifact state: no manifest, canonical
 // JSON, artifact digest, release record or HTTP response is affected by it.
@@ -13,10 +13,11 @@ const SLUG = /^[a-z0-9][a-z0-9_-]{0,62}$/;
 
 /** Fixed-shape operational failure: never carries a provider body or a path. */
 export class StorageOperationError extends Error {
-  constructor(code) {
+  constructor(code, reason = null) {
     super(`storage operation failed: ${code}`);
     this.name = 'StorageOperationError';
     this.code = code;
+    this.reason = reason; // Internal attribution ('digest' | 'size'); see core IntegrityError.
   }
 }
 
@@ -88,6 +89,46 @@ export class FilesystemBlobStore{
   async has(digest){return existsSync(this.path(digest));}
   async put(digest,data){const p=this.path(digest);await mkdir(dirname(p),{recursive:true});await writeFile(p,data);}
   async get(digest){return new Uint8Array(await readFile(this.path(digest)));}
+
+  /**
+   * Strong integrity verification of the STORED bytes (issue #10).
+   *
+   * Requires a real regular file at exactly `<root>/blobs/sha256/<hex>` under
+   * real (non-symlink) ancestors, then compares the actual byte count and the
+   * SHA-256 of the actual bytes — streamed, never buffered whole — against the
+   * declared size and digest. A symlink, directory or other non-regular object
+   * cannot satisfy verification. Bytes are re-read every time: an earlier hash
+   * at ingestion does not prove what the filesystem holds now.
+   *
+   * Throws with code OWA_BLOB_MISSING, OWA_BLOB_INTEGRITY or OWA_BLOB_UNVERIFIED.
+   */
+  async verifyBlob({digest,size}={}){
+    if(!DIGEST.test(String(digest??''))||!Number.isSafeInteger(size)||size<0) throw new StorageOperationError('OWA_BLOB_UNVERIFIED');
+    const path=this.path(digest);
+    if(!isInside(this.root,path)) throw new StorageOperationError('OWA_BLOB_UNVERIFIED');
+    if(await realDirectoryChain(this.root,['blobs','sha256'],'OWA_BLOB_UNVERIFIED')==='missing') throw new StorageOperationError('OWA_BLOB_MISSING');
+    let stats;
+    try { stats=await lstat(path); }
+    catch(error){ throw new StorageOperationError(error?.code==='ENOENT'?'OWA_BLOB_MISSING':'OWA_BLOB_UNVERIFIED'); }
+    if(stats.isSymbolicLink()||!stats.isFile()) throw new StorageOperationError('OWA_BLOB_UNVERIFIED');
+    // A size disagreement alone does NOT prove the object is corrupt — the
+    // submitted manifest may simply be wrong about a valid object. Hash the
+    // ACTUAL bytes (streamed, bounded by the real on-disk size) so the caller
+    // can tell "corrupt object" from "wrong manifest declaration".
+    const actualSize=stats.size;
+    const hash=createHash('sha256'); let count=0;
+    try {
+      for await (const chunk of createReadStream(path)) {
+        count+=chunk.length;
+        if(count>actualSize) break; // Grew underneath us: stop, fail below.
+        hash.update(chunk);
+      }
+    } catch { throw new StorageOperationError('OWA_BLOB_UNVERIFIED'); }
+    if(count!==actualSize) throw new StorageOperationError('OWA_BLOB_UNVERIFIED');
+    if(`sha256:${hash.digest('hex')}`!==digest) throw new StorageOperationError('OWA_BLOB_INTEGRITY','digest');
+    if(actualSize!==size) throw new StorageOperationError('OWA_BLOB_INTEGRITY','size');
+    return {ok:true,method:'rehash'};
+  }
 
   /**
    * Enumerate OWA blob objects for GC. Only `<root>/blobs/sha256/<64 hex>` is

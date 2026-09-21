@@ -409,6 +409,9 @@ test('deduplicated plan rechecks expiry after asynchronous existence lookups', a
   const audits = [];
   const f = await fixture(t, { audit: event => audits.push(event) });
   f.blobs.has = async () => { await Promise.resolve(); f.clock.value = NOW + 10; return true; };
+  // Reuse is integrity-aware (security-integrity.test.js covers that); this
+  // fixture isolates auth ordering, so the existing blob simply verifies.
+  f.blobs.verifyBlob = async () => ({ ok: true, method: 'fixture' });
   expectAuth(await send(f, '/v1/sites/demo/publish/plan', {
     method: 'POST', token: mint(['plan'], { exp: NOW + 10 }), json: { manifest: manifest() }
   }), 'OWA_AUTH_EXPIRED');
@@ -432,15 +435,19 @@ test('local grant uses remaining lifetime after an asynchronous existence check'
   assert.ok(new URL(upload.url).searchParams.get('expires') === String(NOW + 60), 'local grant never outlives the bearer');
 });
 
-for (const [provider, endpoint, region] of [
-  ['R2', 'https://account.r2.cloudflarestorage.com', 'auto'],
-  ['AWS', 'https://s3.us-east-1.amazonaws.com', 'us-east-1']
+// Direct grants are a declared store capability: R2 is live-proven and selects
+// it automatically; an AWS endpoint is mediated by default and gets direct
+// grants only under an explicit operator assertion (security-integrity covers
+// the mediated default). Either way the grant shape below is what escapes.
+for (const [provider, endpoint, region, capability] of [
+  ['R2', 'https://account.r2.cloudflarestorage.com', 'auto', {}],
+  ['AWS', 'https://s3.us-east-1.amazonaws.com', 'us-east-1', { directUploadIntegrity: 'enforced' }]
 ]) {
   for (const addressingStyle of ['path', 'virtual']) {
     for (const lifetime of [60, 3600]) {
       test(`${provider} ${addressingStyle} presign is bearer-free and bounded at lifetime ${lifetime}`, async t => {
         const stores = memoryStores(); let f, grants = 0, requestedTtl;
-        const blobs = new S3BlobStore({ endpoint, bucket: 'artifacts', region, addressingStyle, accessKeyId: 'SYNTHETICACCESS', secretAccessKey: Buffer.alloc(32, 0x35).toString('hex'), now: () => new Date(f.clock.value * 1000) });
+        const blobs = new S3BlobStore({ endpoint, bucket: 'artifacts', region, addressingStyle, accessKeyId: 'SYNTHETICACCESS', secretAccessKey: Buffer.alloc(32, 0x35).toString('hex'), now: () => new Date(f.clock.value * 1000), ...capability });
         blobs.has = async () => { await Promise.resolve(); f.clock.value = NOW + 5; return false; };
         blobs.signedFetch = async () => { throw new Error('External provider I/O is forbidden in this fixture'); };
         const originalCreateUpload = blobs.createUpload.bind(blobs);
@@ -457,8 +464,9 @@ for (const [provider, endpoint, region] of [
         assert.ok(url.hostname === (addressingStyle === 'virtual' ? `artifacts.${new URL(endpoint).hostname}` : new URL(endpoint).hostname), 'provider addressing style is preserved');
         assert.ok(url.pathname === `${addressingStyle === 'path' ? '/artifacts' : ''}/owa/blobs/sha256/${DIGEST.split(':')[1]}`, 'provider object path is preserved');
         assert.ok(/^[0-9a-f]{64}$/.test(url.searchParams.get('X-Amz-Signature')), 'real SigV4 signature is present');
-        assert.ok(url.searchParams.get('X-Amz-SignedHeaders') === 'host', 'bearer is not a signed storage header');
-        assert.ok(!Object.hasOwn(upload, 'authorization') && !Object.hasOwn(upload, 'headers'), 'direct upload has no bearer forwarding instruction');
+        assert.ok(url.searchParams.get('X-Amz-SignedHeaders') === 'host;if-none-match;x-amz-checksum-sha256', 'only host plus the integrity-binding storage headers are signed; bearer is not');
+        assert.ok(!Object.hasOwn(upload, 'authorization'), 'direct upload has no bearer forwarding instruction');
+        assert.deepEqual(upload.headers, { 'x-amz-checksum-sha256': Buffer.from(DIGEST.split(':')[1], 'hex').toString('base64'), 'if-none-match': '*' }, 'grant pins exactly the checksum-bound create-once storage headers');
         assert.ok(!JSON.stringify(upload).includes(token) && !JSON.stringify(upload).includes('owa1.') && !JSON.stringify(upload).toLowerCase().includes('bearer'), 'grant does not embed the credential');
         assert.ok(![...url.searchParams.keys()].some(key => /authorization|bearer/i.test(key)), 'storage query is bearer-free');
       });
@@ -469,6 +477,7 @@ for (const [provider, endpoint, region] of [
 test('S3 missing-blob grant requires upload independently, while plan-only dedup is allowed', async t => {
   const f = await fixture(t); let grants = 0, exists = false;
   f.blobs.has = async () => exists;
+  f.data.set(DIGEST, BYTES); // "exists" now also means "verifies": reuse is integrity-aware.
   f.blobs.createUpload = async () => { grants++; return {}; };
   expectAuth(await send(f, '/v1/sites/demo/publish/plan', { method: 'POST', token: mint(['plan']), json: { manifest: manifest() } }), 'OWA_AUTH_CAPABILITY', 403);
   assert.equal(grants, 0, 'denied plan cannot mint a provider grant');

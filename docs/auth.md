@@ -164,7 +164,8 @@ npm run artifact -- publish demo --site foo \
 This publisher needs `plan`, `upload`, and `commit` when blobs are missing, but
 not `activate`. A fully deduplicated publish needs no `upload` grant. A literally
 commit-only token **cannot** run the CLI's plan/upload workflow; it can only send
-a direct commit with `activate: false` once every referenced blob exists.
+a direct commit with `activate: false` once every referenced blob exists and
+verifies (see [integrity.md](integrity.md)).
 Default remote publishing also needs `activate`. `--no-activate` applies to the
 remote publisher; the no-`--server` local operator path retains its existing
 publish behavior.
@@ -225,8 +226,8 @@ not imply `activate` or `read`.
 | HTTP operation | Required capability / additional condition |
 | --- | --- |
 | `POST /v1/sites/:site/publish/plan` | `plan` at admission, after the body, and before returning the completed plan. `plan` + `upload` are also rechecked **before each missing-blob grant is issued**, after asynchronous existence checks. A fully deduplicated plan succeeds with only `plan`, but not after expiry. |
-| Filesystem `PUT /v1/uploads/:digest` | `upload` for the **signed `site` query scope**, plus an independently valid local upload signature and unexpired grant. Bearer and grant expiry are checked again after the body is received. |
-| S3/R2 direct presigned PUT | No OWA bearer. OWA checks `upload` when issuing the grant; storage checks its own SigV4 authorization, not OWA capabilities. |
+| `PUT /v1/uploads/:digest` (filesystem, or S3 in mediated direct-upload mode) | `upload` for the **signed `site` query scope**, plus an independently valid local upload signature and unexpired grant. Bearer and grant expiry are checked again after the body is received, and the body must hash to the digest before any storage write. |
+| S3/R2 direct presigned PUT | No OWA bearer. OWA checks `upload` when issuing the grant; storage checks its own SigV4 authorization, not OWA capabilities. Issued only where the provider's direct-upload contract is proven (`OWA_S3_DIRECT_UPLOAD_INTEGRITY`; see [integrity.md](integrity.md)) — otherwise the row above applies. |
 | `POST /v1/sites/:site/publish/commit` | `commit` + `activate` by default. Only literal `activate: false` reduces this to `commit`. |
 | `POST /v1/sites/:site/activate/:releaseId` | `activate`. |
 | `GET /v1/sites/:site/releases` | `read`. The existing response contains the site and full release records, including manifests for inspection; no individual-release inspection route is added. |
@@ -385,8 +386,8 @@ hooks, keep only the safe fields and protect the resulting operational metadata.
   filesystem permissions, outside this HTTP authorization scope. No HTTP token
   can compensate for unauthorized access to the data directory.
 - The content-addressed blob store is globally shared, not tenant-private
-  storage. Planning can reveal digest existence through reuse; commit checks
-  existence, not site ownership. Capability scoping is not a storage ownership
+  storage. Planning can reveal digest existence through reuse; commit verifies
+  digest and size, not site ownership. Capability scoping is not a storage ownership
   or confidential-blob isolation model.
 - Health and served artifact bytes stay public, including artifacts whose
   manifest visibility is unlisted. `read` protects control-plane release and
@@ -425,3 +426,14 @@ failure; it is not live required-auth or TLS coverage. See
 [integration-tests.md](integration-tests.md) for the live matrix, configuration,
 cleanup, and evidence limitations. Do not equate skipped live cases or offline
 success with tested provider interoperability.
+
+## Storage grant headers
+
+S3/R2 upload grants carry a `headers` field naming the storage headers the
+client must send with the PUT: `x-amz-checksum-sha256` and `if-none-match`.
+Both are SigV4-signed into the grant, so they cannot be dropped or altered, and
+the storage service validates the checksum against the payload. They are
+integrity-binding **storage grant material**: they create no OWA capability,
+never carry a bearer, and the CLI re-derives the checksum locally rather than
+trusting the control plane. See
+[commit-boundary blob integrity](integrity.md).

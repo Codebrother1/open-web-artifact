@@ -365,27 +365,34 @@ test('composition: explicit dev accepts direct loopback but denies every forward
 
 // Independent SigV4 recomputation uses only provider fields, never OWA inputs.
 // Equality is boolean so a failure cannot dump the presigned credential URL.
-function expectedStorageSignature(url, key, region) {
+// Independent SigV4 oracle. The signed-header set comes from the grant itself:
+// `host` plus whatever storage headers the grant instructs the client to send.
+function expectedStorageSignature(url, key, region, headers = {}) {
   const enc = value => encodeURIComponent(value).replace(/[!'()*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
   const params = [...url.searchParams].filter(([name]) => name !== 'X-Amz-Signature').sort(([a, av], [b, bv]) => a === b ? av.localeCompare(bv) : a.localeCompare(b));
   const query = params.map(([name, value]) => `${enc(name)}=${enc(value)}`).join('&');
   const timestamp = url.searchParams.get('X-Amz-Date'), date = timestamp.slice(0, 8), scope = `${date}/${region}/s3/aws4_request`;
-  const canonical = ['PUT', url.pathname, query, `host:${url.host}\n`, 'host', 'UNSIGNED-PAYLOAD'].join('\n');
+  const signedValues = { host: url.host, ...Object.fromEntries(Object.entries(headers).map(([name, value]) => [name.toLowerCase(), String(value).trim()])) };
+  const names = Object.keys(signedValues).sort();
+  const canonical = ['PUT', url.pathname, query, names.map(name => `${name}:${signedValues[name]}\n`).join(''), names.join(';'), 'UNSIGNED-PAYLOAD'].join('\n');
   const signing = ['AWS4-HMAC-SHA256', timestamp, scope, createHash('sha256').update(canonical).digest('hex')].join('\n');
   const hmac = (secret, value) => createHmac('sha256', secret).update(value).digest();
   const derived = hmac(hmac(hmac(hmac(`AWS4${key}`, date), region), 's3'), 'aws4_request');
   return createHmac('sha256', derived).update(signing).digest('hex');
 }
-for (const [provider, endpoint, region] of [
-  ['S3', 'https://s3.us-east-1.amazonaws.com', 'us-east-1'],
-  ['R2', 'https://account.r2.cloudflarestorage.com', 'auto']
+// Direct grants are a declared store capability: R2 selects it automatically;
+// a generic AWS endpoint is mediated by default and presigns only under an
+// explicit operator assertion (the mediated default is covered elsewhere).
+for (const [provider, endpoint, region, capability] of [
+  ['S3', 'https://s3.us-east-1.amazonaws.com', 'us-east-1', { directUploadIntegrity: 'enforced' }],
+  ['R2', 'https://account.r2.cloudflarestorage.com', 'auto', {}]
 ]) {
   for (const addressingStyle of ['path', 'virtual']) {
     for (const lifetime of [37, 1200]) {
       test(`composition: ${provider} ${addressingStyle} real offline presign at lifetime ${lifetime} is bearer-free with policy`, async t => {
         let f, externalRequests = 0;
         const providerKey = Buffer.alloc(32, 0x35).toString('hex'), signingInputs = [];
-        const blobs = new S3BlobStore({ endpoint, bucket: 'artifacts', region, addressingStyle, accessKeyId: 'SYNTHETICCOMPOSITION', secretAccessKey: providerKey, now: () => new Date(f.clock.value * 1000) });
+        const blobs = new S3BlobStore({ endpoint, bucket: 'artifacts', region, addressingStyle, accessKeyId: 'SYNTHETICCOMPOSITION', secretAccessKey: providerKey, now: () => new Date(f.clock.value * 1000), ...capability });
         blobs.has = async () => { await Promise.resolve(); f.clock.value = NOW + 5; return false; };
         const forbiddenNetwork = async () => { externalRequests++; throw new Error('External provider I/O forbidden'); };
         blobs.signedFetch = forbiddenNetwork;
@@ -402,8 +409,9 @@ for (const [provider, endpoint, region] of [
         assert.ok(url.searchParams.get('X-Amz-Date') === new Date((NOW + 5) * 1000).toISOString().replace(/[:-]|\.\d{3}/g, ''), 'provider signing uses fixed clock');
         assert.ok(url.hostname === `${addressingStyle === 'virtual' ? 'artifacts.' : ''}${new URL(endpoint).hostname}`, 'provider destination remains unchanged');
         assert.ok(url.pathname === `${addressingStyle === 'path' ? '/artifacts' : ''}/owa/blobs/sha256/${DIGEST.split(':')[1]}`, 'provider object key remains unchanged');
-        assert.ok(url.searchParams.get('X-Amz-SignedHeaders') === 'host' && url.searchParams.get('X-Amz-Signature') === expectedStorageSignature(url, providerKey, region), 'real signature independently verifies without OWA data');
-        assert.ok(!Object.hasOwn(upload, 'authorization') && !Object.hasOwn(upload, 'headers'), 'direct storage grants do not forward control headers');
+        assert.ok(url.searchParams.get('X-Amz-SignedHeaders') === 'host;if-none-match;x-amz-checksum-sha256' && url.searchParams.get('X-Amz-Signature') === expectedStorageSignature(url, providerKey, region, upload.headers), 'real signature over the signed storage headers independently verifies without OWA data');
+        assert.ok(!Object.hasOwn(upload, 'authorization'), 'direct storage grants do not forward control headers');
+        assert.deepEqual(Object.keys(upload.headers).sort(), ['if-none-match', 'x-amz-checksum-sha256'], 'grant carries exactly the integrity-binding storage headers and nothing else');
         assertAbsent(JSON.stringify(upload) + JSON.stringify(signingInputs), [token, 'owa1.', JTI, SECRET.toString('hex'), SECRET.toString('utf8'), UPLOAD_SECRET.toString('hex'), 'Bearer']);
         assert.ok(![...url.searchParams.keys()].some(name => /authorization|bearer|^site$/i.test(name)), 'provider signing query has no OWA scope or authorization');
       });

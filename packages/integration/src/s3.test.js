@@ -10,9 +10,13 @@ import { artifactDigest, canonicalJson, sha256 } from '../../spec/src/index.js';
 import { FilesystemBlobStore, FilesystemMetadataStore } from '../../storage-filesystem/src/index.js';
 import { S3BlobStore } from '../../storage-s3/src/index.js';
 import { createArtifactServer } from '../../server/src/index.js';
-import { withRequestLimits } from './requests.js';
+import { meterRequests, withRequestLimits } from './requests.js';
 
 // These explicit opt-in variables never fall back to artifactd's OWA_S3_* settings.
+// OWA_TEST_<PROVIDER>_DIRECT_UPLOAD_INTEGRITY=enforced asserts a provider PROVEN
+// to enforce the direct final-CAS grant contract; otherwise the store's default
+// applies (R2 auto-enforced; any other host mediated, so uploads travel through
+// artifactd, which hashes the bytes before writing them with its own credentials).
 const cases = [
   { name: 'MinIO path-style', provider: 'MINIO', style: 'path', endpoint: 'ENDPOINT', region: 'us-east-1' },
   { name: 'MinIO virtual-host', provider: 'MINIO', style: 'virtual', endpoint: 'VIRTUAL_ENDPOINT', region: 'us-east-1' },
@@ -32,7 +36,9 @@ function configuration(entry) {
     secretAccessKey: process.env[prefix + 'SECRET_ACCESS_KEY'],
     sessionToken: process.env[prefix + 'SESSION_TOKEN'] || null,
     addressingStyle: entry.style,
-    prefix: `owa-integration/${entry.provider.toLowerCase()}/${entry.style}/${randomUUID()}`
+    prefix: `owa-integration/${entry.provider.toLowerCase()}/${entry.style}/${randomUUID()}`,
+    checksumEvidence: process.env[prefix + 'CHECKSUM_EVIDENCE'] || undefined,
+    directUploadIntegrity: process.env[prefix + 'DIRECT_UPLOAD_INTEGRITY'] || undefined
   } };
 }
 
@@ -54,10 +60,20 @@ async function post(base, slug, operation, packed, status) {
   return res.json();
 }
 
-function verifyUpload(upload, packed, store) {
+function verifyUpload(upload, packed, store, base) {
   assert.equal(upload.method, 'PUT');
   assert.ok(packed.blobs.has(upload.digest), 'Plan must request a manifest blob');
   const url = new URL(upload.url);
+  if (!store.canCreateSafeDirectUpload()) {
+    // Mediated: artifactd's own local grant (legacy unscoped shape in dev auth).
+    // No storage URL, credential or grant header leaves artifactd.
+    assert.equal(url.origin, base, 'mediated grant targets the artifactd origin');
+    assert.equal(url.pathname, `/v1/uploads/${encodeURIComponent(upload.digest)}`);
+    assert.deepEqual([...url.searchParams.keys()].sort(), ['expires', 'sig'], 'local signed grant only');
+    assert.ok(!Object.hasOwn(upload, 'headers'), 'no storage grant headers');
+    assert.ok(![...url.searchParams.keys()].some(k => /^x-amz-/i.test(k)), 'not a presigned storage URL');
+    return;
+  }
   const endpoint = new URL(store.endpoint);
   assert.equal(url.protocol, endpoint.protocol);
   assert.equal(url.port, endpoint.port);
@@ -66,7 +82,8 @@ function verifyUpload(upload, packed, store) {
   assert.equal(url.hostname, store.addressingStyle === 'path' ? endpoint.hostname : `${store.bucket}.${endpoint.hostname}`);
   assert.equal(url.pathname, store.addressingStyle === 'path' ? `/${store.bucket}/${key}` : `/${key}`);
   assert.equal(url.searchParams.get('X-Amz-Algorithm'), 'AWS4-HMAC-SHA256');
-  assert.equal(url.searchParams.get('X-Amz-SignedHeaders'), 'host');
+  assert.equal(url.searchParams.get('X-Amz-SignedHeaders'), 'host;if-none-match;x-amz-checksum-sha256', 'grant is checksum-bound and create-once');
+  assert.deepEqual(upload.headers, { 'x-amz-checksum-sha256': Buffer.from(upload.digest.slice('sha256:'.length), 'hex').toString('base64'), 'if-none-match': '*' });
   assert.match(url.searchParams.get('X-Amz-Signature'), /^[0-9a-f]{64}$/);
   assert.equal(url.searchParams.get('X-Amz-Expires'), String(upload.expiresIn));
   // Boolean assertions keep credential values out of failure diagnostics.
@@ -93,10 +110,14 @@ for (const entry of cases) {
   test(`${entry.name}: plan -> presigned PUT -> commit -> serve`, { skip }, async t => {
     validateEndpoint(options);
     const store = new S3BlobStore(options);
+    const direct = store.canCreateSafeDirectUpload();
     const attempted = new Set();
     const root = await mkdtemp(join(tmpdir(), 'owa-live-s3-'));
     let server;
     t.diagnostic(`Isolated object prefix: ${store.prefix}`);
+    t.diagnostic(`${entry.name}: checksumEvidence=${store.checksumEvidence} directUploadIntegrity=${store.directUploadIntegrity} (${direct ? 'direct storage grants' : 'artifactd-mediated uploads'}) node=${process.version}`);
+    const m = meterRequests(new URL(options.endpoint).host);
+    t.after(() => m.restore());
 
     async function cleanup() {
       const errors = [];
@@ -152,16 +173,40 @@ for (const entry of cases) {
         assert.equal(plan.reused, expectedReused);
         assert.deepEqual(plan.uploads.map(u => u.digest).sort(), [...expectedDigests].sort());
         let uploaded = 0;
+        const grants = [];
         for (const upload of plan.uploads) {
-          verifyUpload(upload, packed, store);
+          verifyUpload(upload, packed, store, base);
           attempted.add(upload.digest); // Also clean up a PUT whose response is lost.
-          const put = await fetch(upload.url, { method: upload.method, body: Buffer.from(packed.blobs.get(upload.digest)) });
+          const bytes = Buffer.from(packed.blobs.get(upload.digest));
+          const headers = upload.headers ?? {};
+          const before = m.snapshot();
+          // Same-length WRONG bytes with the grant's own headers. Direct: the
+          // PROVIDER must refuse them, because the checksum is validated against
+          // the payload. Mediated: artifactd refuses them before any storage write.
+          const wrong = await fetch(upload.url, { method: upload.method, headers, body: Buffer.from(bytes.map(b => b ^ 0xff)) });
+          await wrong.arrayBuffer();
+          assert.equal(wrong.status, 400, `${direct ? 'Provider' : 'artifactd'} rejects wrong bytes (HTTP ${wrong.status})`);
+          if (!direct) assert.equal(m.since(before, 'PUT'), 0, 'wrong bytes never reached the provider');
+          const put = await fetch(upload.url, { method: upload.method, headers, body: bytes });
           await put.arrayBuffer();
-          assert.ok(put.ok, `Direct PUT HTTP status ${put.status}`);
+          assert.ok(put.ok, `${direct ? 'Direct' : 'Mediated'} PUT HTTP status ${put.status}`);
+          if (!direct) assert.equal(m.since(before, 'PUT'), 1, 'exactly one provider write, by artifactd, after its digest check');
           uploaded++;
+          grants.push({ upload, bytes });
         }
-        assert.equal(uploaded, expectedUploads, 'Actual direct upload count');
+        assert.equal(uploaded, expectedUploads, `Actual ${direct ? 'direct' : 'mediated'} upload count`);
         const commit = await post(base, slug, 'commit', packed, 201);
+        // POST-COMMIT TOCTOU: the still-valid grants must not be able to corrupt
+        // the committed object. Direct: create-once fails first; checksum would
+        // too. Mediated: artifactd's digest check fails; nothing reaches storage.
+        for (const { upload, bytes } of grants) {
+          const before = m.snapshot();
+          const again = await fetch(upload.url, { method: upload.method, headers: upload.headers ?? {}, body: Buffer.from(bytes.map(b => b ^ 0xff)) });
+          await again.arrayBuffer();
+          if (direct) assert.ok(again.status === 412 || again.status === 400, `Still-valid grant cannot overwrite committed CAS (HTTP ${again.status})`);
+          else { assert.equal(again.status, 400, 'still-valid artifactd grant cannot corrupt committed CAS'); assert.equal(m.since(before, 'PUT'), 0, 'no corrupt write reached the provider'); }
+          assert.ok(Buffer.from(await store.get(upload.digest)).equals(bytes), 'committed bytes are unchanged after the reuse attempt');
+        }
         assert.equal(commit.artifactDigest, packed.artifactDigest);
         assert.equal(commit.activeReleaseId, commit.releaseId);
         assert.ok(!releases.some(r => r.id === commit.releaseId), 'Each commit creates an immutable release');
@@ -197,6 +242,9 @@ for (const entry of cases) {
       const newDigests = [...changed.blobs.keys()].filter(digest => !first.blobs.has(digest));
       assert.equal(newDigests.length, 1);
       await publish(changed, 1, 2, newDigests);
+      t.diagnostic(`${entry.name} (${direct ? 'direct' : 'mediated'}) live requests by method: ${JSON.stringify(m.counts.methods)}; auth schemes: ${JSON.stringify(m.counts.schemes)}; OWA bearer to storage: ${m.counts.bearer}`);
+      assert.equal(m.counts.bearer, 0, 'zero OWA bearer material reached the provider');
+      if (!direct) assert.ok(!Object.hasOwn(m.counts.schemes, 'presigned'), 'mediated mode: no presigned request reached the provider');
     } });
   });
 }

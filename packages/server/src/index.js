@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { FilesystemBlobStore, FilesystemLeaseStore, FilesystemMetadataStore } from '../../storage-filesystem/src/index.js';
 import { S3BlobStore } from '../../storage-s3/src/index.js';
-import { activateRelease, commitManifest, planManifest, resolveRequestPath } from '../../core/src/index.js';
+import { IntegrityError, activateRelease, commitManifest, planManifest, resolveRequestPath } from '../../core/src/index.js';
 import { sha256 } from '../../spec/src/index.js';
 import { AuthError, createAuthorizer, isSiteScope } from './auth.js';
 import { artifactHeaders, securityHeaders } from './security-profile.js';
@@ -32,6 +32,15 @@ function routeSite(segment) {
   try { site = decodeURIComponent(segment); } catch { return null; }
   return isSiteScope(site) ? site : null;
 }
+/**
+ * May a publisher hold a storage grant on a final CAS key? This is a DECLARED
+ * store capability, never inferred from the presence of createUpload(): an S3
+ * store may implement it yet run mediated, where bytes must pass through
+ * artifactd's digest check before put(). No capability means mediated.
+ */
+function directUploads(blobs) {
+  return typeof blobs.canCreateSafeDirectUpload === 'function' && blobs.canCreateSafeDirectUpload() === true;
+}
 function safeSiteRecord(site, slug) {
   // Metadata remains operator-trusted; do not let an index redirect this request
   // into another site's namespace or a filesystem path outside the store.
@@ -53,7 +62,15 @@ export async function createDefaultStores({dataDir=resolve(process.env.OWA_DATA_
       secretAccessKey:process.env.OWA_S3_SECRET_ACCESS_KEY,
       sessionToken:process.env.OWA_S3_SESSION_TOKEN??null,
       prefix:process.env.OWA_S3_PREFIX??'owa',
-      addressingStyle:process.env.OWA_S3_ADDRESSING_STYLE??'path'
+      addressingStyle:process.env.OWA_S3_ADDRESSING_STYLE??'path',
+      // Provider checksum trust: 'enforced' | 'advisory'. Unset = automatic
+      // (only live-proven hosts are enforced). Cannot disable verification.
+      checksumEvidence:process.env.OWA_S3_CHECKSUM_EVIDENCE||undefined,
+      // Direct final-CAS grants: 'enforced' | 'mediated'. Unset = automatic
+      // (only live-proven hosts are enforced; every other endpoint is mediated,
+      // so blob bytes pass through artifactd's digest check before storage).
+      // Invalid values fail startup here; there is no bypass value.
+      directUploadIntegrity:process.env.OWA_S3_DIRECT_UPLOAD_INTEGRITY||undefined
     });
     return {blobs,metadata,leases,storageKind:'s3'};
   }
@@ -121,12 +138,18 @@ function createRuntime({blobs,metadata,leases=null,uploadSecret=randomBytes(32).
       authorize(req,slug,['plan']); // A slow body cannot extend authorization.
       const origin=publicBaseUrl??base;
       // `leases` is operational only: it changes no request or response field.
-      const plan=await planManifest({manifest:body.manifest,blobs,leases,uploadFactory:async digest=>{
+      const plan=await planManifest({manifest:body.manifest,blobs,leases,uploadFactory:async(digest,{repair=false}={})=>{
         // Plan is not permission to mint storage grants. Check at each mint,
         // after asynchronous existence checks, including expiration at that time.
+        // This is also the ONLY place a CAS-affecting instrument is created, so
+        // the upload capability always precedes it — including repair grants.
         const claims=authorize(req,slug,['plan','upload']);
         const {expiresIn,expires}=uploadLifetime(claims);
-        if(typeof blobs.createUpload==='function')return blobs.createUpload(digest,{expires:expiresIn});
+        if(directUploads(blobs))return blobs.createUpload(digest,{expires:expiresIn,repair});
+        // Mediated (filesystem, or S3 without a proven direct-upload contract):
+        // the same scoped artifactd grant for a missing object and for a repair.
+        // No storage credential leaves artifactd; the upload route hashes the
+        // bytes before put(), which writes verified bytes in place either way.
         const scoped=authorizer.mode==='required';
         const sig=uploadSignature(localKey,digest,expires,scoped?slug:null);
         return {digest,method:'PUT',url:`${origin}/v1/uploads/${encodeURIComponent(digest)}?expires=${expires}&sig=${sig}${scoped?`&site=${encodeURIComponent(slug)}`:''}`,expiresIn,
@@ -140,7 +163,7 @@ function createRuntime({blobs,metadata,leases=null,uploadSecret=randomBytes(32).
 
     const uploadMatch=url.pathname.match(/^\/v1\/uploads\/(sha256%3A[0-9a-f]{64}|sha256:[0-9a-f]{64})$/i);
     if(req.method==='PUT'&&uploadMatch){
-      if(typeof blobs.createUpload==='function'){json(res,404,{error:'direct S3 uploads do not pass through artifactd'});return true;}
+      if(directUploads(blobs)){json(res,404,{error:'direct S3 uploads do not pass through artifactd'});return true;}
       const scoped=authorizer.mode==='required';
       const sites=url.searchParams.getAll('site');
       if (scoped && (sites.length!==1 || !isSiteScope(sites[0]))) { json(res,400,{error:'Invalid upload scope',code:'OWA_INVALID_SITE'}); return true; }
@@ -282,6 +305,14 @@ function createListener(dispatch){
       }
       // Fixed Host-binding failures. The body never echoes the received Host.
       if (e instanceof ContentHostError) return json(res,e.status,{error:e.message,code:e.code});
+      // Fixed integrity vocabulary only. The body never carries a storage key,
+      // path, provider body, signed URL or credential; OWA_BLOB_MISSING keeps
+      // its historical shape.
+      if (e instanceof IntegrityError) {
+        const message = e.code === 'OWA_BLOB_MISSING' ? 'Missing blob'
+          : e.code === 'OWA_BLOB_INTEGRITY' ? 'Blob integrity check failed' : 'Blob integrity could not be verified';
+        return json(res,500,{error:message,code:e.code});
+      }
       // Only a fixed, recognized core failure is surfaced; provider errors and
       // nested causes can contain presigned URLs and must never be reflected.
       if (e instanceof Error && /^Missing blob sha256:[0-9a-f]{64}(?![\s\S])/.test(e.message)) return json(res,500,{error:'Missing blob',code:'OWA_BLOB_MISSING'});
