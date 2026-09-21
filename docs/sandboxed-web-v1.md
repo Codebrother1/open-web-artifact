@@ -215,8 +215,12 @@ and service-worker registration are not usable by artifact script under these
 restrictions; the opaque origin is an additional barrier to origin-bound APIs.
 This MUST NOT be described as removing incoming or outgoing HTTP cookies.
 Sandboxing does not rewrite the URL, create isolated cookie jars, strip request
-credentials or remove API routes. The prototype does not set response cookies or
-add CORS permissions; that is not a cookie-stripping guarantee for the deployment.
+credentials or remove API routes. The browser suite seeds a synthetic cookie for
+the content origin before navigating and observes the content listener receiving
+it on the top-level request while the response still carries the full profile.
+The prototype does not set response cookies or add CORS permissions; that is not
+a cookie-stripping guarantee for the deployment — cookieless content origins
+remain an operator requirement.
 
 External/network CSS, images, fonts, media, connections, workers, objects and
 frames are denied. `form-action 'none'` and the lack of `allow-forms` prevent form
@@ -225,10 +229,13 @@ submission. Popups and top-navigation permissions are not granted. `base-uri
 'none'` and `X-Frame-Options: DENY`.
 
 This is **not a network air gap**. Ordinary self-targeted links/navigation may
-leave the gateway, and the profile does not follow the destination. Passive or
-navigation mechanisms, including meta refresh, are not comprehensively
-quarantined by a subresource policy. No unsupported `navigate-to` directive is
-claimed. DNS-prefetch disabling is defense in depth, not a universal guarantee
+leave the gateway, and the profile does not follow the destination — the
+browser suite records exactly that: a user click on a plain link in a protected
+document navigated the top-level context to a local capture origin in both
+engines run (with no `Referer`, per `Referrer-Policy: no-referrer`), and the
+destination response carried no profile. Passive or navigation mechanisms,
+including meta refresh, are not comprehensively quarantined by a subresource
+policy. No unsupported `navigate-to` directive is claimed. DNS-prefetch disabling is defense in depth, not a universal guarantee
 about speculative browser/network traffic. A blocked script containing
 `top.location` is evidence of script blocking, not independent proof that every
 possible navigation is blocked. Static content may still deceive users or consume
@@ -266,9 +273,14 @@ availability decision, not an implemented private/auth feature.
 No-store cannot revoke pre-existing browser or service-worker caches, erase
 already loaded bodies, retract downloaded copies or force noncompliant clients
 to obey. A pre-existing service worker may intercept a navigation before the
-new response policy arrives. **Clean, fresh content origins and browser state
-are mandatory operator assumptions for rollout**, not a cleanup feature supplied
-by these headers.
+new response policy arrives — this is demonstrated, not assumed: the browser
+suite registers a worker on a disposable origin *before* that origin fronts OWA
+content, then shows the worker substituting an unprotected document with
+executing script for a URL whose network response carries the exact profile
+(see [browser validation](sandboxed-web-v1-browser-validation.md)). **Clean,
+fresh content origins and browser state are mandatory operator assumptions for
+rollout**, not a cleanup feature supplied by these headers, and CSP cannot
+repair a reused, dirty origin.
 
 ## Origin topology: required deployment versus prototype
 
@@ -375,10 +387,15 @@ raw HTTP tests must avoid client-side URL normalization.
   evaluate fixture scripts, render documents or contact probe destinations.
 - [`security-fixtures/sandboxed-web-v1.json`](security-fixtures/sandboxed-web-v1.json)
   is a separate security-probe format, not a replacement for the portable corpus.
-- [Optional browser validation](sandboxed-web-v1-browser-validation.md) records
-  browser/version and observations separately. Header assertions are not browser
-  enforcement proof. No browser automation or mandatory Playwright dependency is
-  implemented; the manual report starts **not run**.
+- [`packages/browser-tests`](../packages/browser-tests/README.md) is an
+  **optional, package-local real-browser suite** (Playwright as a dev-only
+  dependency of that package; nothing in the runtime or `npm test` needs it). It
+  runs adversarial artifacts through the real content-only listener and observes
+  enforcement in actual browser engines, plus the documented limits below. Its
+  dated record is in [browser validation](sandboxed-web-v1-browser-validation.md).
+  Header assertions are not browser enforcement proof, and browser observations
+  are evidence for the listed engines and versions on the recorded date — not a
+  proof against browser vulnerabilities or of future-browser behavior.
 
 The threat model's [standards references](sandboxed-web-v1-threat-model.md#evidence-requirements)
 cover CSP, HTML sandboxing, MIME sniffing, HTTP no-store and service workers.

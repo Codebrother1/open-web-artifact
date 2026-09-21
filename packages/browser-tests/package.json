@@ -1,0 +1,16 @@
+{
+  "name": "@owa/browser-tests",
+  "version": "0.4.0",
+  "private": true,
+  "type": "module",
+  "description": "Optional real-browser validation of the sandboxed-web-v1 profile and the v0.4 content-only origin topology. Evidence for the existing contract, not part of the runtime and not required by npm test.",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "playwright test",
+    "install-browsers": "playwright install chromium firefox webkit",
+    "versions": "node lib/versions.js"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0"
+  }
+}

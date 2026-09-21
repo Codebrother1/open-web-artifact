@@ -42,7 +42,9 @@ or a claim that auth design preceded the standalone profile.
   rewrite the request URL, strip incoming cookies, create cookie jars, make all
   requests credential-free, or remove APIs from an origin. Headers cannot repair
   a previously installed service worker intercepting navigation before the
-  response arrives. Use a clean origin/browser state for rollout.
+  response arrives — the browser suite demonstrates both the cookie and the
+  service-worker case in real engines. Use a clean origin/browser state for
+  rollout.
 
 ## Threats, intended controls, and honest limits
 
@@ -92,8 +94,21 @@ Deterministic tests can establish exact response headers, type dispatch,
 GET/HEAD parity, raw-path handling, cache directives and byte/digest preservation.
 They cannot prove browser enforcement by inspecting header strings. Optional
 browser validation must be reported separately with browser/version and observed
-results; absent such execution, the PR must say it was not performed. No browser
+results; absent such execution, a change must say it was not performed. No browser
 dependency is required in the normal suite.
+
+**Real-browser evidence (v0.4, issue #19).** The optional, package-local
+[`packages/browser-tests`](../packages/browser-tests/README.md) suite executes
+adversarial artifacts in real engines against the real content-only listener and
+records, per engine, both the enforcement rows above and the documented limits in
+this table (pre-existing service worker, ordinary navigation, request cookies).
+The dated result — engines and exact versions actually run, engines not run and
+why — is kept in [browser validation](sandboxed-web-v1-browser-validation.md).
+That evidence is scoped to the listed versions on the recorded date; it is not a
+claim of browser-engine vulnerability resistance, sanitization, malware safety,
+private content, cookie stripping, service-worker cleanup, blocking of all
+navigation, a network air gap, or protection of downloaded content opened
+elsewhere.
 
 Standards: [CSP Level 3](https://www.w3.org/TR/CSP3/),
 [HTML sandboxing](https://html.spec.whatwg.org/multipage/browsers.html#sandboxing),
