@@ -56,10 +56,10 @@ and its own suites.
 ## Running it
 
 ```sh
-go test ./implementations/go-conformance/...   # from a checkout with Go installed
+go -C implementations/go-conformance test ./... -count=1   # from repository root
 # or, from the module directory:
 cd implementations/go-conformance && go test ./... -count=1 -v
-# or through the root npm script (orchestration only; it just invokes go):
+# or through the root npm script (orchestration only; it runs the same Go command):
 npm run test:go-conformance
 ```
 
