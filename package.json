@@ -10,6 +10,7 @@
     "test:security": "node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=./.github/scripts/test-summary-reporter.mjs --test-reporter-destination=stdout packages/conformance/src/security-*.test.js",
     "test:integration": "node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=./.github/scripts/test-summary-reporter.mjs --test-reporter-destination=stdout packages/integration/src/*.test.js",
     "test:integration:harness": "node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=./.github/scripts/test-summary-reporter.mjs --test-reporter-destination=stdout packages/integration/checks/*.test.js",
+    "test:oci": "node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=./.github/scripts/test-summary-reporter.mjs --test-reporter-destination=stdout packages/integration/oci/*.test.js",
     "test:mcp": "npm --prefix packages/mcp test",
     "test:gc": "node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=./.github/scripts/test-summary-reporter.mjs --test-reporter-destination=stdout packages/gc/test/*.test.js",
     "test:integrity": "node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=./.github/scripts/test-summary-reporter.mjs --test-reporter-destination=stdout packages/conformance/src/security-integrity.test.js",
