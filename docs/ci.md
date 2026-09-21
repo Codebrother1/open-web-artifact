@@ -227,6 +227,31 @@ OWA_BROWSERS=chromium,firefox,webkit OWA_BROWSER_EVIDENCE_JSON=/tmp/evidence.jso
 node .github/scripts/assert-browser-evidence.mjs /tmp/evidence.json chromium,firefox,webkit
 ```
 
+## What the first runs showed (2026-09-21)
+
+Recorded from the pull request that introduced these workflows (#22); every
+later run supersedes it.
+
+- `offline (ubuntu-latest|macos-latest|windows-latest, node 22|24)`: all six
+  cells green in 0.5–1.8 min each; every suite at its expected count, the live
+  suite skipping all 7 provider cases, MCP 167/167 on every cell. The only
+  portability issue found was in a **test**: the dev-mode "binds only
+  127.0.0.1" probe connected to `127.0.0.2`, which macOS black-holes instead of
+  refusing; it now probes a real non-internal address of the host.
+- `minio (mediated + enforced, node 24)`: green in ~2 min including the source
+  build; both modes ran with 3 MinIO cases passing and 4 skips (3 R2, 1
+  virtual-host); both bucket-empty postflights passed; MinIO stayed alive.
+- `browsers (chromium, firefox, webkit)`: green in ~2 min; Chromium
+  153.0.8010.12, Firefox 155.0 and **WebKit 26.6** each executed all 28 rows
+  (25 PASS, 3 EXPECTED LIMIT). Two harness bugs surfaced by WebKit were fixed
+  (see [browser validation](sandboxed-web-v1-browser-validation.md)).
+
+Job logs are only visible to signed-in users, so the suites also publish their
+key facts as **annotations** (visible on the public run page and through the
+check-runs API): each cell's exact Node/OS runtime, the MinIO executable's
+`--version` line and SHA-256, the browser engines that really launched with
+their row tallies, and — on failure — each failing test with its error.
+
 ## Branch protection
 
 The job names above (`offline (<os>, node <n>)` × 6, `minio (mediated +

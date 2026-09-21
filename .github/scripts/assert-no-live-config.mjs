@@ -19,3 +19,10 @@ if (r2.length) { console.error(`R2 is never configured in automatic CI, but foun
 console.log(allowed.length
   ? `lane carries only ${allowed.map(p => `OWA_TEST_${p}_*`).join(', ')} (disposable, runner-local); no R2 or hosted-storage configuration`
   : 'offline lane: no OWA_TEST_* / OWA_S3_* configuration present; provider cases will skip');
+// Inside Actions, record the exact runtime this cell used as a public annotation
+// (the raw log is only readable when signed in). Platform facts only.
+if (process.env.GITHUB_ACTIONS === 'true') {
+  const os = await import('node:os');
+  const escape = value => String(value).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+  console.log(`::notice title=runtime::${escape(`node ${process.version}; ${process.platform} ${process.arch}; ${os.type()} ${os.release()}; ${process.env.RUNNER_OS ?? ''} ${process.env.ImageOS ?? ''} ${process.env.ImageVersion ? `image ${process.env.ImageVersion}` : ''}`.replace(/\s+/g, ' ').trim())}`);
+}

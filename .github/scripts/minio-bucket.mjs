@@ -26,12 +26,37 @@ async function ready() {
     try {
       const res = await fetch(`${endpoint}/minio/health/ready`, { signal: AbortSignal.timeout(1000) });
       await res.arrayBuffer();
-      if (res.ok) { console.log(`minio ready after ${attempt + 1} probe(s)`); return; }
+      if (res.ok) { console.log(`minio ready after ${attempt + 1} probe(s)`); await identity(); return; }
     } catch {}
     await sleep(250);
   }
   console.error('minio did not become ready within 60 s');
   process.exit(1);
+}
+
+/**
+ * Inside Actions, record the identity of the MinIO that is actually serving:
+ * the SHA-256 of the running executable (via /proc/<pid>/exe) and its
+ * `--version` line, as a workflow-command notice. Annotations are visible on the
+ * public run page, unlike the raw log. The version line names only the release
+ * tag, commit and Go runtime; no credential is involved.
+ */
+async function identity() {
+  if (process.env.GITHUB_ACTIONS !== 'true' || !process.env.MINIO_PID) return;
+  try {
+    const { createHash } = await import('node:crypto');
+    const { readFile, readlink } = await import('node:fs/promises');
+    const { execFile } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    const exe = await readlink(`/proc/${process.env.MINIO_PID}/exe`);
+    const sha256 = createHash('sha256').update(await readFile(exe)).digest('hex');
+    const { stdout } = await promisify(execFile)(exe, ['--version']);
+    const version = stdout.split('\n').filter(Boolean).map(line => line.replace(/^\S+ version /, 'version ')).join('; ');
+    const escape = value => String(value).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+    console.log(`::notice title=minio identity::${escape(`${version}; executable sha256 ${sha256}`)}`);
+  } catch (error) {
+    console.log(`minio identity notice skipped: ${error.code ?? error.message}`);
+  }
 }
 
 async function create() {

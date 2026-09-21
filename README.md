@@ -456,9 +456,11 @@ Read the [origin architecture](docs/origins.md),
 [browser validation record](docs/sandboxed-web-v1-browser-validation.md).
 Combined deterministic tests prove HTTP/auth policy and byte preservation, not
 browser enforcement. Real-browser enforcement of `sandboxed-web-v1` was observed
-with the optional `packages/browser-tests` suite in Chromium 153.0.8010.12 and
-Firefox 155.0 on 2026-09-21 (WebKit not run on that host — see the record); that
-is dated evidence for those engines, not a proof of universal browser security.
+with the optional `packages/browser-tests` suite in Chromium 153.0.8010.12,
+Firefox 155.0 and WebKit 26.6 on 2026-09-21 (the `Browsers` GitHub Actions
+workflow runs all three on every pull request — see the record and
+[docs/ci.md](docs/ci.md)); that is dated evidence for those engines, not a proof
+of universal browser security.
 
 ## Next milestones
 
