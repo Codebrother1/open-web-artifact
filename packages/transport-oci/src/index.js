@@ -93,7 +93,8 @@ export const REF_NAME_ANNOTATION='org.opencontainers.image.ref.name';
  *  2. a descriptor matches when `annotations` is an object that has the key
  *     `org.opencontainers.image.ref.name` with a STRING value exactly equal to
  *     `ref` — a missing annotations object, a missing key, null, a number, a
- *     boolean, an empty string or a different string never match;
+ *     boolean or a different string never match; an empty annotation matches
+ *     only when the caller explicitly requested the empty string;
  *  3. zero matches → reference not found; more than one → ambiguous.
  *
  * Descriptor order carries no meaning and never breaks a tie. There is no
