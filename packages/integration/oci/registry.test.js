@@ -4,7 +4,7 @@ import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { request as httpRequest } from 'node:http';
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -232,19 +232,28 @@ test('ORAS v1.3.4 + Zot: OWA layout -> registry -> fresh layout round trip prese
   const missingRepo = await registryGet(`${env.registry}/v2/owa-ci/never-created-${randomUUID().slice(0, 8)}/manifests/v1`, { accept: OCI_IMAGE_MANIFEST });
   assert.equal(missingRepo.status, 404);
 
+  // Adversarial copies of the pulled layout. ORAS writes layout blobs read-only
+  // (0444) and the recursive copy preserves that mode, so on the GitHub runner a
+  // plain writeFile() gets EACCES before the reader is ever exercised. The
+  // deliberately corrupted file in the TEMP COPY is made owner-writable first;
+  // the ORAS-pulled source layout is never touched and the reader is unchanged.
   const tampered = await temp(t, 'tampered');
   await cp(pulledTag, tampered, { recursive: true });
   const victim = packed.manifest.files.find(f => f.path === '/assets/app.js');
-  const original = await readFile(join(tampered, 'blobs', 'sha256', victim.digest.slice(7)));
+  const victimPath = join(tampered, 'blobs', 'sha256', victim.digest.slice(7));
+  await chmod(victimPath, 0o600);
+  const original = await readFile(victimPath);
   const flipped = Buffer.from(original); flipped[0] ^= 0x01; // same length, different bytes
-  await writeFile(join(tampered, 'blobs', 'sha256', victim.digest.slice(7)), flipped);
+  await writeFile(victimPath, flipped);
   await assert.rejects(readOciLayout({ input: tampered, ref: 'v1' }), error => error.code === 'OWA_CONTENT_DIGEST_MISMATCH', 'tampered pulled blob is rejected by digest');
-  await rm(join(tampered, 'blobs', 'sha256', victim.digest.slice(7)));
+  await rm(victimPath);
   await assert.rejects(readOciLayout({ input: tampered, ref: 'v1' }), 'deleted pulled blob is rejected');
   const truncated = await temp(t, 'truncated');
   await cp(pulledTag, truncated, { recursive: true });
   const shortVictim = packed.manifest.files.find(f => f.path === '/index.html');
-  await writeFile(join(truncated, 'blobs', 'sha256', shortVictim.digest.slice(7)), (await readFile(join(truncated, 'blobs', 'sha256', shortVictim.digest.slice(7)))).subarray(0, 5));
+  const shortVictimPath = join(truncated, 'blobs', 'sha256', shortVictim.digest.slice(7));
+  await chmod(shortVictimPath, 0o600);
+  await writeFile(shortVictimPath, (await readFile(shortVictimPath)).subarray(0, 5));
   await assert.rejects(readOciLayout({ input: truncated, ref: 'v1' }), error => error.code === 'OWA_CONTENT_DIGEST_MISMATCH' || error.code === 'OWA_CONTENT_SIZE_MISMATCH');
 
   // ---- optional tag move: `latest` is mutable transport state, digests are not ----
