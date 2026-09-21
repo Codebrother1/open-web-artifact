@@ -42,18 +42,59 @@ manifest**:
 | `config.mediaType` | `application/vnd.openwebartifact.site.v1+json` |
 | `config` bytes | the **canonical OWA manifest** (UTF-8 canonical JSON) |
 | `config.digest` | the **OWA artifact digest** |
-| `layers[]` | one descriptor per OWA file: `digest` and `size` are the file's; `mediaType` is the *mapped* descriptor media type (next section) |
-| layer annotations | `org.opencontainers.image.title` (path without the leading `/`) and `dev.openwebartifact.path` (the exact OWA path) |
+| `layers[]` | one descriptor per OWA **file entry**, in `manifest.files` order: `digest` and `size` are the file's; `mediaType` is the *mapped* descriptor media type (next section). Several descriptors may reference the **same** blob digest (see [File entries vs blobs](#file-entries-vs-blobs-duplicate-content)) |
+| layer annotations | `org.opencontainers.image.title` (path without the leading `/`) and `dev.openwebartifact.path` (the exact OWA path — the descriptor's identity) |
 | manifest annotation | `dev.openwebartifact.artifact.digest` = OWA artifact digest |
 
 `index.json` lists that manifest with `org.opencontainers.image.ref.name` set to
 the requested `ref`. `readOciLayout({ input, ref })` re-verifies **everything**
 on the way back in: layout version, descriptor media type, OCI manifest digest
 and size, `artifactType`, config media type, the config's canonical digest
-against `config.digest` and the annotation, and for every OWA file the layer's
-existence, digest, size, mapped media type and path annotation, plus the actual
-blob bytes' SHA-256 and length. The pulled layout is the local integrity
-boundary; a registry is never trusted to have preserved bytes.
+against `config.digest` and the annotation, and for every OWA file entry the
+descriptor selected by its path annotation — its digest, size, mapped media type
+and path — plus the actual blob bytes' SHA-256 and length. The pulled layout is
+the local integrity boundary; a registry is never trusted to have preserved bytes.
+
+### File entries vs blobs (duplicate content)
+
+An OWA manifest may list several **different paths with identical bytes**; they
+share one SHA-256 digest and are all valid file entries. The OCI representation
+keeps the two identities apart:
+
+| Identity | Unit | Key |
+| --- | --- | --- |
+| **file entry** | one OCI layer descriptor | `dev.openwebartifact.path` |
+| **blob** | one content-addressed object under `blobs/sha256/<digest>` (and once in a registry's CAS) | `sha256` digest |
+
+So `/a.txt` and `/b.txt` with the same bytes produce **two** descriptors with the
+**same** `digest` and distinct path annotations, both pointing at **one** stored
+blob. Descriptor metadata belongs to the file entry: `/same.js` and `/same.txt`
+with identical bytes carry `text/javascript` and `text/plain` descriptors over
+one digest, and the config manifest keeps each entry's full OWA media type. The
+writer has always emitted this shape; the import algorithm (`readOciLayout`)
+treats `layers` as a descriptor **list**, never a digest-keyed set:
+
+1. index descriptors by their exact `dev.openwebartifact.path`; two descriptors
+   claiming the same path make the layout **ambiguous** — rejected, never
+   "first wins" or "last wins";
+2. for each config file entry select the unique descriptor whose path annotation
+   equals `file.path`;
+3. **legacy fallback** (annotation-less layouts) only when it is unambiguous:
+   the file's digest occurs exactly once in the OWA manifest, exactly one layer
+   carries that digest, and that layer has **no** `dev.openwebartifact.path`
+   key at all. A present annotation — even `null`, `""` or a different path — is
+   authoritative: the reader never falls back "through" it. Duplicate-digest
+   entries therefore always need their own path-annotated descriptor;
+4. a descriptor satisfies at most one file entry;
+5. the selected descriptor must then carry the file's digest, size and mapped
+   media type, and the blob bytes must hash to the digest with the declared
+   length — checked for **every** entry even when the bytes were already read
+   for another entry with the same digest.
+
+The returned `blobs` map is keyed by digest, so three entries sharing one
+digest yield one returned blob; `import-oci` stores it once. Layer **order** is
+transport detail: the config manifest owns the file array order, and a layout
+whose descriptors are shuffled imports the identical canonical manifest.
 
 ### Layer descriptor media types (the mapping)
 
@@ -186,6 +227,32 @@ asserts, for a deterministic fixture whose five files have distinct digests
   addressable by digest and imports unchanged — tags are transport state;
 - Zot is still answering afterwards.
 
+`packages/integration/oci/duplicate-content.test.js` (same `npm run test:oci`
+run, same real ORAS and Zot) adds the duplicate-content proof for a fixture with
+`/shared.js`, `/shared.txt` and `/copy/shared.txt` holding **identical bytes**
+(one digest, `text/javascript; charset=utf-8` vs `text/plain; charset=utf-8`)
+next to a unique `/index.html`:
+
+- the packer returns 4 file entries and 2 blobs; `writeOciLayout` emits 4
+  descriptors — three with the shared digest, distinct path annotations and
+  per-entry descriptor media types (`text/javascript`, `text/plain`) — and
+  stores the shared blob once;
+- ORAS pushes it; Zot's stored manifest is byte-identical, keeps all three
+  repeated descriptors, and `HEAD /v2/<repo>/blobs/<shared digest>` answers 200
+  once for the shared content (content-addressed identity — no claim about
+  Zot's internal storage layout);
+- pulls by tag and by digest both import the same OWA artifact digest, all four
+  entries in config order, full media types, the same OCI manifest digest and a
+  `blobs` map with **one** entry for the shared digest;
+- `import-oci` stores 2 blobs for 4 entries; the content server serves
+  `/shared.js` as `text/javascript; charset=utf-8` and `/shared.txt` and
+  `/copy/shared.txt` as `text/plain; charset=utf-8` — the same bytes and the
+  same `ETag`, each with its own entry's media type;
+- copies of the real pull with one repeated descriptor stripped of its path
+  annotation, two descriptors claiming one path, or the `.js`/`.txt` path
+  annotations swapped are all **rejected** by `readOciLayout`, while an
+  untouched copy still imports.
+
 ## Running it locally
 
 ```sh
@@ -221,9 +288,14 @@ checks (`npm run test:integration:harness`) pin that behaviour.
   registry. OWA's reader digest checks are the local integrity boundary.
 - **Signatures, provenance, cosign/Notary, referrers and SBOMs** are outside the
   OWA transport contract.
-- **Issue #9 remains open:** the reader indexes layers by digest, so an OWA
-  manifest in which two *different paths* share *identical content* does not yet
-  round-trip through OCI. All live fixtures here use distinct digests; the
-  deterministic suite pins the current behaviour without changing it.
+- **Duplicate content round-trips (issue #9, fixed):** distinct paths with
+  identical bytes stay distinct file entries with one descriptor each over one
+  shared blob. The only behaviour deliberately kept from the older reader is the
+  unambiguous annotation-less legacy fallback described above; layouts with
+  missing, conflicting or duplicated path annotations are rejected rather than
+  guessed.
+- **Extra, unrelated layer descriptors** are not a new error: the reader selects
+  what the config manifest needs and ignores descriptors no file entry refers
+  to, exactly as before — unless such a descriptor collides with a required path.
 - No `push-oci`/`pull-oci` commands exist; ORAS is the transport. `export-oci`
   and `import-oci` are the whole OWA surface.

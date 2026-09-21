@@ -1,19 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { request as httpRequest } from 'node:http';
-import { chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { chmod, cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { artifactDigest, canonicalJson, OWA_MEDIA_TYPE, sha256 } from '../../spec/src/index.js';
+import { canonicalJson, OWA_MEDIA_TYPE, sha256 } from '../../spec/src/index.js';
 import { packDirectory } from '../../core/src/index.js';
 import { OCI_IMAGE_MANIFEST, ociLayerMediaType, readOciLayout, writeOciLayout } from '../../transport-oci/src/index.js';
 import { FilesystemBlobStore, FilesystemMetadataStore } from '../../storage-filesystem/src/index.js';
 import { createContentServer } from '../../server/src/index.js';
 import { ociEnvironment } from './environment.js';
+import { CLI, ociManifestOf, oras, orasMustFail, record, registryGet, run, serve, tail, temp } from './helpers.js';
 
 // Live OCI registry interoperability (issue #23):
 //
@@ -26,56 +23,11 @@ import { ociEnvironment } from './environment.js';
 // disposable: this proves content-addressed transport interoperability with the
 // pinned ORAS/Zot versions, not TLS, auth, signing or remote deployment.
 //
-// Fixture contents have DISTINCT digests on purpose: duplicate-content path
-// semantics are issue #9 and stay out of scope here.
+// Fixture contents have DISTINCT digests on purpose so this proof stays exactly
+// the #23 evidence; duplicate-content file entries (issue #9) have their own live
+// proof in duplicate-content.test.js. Shared helpers live in helpers.js.
 
-const CLI = fileURLToPath(new URL('../../cli/src/index.js', import.meta.url));
 const environment = await ociEnvironment();
-
-/** Run an external command with array arguments; never a shell string. */
-function run(command, args, { timeout = 120_000 } = {}) {
-  return new Promise(resolve => {
-    execFile(command, args, { timeout, maxBuffer: 8 * 1024 * 1024, env: { ...process.env, ORAS_CACHE: undefined } }, (error, stdout, stderr) => {
-      resolve({ code: error ? (error.code ?? 1) : 0, stdout: String(stdout ?? ''), stderr: String(stderr ?? ''), signal: error?.signal ?? null });
-    });
-  });
-}
-const tail = text => text.trim().split('\n').slice(-4).join(' | ').slice(0, 400);
-/** ORAS must succeed; a non-zero exit is a failure with safe diagnostics (command, code, stderr tail). */
-async function oras(env, args, t) {
-  t?.diagnostic(`oras ${args.join(' ')}`);
-  const result = await run(env.oras, args);
-  assert.equal(result.code, 0, `oras ${args[0]} exited ${result.code}${result.signal ? ` (${result.signal})` : ''}: ${tail(result.stderr || result.stdout)}`);
-  return result;
-}
-/** ORAS must FAIL (non-zero exit); a zero exit is the failure. */
-async function orasMustFail(env, args, t) {
-  t?.diagnostic(`oras ${args.join(' ')}   (expected to fail)`);
-  const result = await run(env.oras, args);
-  assert.notEqual(result.code, 0, `oras ${args[0]} unexpectedly succeeded: ${tail(result.stdout)}`);
-  return result;
-}
-/** Test-only registry inspection over plain HTTP; returns status, headers and body bytes. */
-async function registryGet(url, { method = 'GET', accept } = {}) {
-  const res = await fetch(url, { method, headers: accept ? { accept } : {}, signal: AbortSignal.timeout(15_000) });
-  return { status: res.status, headers: Object.fromEntries(res.headers), body: Buffer.from(await res.arrayBuffer()) };
-}
-/** GET through the real content listener with an explicit Host (node:http, so Host is not rewritten). */
-function serve(port, host, path) {
-  return new Promise((resolve, reject) => {
-    const req = httpRequest({ hostname: '127.0.0.1', port, path, method: 'GET', headers: { host, connection: 'close' } }, res => {
-      const chunks = []; res.on('data', c => chunks.push(c)); res.on('error', reject);
-      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
-    });
-    req.on('error', reject); req.end();
-  });
-}
-async function ociManifestOf(layout) {
-  const index = JSON.parse(await readFile(join(layout, 'index.json'), 'utf8'));
-  return { index, descriptors: index.manifests ?? [] };
-}
-const temp = async (t, name) => { const dir = await mkdtemp(join(tmpdir(), `owa-oci-${name}-`)); t.after(() => rm(dir, { recursive: true, force: true })); return dir; };
-const record = (t, facts) => { for (const [k, v] of Object.entries(facts)) t.diagnostic(`${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`); };
 
 /** Deterministic fixture: ordinary parameterized web types, a nested path, a binary file and an empty file. */
 async function writeFixture(dir, { version = 1 } = {}) {
@@ -104,7 +56,7 @@ test('ORAS v1.3.4 + Zot: OWA layout -> registry -> fresh layout round trip prese
   const site = await temp(t, 'site');
   await writeFixture(site);
   const packed = await packDirectory(site);
-  assert.equal(new Set(packed.manifest.files.map(f => f.digest)).size, packed.manifest.files.length, 'every fixture file has a distinct digest (issue #9 out of scope)');
+  assert.equal(new Set(packed.manifest.files.map(f => f.digest)).size, packed.manifest.files.length, 'every fixture file has a distinct digest (duplicate content is proven in duplicate-content.test.js)');
   assert.deepEqual(packed.manifest.files.map(f => f.path), ['/assets/app.js', '/assets/blob.bin', '/assets/style.css', '/empty.txt', '/index.html']);
   const types = Object.fromEntries(packed.manifest.files.map(f => [f.path, f.mediaType]));
   assert.equal(types['/index.html'], 'text/html; charset=utf-8'); assert.equal(types['/assets/app.js'], 'text/javascript; charset=utf-8');

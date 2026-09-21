@@ -8,7 +8,8 @@
     "oci-read: materialize input.layoutFiles verbatim beneath a fresh directory and invoke readOciLayout. The layout is static, independently encoded, and deliberately inconsistent only at the boundary named by the vector.",
     "The write size-mismatch sample intentionally has both wrong length and digest: the existing write boundary checks size first. Read content-size sample has the correct digest but manifest and layer both declare size 4 for the 3-byte blob.",
     "Success checks artifact identity and exact returned blob bytes. Failure checks only the stable errorCategory, never human-readable messages. No S3 behavior is changed or assumed.",
-    "oci-read layouts carry the transport descriptor representation: each layer mediaType is the RFC 6838 type/subtype of the OWA file mediaType (parameters such as \"; charset=utf-8\" removed; a value that is not a valid type/subtype becomes application/octet-stream), while the config blob keeps the full OWA mediaType. The reader requires that mapped value; a layer carrying the parameterized or a different media type is rejected. See docs/oci.md."
+    "oci-read layouts carry the transport descriptor representation: each layer mediaType is the RFC 6838 type/subtype of the OWA file mediaType (parameters such as \"; charset=utf-8\" removed; a value that is not a valid type/subtype becomes application/octet-stream), while the config blob keeps the full OWA mediaType. The reader requires that mapped value; a layer carrying the parameterized or a different media type is rejected. See docs/oci.md.",
+    "Duplicate content (issue #9): blob-write-duplicate-content and blob-read-duplicate-content are the portable anchors for several file entries sharing one content digest. One OCI layer descriptor exists per file entry, identified by dev.openwebartifact.path; repeated descriptors reference the same blob digest, whose bytes appear once in input.blobs / the layout and once in expected.blobs; the config keeps each entry's full OWA mediaType while descriptors carry the mapped per-entry type; descriptor order is not file order."
   ],
   "vectors": [
     {
@@ -335,6 +336,112 @@
       },
       "expected": {
         "errorCategory": "OWA_CONTENT_SIZE_MISMATCH"
+      }
+    },
+    {
+      "id": "blob-write-duplicate-content",
+      "description": "Three distinct paths share one content digest (identical bytes under two different media types). writeOciLayout must emit one layer descriptor per file entry while the shared blob is supplied once and returned once after read-back; OWA identity is unchanged (issue #9).",
+      "input": {
+        "boundary": "oci-write",
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/index.html",
+              "digest": "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+              "size": 3,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/copy.txt",
+              "digest": "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+              "size": 3,
+              "mediaType": "text/plain; charset=utf-8"
+            },
+            {
+              "path": "/nested/again.txt",
+              "digest": "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+              "size": 3,
+              "mediaType": "text/plain; charset=utf-8"
+            }
+          ]
+        },
+        "blobs": [
+          {
+            "digest": "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            "contentBase64": "YWJj"
+          }
+        ]
+      },
+      "expected": {
+        "canonicalJson": "{\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/index.html\",\"size\":3},{\"digest\":\"sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/copy.txt\",\"size\":3},{\"digest\":\"sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/nested/again.txt\",\"size\":3}],\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:47b4a8679efa2636aa4266a321d0999ce73f9fda9cd1f978cb1ae1fc7514126d",
+        "blobs": [
+          {
+            "digest": "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            "contentBase64": "YWJj"
+          }
+        ]
+      }
+    },
+    {
+      "id": "blob-read-duplicate-content",
+      "description": "An independently authored OCI layout whose manifest carries two layer descriptors with the SAME content digest and distinct dev.openwebartifact.path annotations (/same.js as text/javascript, /same.txt as text/plain, listed in the opposite order from the config) while the config keeps both full OWA media types. readOciLayout must preserve both file entries in config order and return the shared blob once (issue #9).",
+      "input": {
+        "boundary": "oci-read",
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/same.js",
+          "files": [
+            {
+              "path": "/same.js",
+              "digest": "sha256:a4d26868017c0ccffe2efe50944ef4211834660cca834c6e9f86dec6a88246fa",
+              "size": 6,
+              "mediaType": "text/javascript; charset=utf-8"
+            },
+            {
+              "path": "/same.txt",
+              "digest": "sha256:a4d26868017c0ccffe2efe50944ef4211834660cca834c6e9f86dec6a88246fa",
+              "size": 6,
+              "mediaType": "text/plain; charset=utf-8"
+            }
+          ]
+        },
+        "layoutFiles": [
+          {
+            "path": "oci-layout",
+            "contentBase64": "eyJpbWFnZUxheW91dFZlcnNpb24iOiIxLjAuMCJ9"
+          },
+          {
+            "path": "index.json",
+            "contentBase64": "eyJtYW5pZmVzdHMiOlt7ImFubm90YXRpb25zIjp7ImRldi5vcGVud2ViYXJ0aWZhY3QuYXJ0aWZhY3QuZGlnZXN0Ijoic2hhMjU2OjdlOGMyOWJhZmZhNzA0MzRmYzkwNDc0OGM0N2E4NDkzMmIyMjg4OWM1OWZjNGY3ZTJjOGQ5YTI1ZmM2NjJhYjkiLCJvcmcub3BlbmNvbnRhaW5lcnMuaW1hZ2UucmVmLm5hbWUiOiJsYXRlc3QifSwiYXJ0aWZhY3RUeXBlIjoiYXBwbGljYXRpb24vdm5kLm9wZW53ZWJhcnRpZmFjdC5zaXRlLnYxK2pzb24iLCJkaWdlc3QiOiJzaGEyNTY6OGEwZjUxZjIxY2Y1N2ViZTljYjczMjZhNmQ1YzA2ZWY5YTcwYzVjMjA3NTRkZWE0MTg2YmUwZTIwOTNkN2JmMiIsIm1lZGlhVHlwZSI6ImFwcGxpY2F0aW9uL3ZuZC5vY2kuaW1hZ2UubWFuaWZlc3QudjEranNvbiIsInNpemUiOjg4MH1dLCJtZWRpYVR5cGUiOiJhcHBsaWNhdGlvbi92bmQub2NpLmltYWdlLmluZGV4LnYxK2pzb24iLCJzY2hlbWFWZXJzaW9uIjoyfQ=="
+          },
+          {
+            "path": "blobs/sha256/7e8c29baffa70434fc904748c47a84932b22889c59fc4f7e2c8d9a25fc662ab9",
+            "contentBase64": "eyJhcnRpZmFjdFR5cGUiOiJhcHBsaWNhdGlvbi92bmQub3BlbndlYmFydGlmYWN0LnNpdGUudjEranNvbiIsImVudHJ5cG9pbnQiOiIvc2FtZS5qcyIsImZpbGVzIjpbeyJkaWdlc3QiOiJzaGEyNTY6YTRkMjY4NjgwMTdjMGNjZmZlMmVmZTUwOTQ0ZWY0MjExODM0NjYwY2NhODM0YzZlOWY4NmRlYzZhODgyNDZmYSIsIm1lZGlhVHlwZSI6InRleHQvamF2YXNjcmlwdDsgY2hhcnNldD11dGYtOCIsInBhdGgiOiIvc2FtZS5qcyIsInNpemUiOjZ9LHsiZGlnZXN0Ijoic2hhMjU2OmE0ZDI2ODY4MDE3YzBjY2ZmZTJlZmU1MDk0NGVmNDIxMTgzNDY2MGNjYTgzNGM2ZTlmODZkZWM2YTg4MjQ2ZmEiLCJtZWRpYVR5cGUiOiJ0ZXh0L3BsYWluOyBjaGFyc2V0PXV0Zi04IiwicGF0aCI6Ii9zYW1lLnR4dCIsInNpemUiOjZ9XSwic3BlY1ZlcnNpb24iOiJvd2EuZGV2L3YxIn0="
+          },
+          {
+            "path": "blobs/sha256/8a0f51f21cf57ebe9cb7326a6d5c06ef9a70c5c20754dea4186be0e2093d7bf2",
+            "contentBase64": "eyJhbm5vdGF0aW9ucyI6eyJkZXYub3BlbndlYmFydGlmYWN0LmFydGlmYWN0LmRpZ2VzdCI6InNoYTI1Njo3ZThjMjliYWZmYTcwNDM0ZmM5MDQ3NDhjNDdhODQ5MzJiMjI4ODljNTlmYzRmN2UyYzhkOWEyNWZjNjYyYWI5In0sImFydGlmYWN0VHlwZSI6ImFwcGxpY2F0aW9uL3ZuZC5vcGVud2ViYXJ0aWZhY3Quc2l0ZS52MStqc29uIiwiY29uZmlnIjp7ImRpZ2VzdCI6InNoYTI1Njo3ZThjMjliYWZmYTcwNDM0ZmM5MDQ3NDhjNDdhODQ5MzJiMjI4ODljNTlmYzRmN2UyYzhkOWEyNWZjNjYyYWI5IiwibWVkaWFUeXBlIjoiYXBwbGljYXRpb24vdm5kLm9wZW53ZWJhcnRpZmFjdC5zaXRlLnYxK2pzb24iLCJzaXplIjo0MzR9LCJsYXllcnMiOlt7ImFubm90YXRpb25zIjp7ImRldi5vcGVud2ViYXJ0aWZhY3QucGF0aCI6Ii9zYW1lLnR4dCIsIm9yZy5vcGVuY29udGFpbmVycy5pbWFnZS50aXRsZSI6InNhbWUudHh0In0sImRpZ2VzdCI6InNoYTI1NjphNGQyNjg2ODAxN2MwY2NmZmUyZWZlNTA5NDRlZjQyMTE4MzQ2NjBjY2E4MzRjNmU5Zjg2ZGVjNmE4ODI0NmZhIiwibWVkaWFUeXBlIjoidGV4dC9wbGFpbiIsInNpemUiOjZ9LHsiYW5ub3RhdGlvbnMiOnsiZGV2Lm9wZW53ZWJhcnRpZmFjdC5wYXRoIjoiL3NhbWUuanMiLCJvcmcub3BlbmNvbnRhaW5lcnMuaW1hZ2UudGl0bGUiOiJzYW1lLmpzIn0sImRpZ2VzdCI6InNoYTI1NjphNGQyNjg2ODAxN2MwY2NmZmUyZWZlNTA5NDRlZjQyMTE4MzQ2NjBjY2E4MzRjNmU5Zjg2ZGVjNmE4ODI0NmZhIiwibWVkaWFUeXBlIjoidGV4dC9qYXZhc2NyaXB0Iiwic2l6ZSI6Nn1dLCJtZWRpYVR5cGUiOiJhcHBsaWNhdGlvbi92bmQub2NpLmltYWdlLm1hbmlmZXN0LnYxK2pzb24iLCJzY2hlbWFWZXJzaW9uIjoyfQ=="
+          },
+          {
+            "path": "blobs/sha256/a4d26868017c0ccffe2efe50944ef4211834660cca834c6e9f86dec6a88246fa",
+            "contentBase64": "c2hhcmVk"
+          }
+        ]
+      },
+      "expected": {
+        "canonicalJson": "{\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/same.js\",\"files\":[{\"digest\":\"sha256:a4d26868017c0ccffe2efe50944ef4211834660cca834c6e9f86dec6a88246fa\",\"mediaType\":\"text/javascript; charset=utf-8\",\"path\":\"/same.js\",\"size\":6},{\"digest\":\"sha256:a4d26868017c0ccffe2efe50944ef4211834660cca834c6e9f86dec6a88246fa\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/same.txt\",\"size\":6}],\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:7e8c29baffa70434fc904748c47a84932b22889c59fc4f7e2c8d9a25fc662ab9",
+        "blobs": [
+          {
+            "digest": "sha256:a4d26868017c0ccffe2efe50944ef4211834660cca834c6e9f86dec6a88246fa",
+            "contentBase64": "c2hhcmVk"
+          }
+        ]
       }
     }
   ]

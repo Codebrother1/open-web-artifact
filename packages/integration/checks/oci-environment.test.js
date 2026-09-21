@@ -11,10 +11,11 @@ import { ociEnvironment } from '../oci/environment.js';
 // required mode. No registry, no ORAS: the suite must SKIP when unconfigured and
 // FAIL (never skip) when OWA_TEST_OCI_REQUIRED=1 finds a prerequisite missing.
 
-const SUITE = fileURLToPath(new URL('../oci/registry.test.js', import.meta.url));
+// Both live OCI test files (issue #23's registry proof and issue #9's duplicate-content proof) share the contract.
+const SUITES = ['../oci/registry.test.js', '../oci/duplicate-content.test.js'].map(file => fileURLToPath(new URL(file, import.meta.url)));
 const clean = { PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: process.env.TMPDIR ?? '' };
 const runSuite = env => new Promise(resolve => {
-  execFile(process.execPath, ['--test', SUITE], { env: { ...clean, ...env }, timeout: 60_000 }, (error, stdout, stderr) => resolve({ code: error ? error.code ?? 1 : 0, out: `${stdout}\n${stderr}` }));
+  execFile(process.execPath, ['--test', ...SUITES], { env: { ...clean, ...env }, timeout: 60_000 }, (error, stdout, stderr) => resolve({ code: error ? error.code ?? 1 : 0, out: `${stdout}\n${stderr}` }));
 });
 
 test('unconfigured → skip naming both variables; required → fail', async () => {
@@ -55,13 +56,14 @@ test('registry must be a bare plain-HTTP loopback origin and ORAS an absolute ex
 test('the live suite skips cleanly when unconfigured, and FAILS (exit 1) in required mode with ORAS/registry absent', async () => {
   const skipped = await runSuite({});
   assert.equal(skipped.code, 0, `unconfigured suite exits 0: ${skipped.out.slice(-400)}`);
-  assert.match(skipped.out, /skipped 1/);
+  assert.match(skipped.out, /tests 2/);
+  assert.match(skipped.out, /skipped 2/, 'both live OCI tests skip');
   assert.match(skipped.out, /pass 0/);
   const required = await runSuite({ OWA_TEST_OCI_REQUIRED: '1' });
   assert.equal(required.code, 1, 'required mode without prerequisites exits non-zero');
-  assert.match(required.out, /fail 1/);
+  assert.match(required.out, /fail 2/, 'both live OCI tests fail instead of skipping');
   assert.match(required.out, /must run, not skip/);
-  assert.doesNotMatch(required.out, /skipped 1/);
+  assert.match(required.out, /skipped 0/);
   // Registry configured but ORAS missing, required: still a failure, not a skip.
   const half = await runSuite({ OWA_TEST_OCI_REQUIRED: '1', OWA_TEST_OCI_REGISTRY: 'http://127.0.0.1:1' });
   assert.equal(half.code, 1);

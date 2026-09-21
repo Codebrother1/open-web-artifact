@@ -102,16 +102,88 @@ export async function readOciLayout({input,ref='latest'}){
   if(owaDigest!==ociManifest.config.digest)throw new Error('OWA artifact digest does not match OCI config digest');
   if(ociManifest.annotations?.['dev.openwebartifact.artifact.digest']&&ociManifest.annotations['dev.openwebartifact.artifact.digest']!==owaDigest)throw new Error('OCI OWA digest annotation mismatch');
 
-  const layerByDigest=new Map((ociManifest.layers??[]).map(layer=>[layer.digest,layer]));
   const blobMap=new Map();
+  const {selectLayer}=indexLayers(ociManifest.layers,manifest);
+  const verified=new Map(); // digest -> verified bytes; repeated descriptors share ONE blob
   for(const file of manifest.files){
-    const layer=layerByDigest.get(file.digest);if(!layer)throw new Error(`OCI layer missing for ${file.path}`);
+    const layer=selectLayer(file);
+    // Path-based selection no longer implies digest equality: check it explicitly.
+    if(layer.digest!==file.digest)throw new Error(`OCI layer digest mismatch for ${file.path}`);
     if(layer.size!==file.size)throw owaError('OWA_CONTENT_SIZE_MISMATCH', `OCI layer size mismatch for ${file.path}`);
     // Representation integrity: the descriptor must carry exactly the mapped
     // transport media type for this file (never compared to the full OWA value).
     if(layer.mediaType!==ociLayerMediaType(file.mediaType))throw new Error(`OCI layer media type mismatch for ${file.path}`);
-    if(layer.annotations?.['dev.openwebartifact.path']&&layer.annotations['dev.openwebartifact.path']!==file.path)throw new Error(`OCI layer path mismatch for ${file.path}`);
-    blobMap.set(file.digest,new Uint8Array(await readVerifiedBlob(root,file.digest,file.size)));
+    if(hasPathAnnotation(layer)&&layer.annotations[PATH_ANNOTATION]!==file.path)throw new Error(`OCI layer path mismatch for ${file.path}`);
+    let body=verified.get(file.digest);
+    if(body===undefined){body=new Uint8Array(await readVerifiedBlob(root,file.digest,file.size));verified.set(file.digest,body);}
+    // A cached blob still has to satisfy THIS entry's declared size.
+    else if(body.byteLength!==file.size)throw owaError('OWA_CONTENT_SIZE_MISMATCH', `OCI blob size mismatch: ${file.digest}`);
+    blobMap.set(file.digest,body);
   }
   return {manifest,artifactDigest:owaDigest,blobs:blobMap,ociManifest,ociManifestDigest:descriptor.digest,ref};
+}
+
+export const PATH_ANNOTATION='dev.openwebartifact.path';
+
+/** The annotation KEY is present (whatever its value) — presence, not truthiness. */
+function hasPathAnnotation(layer){
+  const annotations=layer?.annotations;
+  return annotations!==null&&typeof annotations==='object'&&Object.hasOwn(annotations,PATH_ANNOTATION);
+}
+
+/**
+ * Descriptor selection (issue #9). An OCI manifest carries ONE layer descriptor per
+ * OWA FILE ENTRY; several descriptors may reference the SAME content-addressed
+ * blob digest when different paths hold identical bytes. So `layers` is a
+ * descriptor LIST identified by `dev.openwebartifact.path`, never a digest-keyed
+ * set (the previous Map(digest -> layer) silently collapsed repeated descriptors
+ * and lost their path-specific annotations).
+ *
+ *  1. Index descriptors by their exact path annotation. Two descriptors claiming
+ *     the same path make the representation ambiguous: reject, never pick one.
+ *  2. For each OWA file, select the unique descriptor whose path annotation equals
+ *     `file.path`.
+ *  3. Legacy fallback (annotation-less layouts) ONLY when it is unambiguous: the
+ *     file's digest occurs exactly once in the OWA manifest, exactly one layer
+ *     carries that digest, and that layer has NO path annotation key at all. A
+ *     present-but-different path annotation is authoritative: never fall back
+ *     through it. Duplicate-digest files therefore always need their own
+ *     path-annotated descriptor.
+ *  4. A descriptor satisfies at most one file entry.
+ * Layer ORDER carries no OWA meaning; the config manifest owns file order.
+ */
+function indexLayers(layers,manifest){
+  const list=Array.isArray(layers)?layers:[];
+  const byPath=new Map();
+  const byDigest=new Map();
+  for(const layer of list){
+    if(layer===null||typeof layer!=='object')continue;
+    if(hasPathAnnotation(layer)){
+      const path=layer.annotations[PATH_ANNOTATION];
+      if(typeof path==='string'){
+        if(byPath.has(path))throw new Error(`Ambiguous OCI layout: multiple layers claim ${PATH_ANNOTATION} ${path}`);
+        byPath.set(path,layer);
+      }
+    }
+    if(!byDigest.has(layer.digest))byDigest.set(layer.digest,[]);
+    byDigest.get(layer.digest).push(layer);
+  }
+  const digestUses=new Map();
+  for(const file of manifest.files)digestUses.set(file.digest,(digestUses.get(file.digest)??0)+1);
+  const used=new Set();
+  return {
+    selectLayer(file){
+      let layer=byPath.get(file.path);
+      if(layer===undefined){
+        const candidates=byDigest.get(file.digest)??[];
+        if(candidates.length===0)throw new Error(`OCI layer missing for ${file.path}`);
+        const unambiguous=digestUses.get(file.digest)===1&&candidates.length===1&&!hasPathAnnotation(candidates[0]);
+        if(!unambiguous)throw new Error(`OCI layer for ${file.path} cannot be selected: no descriptor carries ${PATH_ANNOTATION} ${file.path}, and digest-only matching is only allowed for a unique digest with a single annotation-less layer`);
+        layer=candidates[0];
+      }
+      if(used.has(layer))throw new Error(`OCI layer reused: one descriptor cannot satisfy two file entries (${file.path})`);
+      used.add(layer);
+      return layer;
+    }
+  };
 }
