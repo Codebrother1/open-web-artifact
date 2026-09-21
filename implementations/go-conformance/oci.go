@@ -50,8 +50,8 @@ func (e *refError) Unwrap() []error { return []error{ErrLayout, e.kind} }
 //  2. a descriptor matches when its annotations value is an object whose
 //     org.opencontainers.image.ref.name member is a STRING exactly equal (code
 //     point for code point) to ref — a missing annotations object, a missing
-//     key, null, a number, a boolean, an empty string or a different string
-//     never match;
+//     key, null, a number, a boolean or a different string never match; an
+//     empty annotation matches only an explicitly requested empty string;
 //  3. zero matches → ErrRefNotFound; more than one → ErrRefAmbiguous.
 //
 // Descriptor order carries no meaning and never breaks a tie: there is no
