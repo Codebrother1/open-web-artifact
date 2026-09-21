@@ -50,7 +50,7 @@ jobs:
       - name: Prove the module is standard-library only
         run: |
           if grep -Eq '^[[:space:]]*require' go.mod; then echo "go.mod must not require modules"; exit 1; fi
-          deps="$(go list -deps ./... | grep -v '^github.com/Codebrother1/open-web-artifact/' | grep '\.' || true)"
+          deps="$(go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./... | grep -v '^github.com/Codebrother1/open-web-artifact/implementations/go-conformance' | sed '/^$/d' || true)"
           if [ -n "$deps" ]; then echo "non-standard-library dependencies: $deps"; exit 1; fi
 
       - name: gofmt
