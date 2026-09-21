@@ -68,6 +68,31 @@ export default class EvidenceReporter {
     }
     const text = lines.join('\n');
     console.log(text);
+    if (process.env.GITHUB_ACTIONS === 'true') {
+      // Workflow-command annotations: readable on the run page and through the
+      // public check-runs API without a sign-in. A notice records the engines that
+      // really launched; one error per failing cell (GitHub shows at most 10).
+      const escapeData = value => String(value).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+      const escapeProperty = value => escapeData(value).replace(/:/g, '%3A').replace(/,/g, '%2C');
+      const engines = this.projects.map(project => `${project}: ${this.engines.get(project) ?? 'NOT RUN'}`).join('; ');
+      const tally = {};
+      for (const row of this.rows.values()) for (const project of this.projects) { const status = row.cells[project]?.status ?? 'NOT RUN'; tally[`${project} ${status}`] = (tally[`${project} ${status}`] ?? 0) + 1; }
+      console.log(`::notice title=${escapeProperty('browser evidence')}::${escapeData(`Playwright ${this.playwright}; ${engines}; rows: ${Object.entries(tally).map(([k, v]) => `${k}=${v}`).join(', ')}`)}`);
+      let emitted = 0, failing = 0;
+      for (const row of this.rows.values()) {
+        for (const project of this.projects) {
+          const cell = row.cells[project];
+          const status = cell?.status ?? 'NOT RUN';
+          if (status === 'PASS' || status === 'EXPECTED LIMIT') continue;
+          failing++;
+          if (emitted >= 10) continue;
+          emitted++;
+          const detail = [...(cell?.errors ?? []), ...(cell?.evidence ?? []).map(fact => `evidence: ${fact}`)].join('\n');
+          console.log(`::error title=${escapeProperty(`[${project}] ${status} — ${row.title}`)}::${escapeData(detail.slice(0, 1800) || status)}`);
+        }
+      }
+      if (failing > emitted) console.log(`::error title=${escapeProperty('browser evidence')}::${failing - emitted} more failing cell(s); see the job log.`);
+    }
     if (process.env.GITHUB_STEP_SUMMARY) {
       const md = [];
       md.push(`### sandboxed-web-v1 real-browser evidence — Playwright ${this.playwright}, Node ${process.version}, ${osType()} ${release()}`, '');
