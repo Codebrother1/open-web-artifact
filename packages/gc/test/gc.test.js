@@ -866,3 +866,70 @@ test('ordinary real directories still enumerate and delete normally after the gu
   assert.equal(await e.blobs.has(kept), true);
   await e.blobs.delete(orphan); // already gone: still idempotent
 });
+
+// ------------------------------------------- lease-record symlink ---------
+
+/**
+ * A lease RECORD that is a symlink must fail closed, not be skipped. The
+ * ancestor guards already stop GC from following a symlinked lease directory;
+ * this covers the last position — the record itself. The danger is not that
+ * GC deletes through the link (it never rm()s a non-regular file) but that a
+ * silently skipped record can be an ACTIVE lease, so its digest vanishes from
+ * the protection set and the blob it protects becomes a deletion candidate.
+ */
+test('a symlinked lease record fails closed: an active external lease is never silently dropped', async t => {
+  const e = await env(t);
+  const outside = await externalTree(t);
+  // An aged orphan that a valid, UNEXPIRED lease should protect.
+  const orphan = await e.writeBlob('orphan protected only by a symlinked lease', { ageHours: 48 });
+  const record = JSON.stringify({
+    digest: orphan, expiresAt: new Date(NOW.getTime() + 3600 * 1000).toISOString(), updatedAt: NOW.toISOString()
+  });
+  const external = join(outside, 'lease.json');
+  await writeFile(external, record, 'utf8');
+  await mkdir(join(e.root, 'gc-leases', 'sha256'), { recursive: true });
+  await symlink(external, join(e.root, 'gc-leases', 'sha256', `${orphan.slice('sha256:'.length)}.json`));
+
+  // The unsafe behavior would be list() skipping it and active() omitting the
+  // digest. Both must instead reject with the existing malformed-lease code.
+  await assert.rejects(() => e.leases.list(), error => error.code === 'OWA_GC_LEASE_MALFORMED',
+    'a symlinked record is malformed lease state, not absent lease state');
+  await assert.rejects(() => e.leases.active(NOW), error => error.code === 'OWA_GC_LEASE_MALFORMED');
+
+  let deletes = 0;
+  const guarded = Object.create(e.blobs);
+  guarded.delete = async digest => { deletes++; return e.blobs.delete(digest); };
+  await assert.rejects(
+    () => collectGarbage({ blobs: guarded, metadata: e.metadata, leases: e.leases, apply: true, pruneExpiredLeases: true, now: clock }),
+    error => error instanceof GcError && error.code === 'OWA_GC_LEASE_MALFORMED');
+  assert.equal(deletes, 0, 'GC aborted before any blob delete');
+  assert.equal(await e.blobs.has(orphan), true, 'the blob the lease protects survives');
+  assert.equal(existsSync(external), true, 'the external lease file still exists');
+  assert.equal(await bytesAt(external), record, 'the external lease bytes are byte-identical');
+  // Dry run reports the failure too, rather than a misleading candidate set.
+  await assert.rejects(() => collectGarbage({ blobs: e.blobs, metadata: e.metadata, leases: e.leases, now: clock }),
+    error => error instanceof GcError && error.code === 'OWA_GC_LEASE_MALFORMED');
+});
+
+test('a directory named like a lease record also fails closed', async t => {
+  const e = await env(t);
+  const orphan = await e.writeBlob('orphan beside a directory-shaped lease', { ageHours: 48 });
+  await mkdir(join(e.root, 'gc-leases', 'sha256', `${'f'.repeat(64)}.json`), { recursive: true });
+  await assert.rejects(() => e.leases.list(), error => error.code === 'OWA_GC_LEASE_MALFORMED');
+  let deletes = 0;
+  const guarded = Object.create(e.blobs);
+  guarded.delete = async digest => { deletes++; return e.blobs.delete(digest); };
+  await assert.rejects(
+    () => collectGarbage({ blobs: guarded, metadata: e.metadata, leases: e.leases, apply: true, now: clock }),
+    error => error instanceof GcError && error.code === 'OWA_GC_LEASE_MALFORMED');
+  assert.equal(deletes, 0);
+  assert.equal(await e.blobs.has(orphan), true);
+});
+
+test('non-json neighbours in the lease namespace are still ignored, not fatal', async t => {
+  const e = await env(t);
+  await e.leases.refresh([digestOf(Buffer.from('x'))], { ttlSeconds: 60 });
+  await writeFile(join(e.root, 'gc-leases', 'sha256', 'README.txt'), 'operator note', 'utf8');
+  await symlink('/nonexistent/target', join(e.root, 'gc-leases', 'sha256', 'stray-link'));
+  assert.equal((await e.leases.list()).length, 1, 'only the real lease record counts; strangers are ignored');
+});

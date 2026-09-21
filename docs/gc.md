@@ -124,6 +124,13 @@ records are validated on read — a malformed record, or one whose digest
 disagrees with its filename, **aborts the run** rather than being skipped. A
 lease that cannot be read is a lease that cannot be proven expired.
 
+The same applies to a `<hex>.json` entry that is not a real regular file — a
+symlink, a directory, any other object. It is malformed lease state and aborts
+the run; it is never followed or read. Silently skipping it would be the
+*opposite* of fail-closed: the entry may represent an **active** lease, and
+dropping it from the protection set could turn a protected blob into a deletion
+candidate. Non-`.json` neighbours in the lease namespace are ignored.
+
 Lease state is not part of artifact identity: it never appears in a manifest,
 canonical JSON, artifact digest, release record, OCI image, MCP schema or any
 public content response.

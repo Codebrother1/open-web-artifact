@@ -199,7 +199,14 @@ export class FilesystemLeaseStore{
     catch { throw new StorageOperationError('OWA_GC_LEASE_UNREADABLE'); }
     const out=[];
     for(const file of files){
-      if(!file.isFile()||!file.name.endsWith('.json'))continue;
+      // Unrelated neighbours that are not lease records are ignored. Anything
+      // NAMED as a lease record must be a real regular file. Dirent.isFile() is
+      // false for a symlink, a directory or any other object, and silently
+      // skipping such an entry would drop a possibly-ACTIVE lease from the
+      // protection set, turning a protected blob into a deletion candidate.
+      // Fail closed instead; the entry is never followed or read.
+      if(!file.name.endsWith('.json'))continue;
+      if(!file.isFile())throw new StorageOperationError('OWA_GC_LEASE_MALFORMED');
       const hex=file.name.slice(0,-'.json'.length);
       if(!HEX.test(hex))throw new StorageOperationError('OWA_GC_LEASE_MALFORMED');
       let record;
