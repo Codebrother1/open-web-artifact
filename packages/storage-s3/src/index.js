@@ -8,6 +8,48 @@ function enc(value) { return encodeURIComponent(value).replace(/[!'()*]/g, c => 
 function encodePath(path) { return path.split('/').map(enc).join('/'); }
 function canonicalQuery(params) { return [...params.entries()].sort(([a,av],[b,bv])=>a===b?av.localeCompare(bv):a.localeCompare(b)).map(([k,v])=>`${enc(k)}=${enc(v)}`).join('&'); }
 
+/** Fixed-shape storage failure. Never carries a provider body, URL or credential. */
+export class S3OperationError extends Error {
+  constructor(code) {
+    super(`storage operation failed: ${code}`);
+    this.name = 'S3OperationError';
+    this.code = code;
+  }
+}
+
+const XML_NAMED = Object.freeze({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" });
+
+/**
+ * Decode XML character data strictly. S3 escapes text content, so an opaque
+ * continuation token `a&b` arrives as `a&amp;b`; using the escaped bytes as the
+ * next token would silently change it. Supports the five XML named entities and
+ * decimal/hex character references. Anything else that looks like a reference
+ * — an unknown name, a bare `&`, an unterminated or out-of-range reference —
+ * is malformed and THROWS rather than being guessed at, so a corrupt listing
+ * fails closed instead of driving a wrong request or an endless page loop.
+ */
+export function decodeXmlText(text) {
+  if (typeof text !== 'string') throw new S3OperationError('OWA_GC_LIST_FAILED');
+  if (text.includes('<')) throw new S3OperationError('OWA_GC_LIST_FAILED'); // Not character data.
+  let out = '';
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch !== '&') { out += ch; continue; }
+    const end = text.indexOf(';', i + 1);
+    if (end < 0) throw new S3OperationError('OWA_GC_LIST_FAILED');
+    const ref = text.slice(i + 1, end);
+    if (Object.hasOwn(XML_NAMED, ref)) { out += XML_NAMED[ref]; i = end; continue; }
+    const numeric = /^#(?:x([0-9A-Fa-f]{1,6})|([0-9]{1,7}))$/.exec(ref);
+    if (!numeric) throw new S3OperationError('OWA_GC_LIST_FAILED');
+    const code = numeric[1] !== undefined ? parseInt(numeric[1], 16) : parseInt(numeric[2], 10);
+    // XML Char production: no NUL, no surrogates, nothing beyond U+10FFFF.
+    if (code === 0 || (code >= 0xD800 && code <= 0xDFFF) || code > 0x10FFFF) throw new S3OperationError('OWA_GC_LIST_FAILED');
+    out += String.fromCodePoint(code);
+    i = end;
+  }
+  return out;
+}
+
 export class S3BlobStore {
   constructor({endpoint,bucket,region='auto',accessKeyId,secretAccessKey,sessionToken=null,prefix='owa',addressingStyle='path',now=()=>new Date()}) {
     if (!endpoint || !bucket || !accessKeyId || !secretAccessKey) throw new Error('S3 endpoint, bucket, accessKeyId, and secretAccessKey are required');
@@ -40,25 +82,118 @@ export class S3BlobStore {
     return url.toString();
   }
 
-  async signedFetch(method,key,{body=null}={}) {
-    const now=this.now(), stamp=dateStamp(now), timestamp=amzDate(now), url=this.urlForKey(key), host=url.host;
+  /**
+   * Signed request. `query` is optional and defaults to no query string, so
+   * every pre-existing caller signs exactly the same canonical request as
+   * before; only GC's ListObjectsV2 passes signed query parameters.
+   * `url` overrides the key-derived URL for bucket-level operations.
+   */
+  async signedFetch(method,key,{body=null,query=null,url:overrideUrl=null}={}) {
+    const now=this.now(), stamp=dateStamp(now), timestamp=amzDate(now);
+    const url=overrideUrl??this.urlForKey(key);
+    const host=url.host;
+    // ONE serialization. The canonical query string is both what is signed and
+    // what is transmitted, byte for byte. Re-serializing the same logical query
+    // through URLSearchParams would use form encoding, where a space becomes
+    // "+" while SigV4 signed "%20": a valid signature for a different request.
+    const canonicalQueryString=query===null?'':canonicalQuery(query);
+    const target=`${url.origin}${url.pathname}${canonicalQueryString?`?${canonicalQueryString}`:''}`;
     const payloadHash=hashHex(body ?? '');
     const signingHeaders={'host':host,'x-amz-content-sha256':payloadHash,'x-amz-date':timestamp};
     if(this.sessionToken) signingHeaders['x-amz-security-token']=this.sessionToken;
     const signedHeaderNames=Object.keys(signingHeaders).sort();
     const canonicalHeaders=signedHeaderNames.map(name=>`${name}:${signingHeaders[name]}\n`).join('');
-    const canonicalRequest=[method,url.pathname,'',canonicalHeaders,signedHeaderNames.join(';'),payloadHash].join('\n');
+    const canonicalRequest=[method,url.pathname,canonicalQueryString,canonicalHeaders,signedHeaderNames.join(';'),payloadHash].join('\n');
     const scope=this.credentialScope(stamp);
     const stringToSign=['AWS4-HMAC-SHA256',timestamp,scope,hashHex(canonicalRequest)].join('\n');
     const signature=hmac(this.signingKey(stamp),stringToSign,'hex');
     const headers={'x-amz-content-sha256':payloadHash,'x-amz-date':timestamp};
     if(this.sessionToken) headers['x-amz-security-token']=this.sessionToken;
     headers.authorization=`AWS4-HMAC-SHA256 Credential=${this.accessKeyId}/${scope}, SignedHeaders=${signedHeaderNames.join(';')}, Signature=${signature}`;
-    return fetch(url,{method,headers,body});
+    return fetch(target,{method,headers,body});
   }
 
   async has(digest) { const res=await this.signedFetch('HEAD',this.key(digest)); if(res.status===404)return false; if(!res.ok)throw new Error(`S3 HEAD failed: ${res.status} ${await res.text()}`); return true; }
   async get(digest) { const res=await this.signedFetch('GET',this.key(digest)); if(!res.ok)throw new Error(`S3 GET failed: ${res.status} ${await res.text()}`); return new Uint8Array(await res.arrayBuffer()); }
   async put(digest,data) { const res=await this.signedFetch('PUT',this.key(digest),{body:Buffer.from(data)}); if(!res.ok)throw new Error(`S3 PUT failed: ${res.status} ${await res.text()}`); }
   async createUpload(digest,{expires=900}={}) { return {digest,method:'PUT',url:this.presign('PUT',this.key(digest),{expires}),expiresIn:expires}; }
+
+  /** Bucket-level URL for operations that address the bucket, not one object. */
+  bucketUrl() {
+    const url=new URL(this.endpoint);
+    if(this.addressingStyle==='virtual'){url.hostname=`${this.bucket}.${url.hostname}`;url.pathname='/';}
+    else url.pathname=`/${enc(this.bucket)}`;
+    return url;
+  }
+
+  /** The exact prefix GC is allowed to see. Nothing outside it is ever a candidate. */
+  blobPrefix() { return `${this.prefix}/blobs/sha256/`; }
+
+  /**
+   * Enumerate OWA blob objects via ListObjectsV2, confined to blobPrefix().
+   *
+   * Only keys matching the exact OWA grammar `<prefix>/blobs/sha256/<64 hex>`
+   * become results: a neighbouring object, a nested "directory", or a malformed
+   * key under the same prefix is ignored rather than returned, so GC can never
+   * offer an unrelated bucket object as a candidate. Pagination follows
+   * NextContinuationToken until the provider reports the listing complete.
+   */
+  async listBlobs({maxKeys=1000}={}) {
+    const prefix=this.blobPrefix();
+    const valid=new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}[0-9a-f]{64}$`);
+    const out=[]; let token=null; let pages=0;
+    do {
+      const query=new URLSearchParams();
+      query.set('list-type','2');
+      query.set('max-keys',String(maxKeys));
+      query.set('prefix',prefix);
+      // The token is signed and transmitted as an ordinary parameter value; the
+      // canonical encoder escapes it identically on both sides of the signature.
+      if(token!==null) query.set('continuation-token',token);
+      let res, text;
+      try {
+        res=await this.signedFetch('GET',null,{query,url:this.bucketUrl()});
+        text=await res.text();
+      } catch { throw new S3OperationError('OWA_GC_LIST_FAILED'); }
+      // Never surface a provider body: it can echo request details.
+      if(!res.ok) throw new S3OperationError('OWA_GC_LIST_FAILED');
+      for(const match of text.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g)){
+        const part=match[1];
+        const rawKey=part.match(/<Key>([^<]*)<\/Key>/)?.[1];
+        if(typeof rawKey!=='string')continue;
+        // Decode XML escaping BEFORE grammar validation, so a prefix containing
+        // an XML-significant character still matches its real object key.
+        const key=decodeXmlText(rawKey);
+        if(!valid.test(key))continue; // Not an OWA blob.
+        const size=Number(part.match(/<Size>([0-9]+)<\/Size>/)?.[1] ?? NaN);
+        const modified=new Date(part.match(/<LastModified>([^<]*)<\/LastModified>/)?.[1] ?? NaN);
+        if(!Number.isSafeInteger(size)||!Number.isFinite(modified.getTime())) throw new S3OperationError('OWA_GC_LIST_FAILED');
+        out.push({digest:`sha256:${key.slice(prefix.length)}`,size,lastModified:modified});
+      }
+      const truncated=/<IsTruncated>\s*true\s*<\/IsTruncated>/i.test(text);
+      const rawToken=truncated?(text.match(/<NextContinuationToken>([^<]*)<\/NextContinuationToken>/)?.[1] ?? null):null;
+      if(truncated&&rawToken===null) throw new S3OperationError('OWA_GC_LIST_FAILED');
+      // The token is opaque provider data: decode its XML escaping exactly, then
+      // hand the ORIGINAL value back as a plain query parameter. A malformed
+      // reference throws here, before another request or any deletion.
+      token=rawToken===null?null:decodeXmlText(rawToken);
+      if(token==='') throw new S3OperationError('OWA_GC_LIST_FAILED');
+      if(++pages>10_000) throw new S3OperationError('OWA_GC_LIST_FAILED');
+    } while(token!==null);
+    return out;
+  }
+
+  /**
+   * Delete exactly one validated blob key with storage credentials only.
+   * An OWA bearer is never involved. Missing objects are idempotent: S3 and R2
+   * both answer 204 for an absent key, and 404 is accepted for the same reason.
+   */
+  async delete(digest) {
+    if(!/^sha256:[0-9a-f]{64}$/.test(digest)) throw new S3OperationError('OWA_GC_INVALID_DIGEST');
+    let res;
+    try { res=await this.signedFetch('DELETE',this.key(digest)); }
+    catch { throw new S3OperationError('OWA_GC_DELETE_FAILED'); }
+    try { await res.arrayBuffer(); } catch {}
+    if(!res.ok&&res.status!==404) throw new S3OperationError('OWA_GC_DELETE_FAILED');
+  }
 }

@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { FilesystemBlobStore, FilesystemMetadataStore } from '../../storage-filesystem/src/index.js';
+import { FilesystemBlobStore, FilesystemLeaseStore, FilesystemMetadataStore } from '../../storage-filesystem/src/index.js';
 import { S3BlobStore } from '../../storage-s3/src/index.js';
 import { activateRelease, commitManifest, planManifest, resolveRequestPath } from '../../core/src/index.js';
 import { sha256 } from '../../spec/src/index.js';
@@ -42,6 +42,8 @@ function safeSiteRecord(site, slug) {
 export async function createDefaultStores({dataDir=resolve(process.env.OWA_DATA_DIR??'.owa-data')}={}){
   await mkdir(dataDir,{recursive:true});
   const metadata=new FilesystemMetadataStore(dataDir);
+  // Operational GC state. Lives beside metadata, never inside an artifact.
+  const leases=new FilesystemLeaseStore(dataDir);
   if((process.env.OWA_STORAGE??'filesystem')==='s3'){
     const blobs=new S3BlobStore({
       endpoint:process.env.OWA_S3_ENDPOINT,
@@ -53,9 +55,9 @@ export async function createDefaultStores({dataDir=resolve(process.env.OWA_DATA_
       prefix:process.env.OWA_S3_PREFIX??'owa',
       addressingStyle:process.env.OWA_S3_ADDRESSING_STYLE??'path'
     });
-    return {blobs,metadata,storageKind:'s3'};
+    return {blobs,metadata,leases,storageKind:'s3'};
   }
-  return {blobs:new FilesystemBlobStore(dataDir),metadata,storageKind:'filesystem'};
+  return {blobs:new FilesystemBlobStore(dataDir),metadata,leases,storageKind:'filesystem'};
 }
 
 /**
@@ -63,7 +65,7 @@ export async function createDefaultStores({dataDir=resolve(process.env.OWA_DATA_
  * once; the exported factories below differ only in which dispatchers they
  * expose on an HTTP origin. See docs/origins.md for the route matrix.
  */
-function createRuntime({blobs,metadata,uploadSecret=randomBytes(32).toString('hex'),publicBaseUrl=null,auth={},audit=null,content=null}={}){
+function createRuntime({blobs,metadata,leases=null,uploadSecret=randomBytes(32).toString('hex'),publicBaseUrl=null,auth={},audit=null,content=null}={}){
   if(!blobs||!metadata)throw new Error('blobs and metadata stores are required');
   const authorizer = createAuthorizer(auth); // Required by default; missing secret fails closed.
   if (audit !== null && typeof audit !== 'function') throw new AuthError('OWA_AUTH_CONFIG');
@@ -118,7 +120,8 @@ function createRuntime({blobs,metadata,uploadSecret=randomBytes(32).toString('he
       const body=await readJson(req);
       authorize(req,slug,['plan']); // A slow body cannot extend authorization.
       const origin=publicBaseUrl??base;
-      const plan=await planManifest({manifest:body.manifest,blobs,uploadFactory:async digest=>{
+      // `leases` is operational only: it changes no request or response field.
+      const plan=await planManifest({manifest:body.manifest,blobs,leases,uploadFactory:async digest=>{
         // Plan is not permission to mint storage grants. Check at each mint,
         // after asynchronous existence checks, including expiration at that time.
         const claims=authorize(req,slug,['plan','upload']);
