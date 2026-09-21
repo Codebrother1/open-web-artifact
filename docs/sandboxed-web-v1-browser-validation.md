@@ -1,9 +1,12 @@
-# `sandboxed-web-v1`: optional manual browser validation
+# `sandboxed-web-v1`: browser validation
 
-**Status: not run.** This is a procedure and an empty report template, not a
-record of successful browser execution. Browser automation is not implemented.
-No Playwright installation, browser download or third-party dependency is
-required by `npm test` or this guide.
+Two kinds of browser evidence exist for this profile:
+
+1. an **automated real-browser suite**, [`packages/browser-tests`](../packages/browser-tests/README.md)
+   (optional, package-local Playwright; not required by `npm test` or any
+   runtime package), whose dated record is in the next section;
+2. the **manual procedure** below, for an operator who wants to repeat the
+   observations by hand in a browser/version of their choosing.
 
 Read the [profile](sandboxed-web-v1.md) and
 [pre-implementation threat model](sandboxed-web-v1-threat-model.md) first.
@@ -11,6 +14,75 @@ Deterministic HTTP tests establish headers, MIME selection and byte preservation
 they do not prove browser enforcement. The probes contain real attempted
 operations if served without policy. Do not open them as `file:` URLs or on an
 unprotected static server, and do not enter real secrets into them.
+
+## Automated real-browser evidence (recorded)
+
+**Scope of the claim.** The behaviors listed below were *observed* under the
+listed engine versions on the recorded date. This is evidence for the existing
+`sandboxed-web-v1` contract in those engines, not a proof of browser-engine
+vulnerability resistance, malware safety, HTML sanitization, universal
+future-browser behavior, private content, cookie stripping, service-worker
+cleanup, blocking of all navigation, a network air gap, or protection after
+downloaded content is opened elsewhere. Do not read "browser sandbox proven
+secure" into any row.
+
+**Record — 2026-09-21.** Playwright 1.63.0 (package-local lockfile), Node
+v24.14.1, Linux 6.18 x86_64 (Amazon Linux 2023, glibc 2.34), headless, run via
+`OWA_BROWSERS=chromium,firefox npm run test:browser`; 28 tests per engine.
+
+| Engine | Version actually executed | Result |
+| --- | --- | --- |
+| Chromium | 153.0.8010.12 (Playwright build v1243, headless shell) | 28/28 — 25 PASS, 3 EXPECTED LIMIT |
+| Firefox | 155.0 (Playwright build v1543) | 28/28 — 25 PASS, 3 EXPECTED LIMIT |
+| WebKit | 26.6 (Playwright build v2359) — **NOT RUN** | The engine binary requires `GLIBC_2.38` (and Ubuntu-24.04 runtime libraries) that this host's glibc 2.34 cannot provide; Playwright refused to start it. No result is claimed for WebKit; rerun on a supported host (`OWA_BROWSERS=webkit`). |
+
+Every enforcement test first verified, through the browser's own response
+object, that the top-level response carried the exact eight profile headers and
+the exact CSP; no test-only policy was used. Observed behaviors, both engines
+unless noted (A = blocked before any request reached a server; B = request
+reached a server, browser refused the response; C = top-level navigation,
+outside the subresource policy):
+
+| Behavior | Chromium 153 | Firefox 155 |
+| --- | --- | --- |
+| Inline classic script; inline module script (+ its `import`) | no side effect; module file never fetched (A) | same |
+| Inline event handlers (`onload` on a data: image that *did* load, `onerror`, `onclick` via real click, `<body onload>`), attributes verified parsed intact | none ran | same |
+| Same-artifact external classic/module script, `modulepreload` | not executed, 0 server hits (A) | same |
+| Cross-origin (capture-origin) script | not executed, 0 capture hits (A) | same |
+| Inline `<style>` and `style=""` | applied (computed style) | same |
+| External stylesheets (same-artifact, capture) and inline `@import` | not applied, 0 hits (A) | same |
+| `data:` image | decoded 1×1 | same |
+| Network images (same-artifact, capture, CSS background) | errored, 0 hits (A) | same |
+| `@font-face` → capture | face status `error`, 0 hits (A) | same |
+| `<audio>`/`<video>` (capture, same-artifact) | `readyState 0`, `MEDIA_ERR_SRC_NOT_SUPPORTED`, 0 hits (A) | same |
+| `<object>`/`<embed>` | no request, no child document (A) | same |
+| Outgoing `<iframe>` (same-origin, capture) | no request (A); child frames are error/blank documents | same (empty child frame URL) |
+| Form submit via real click (POST/GET to capture, GET same-origin) | 0 requests; console diagnostic | 0 requests; no page-console diagnostic observed |
+| Author `<base href>` | `document.baseURI` = document URL; relative link resolves on content origin | same |
+| `target=_blank` / named-target link via real click | no new page, 0 requests; console diagnostic | no new page, 0 requests; diagnostic for `_blank` only |
+| Incoming framing by an unprotected parent (`frame-ancestors 'none'` + XFO) | request reached listener (`Sec-Fetch-Dest: iframe`, 200) but the child is `chrome-error://` with no artifact content, while an unprotected control frame beside it rendered (B) | request reached listener; protected child never became an inspectable document, control frame rendered (B) |
+| Direct SVG document (script, `onload`, `onclick`, external `<image>`s) | parsed as `<svg>` with attributes intact; no script/handler effect; 0 subresource hits (A) | same |
+| HTML bytes under `application/x-probe` | `Content-Disposition: attachment` → download event; page stayed `about:blank`; bytes unmodified | same |
+| HTML bytes under `text/plain` | `document.contentType text/plain`, rendered as text | same |
+| `/health`, `/v1/...` on the content listener (site with SPA fallback) | fixed 404 with profile; non-reserved path still falls back | same |
+| `?site=site-b` on `site-a.localhost` | site A served | same |
+| `site-a.localhost` vs `site-b.localhost` | each its own artifact; unbound host 404 (URL-origin binding only) | same |
+| Active release changed via core `activateRelease` | next navigation and reload showed the new release; server re-read the site record each time; `no-store` on every response | same |
+| **LIMIT** pre-existing service worker on a reused origin | worker installed on an unprotected bootstrap (`clients.claim`), then the origin fronted the real protected response: the worker served its own document, its page script **executed**, 0 network hits for the URL (`fromServiceWorker: true`); fresh context → exact profile | same (worker substituted; script executed; 0 hits) |
+| **LIMIT** ordinary self-targeted link (C) | navigated to the capture origin; no `Referer`; destination outside the profile | same |
+| **LIMIT** pre-existing cookie for the content origin | sent on the top-level request; response still fully protected | same |
+
+Engine differences observed: Firefox surfaces no page-console message when a
+sandboxed form submission or a named-target popup is refused (Chromium does); the
+outcomes — zero requests, same document still live, one page in the context —
+were identical. Firefox represents the refused frames as empty-URL frames rather
+than an error-page URL. Neither difference changes the policy or the profile.
+
+To reproduce, see the package [README](../packages/browser-tests/README.md).
+Rerun on each browser/version you intend to support; a result for one engine is
+not evidence for another.
+
+## Manual procedure
 
 ## 1. Isolate the environment and record it
 
@@ -361,7 +433,9 @@ content origins remain a mandatory operator assumption regardless of test result
 Leave a row **not run** until actually observed. Use `pass`, `fail`, `inconclusive`
 or `not run` with evidence and browser-specific notes; do not prefill success.
 At minimum, record one complete browser/version result for any claimed manual
-assessment. No browser result is claimed by this document.
+assessment. The template below is for *manual* runs and is intentionally left
+blank; the automated record above is the only browser result this document
+claims.
 
 ```text
 Overall status: not run

@@ -1,0 +1,7 @@
+# Ephemeral Playwright output only. Browser binaries live in Playwright's own
+# cache outside the repository and are never committed.
+node_modules/
+test-results/
+playwright-report/
+blob-report/
+.playwright/

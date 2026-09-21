@@ -288,6 +288,24 @@ explicit test endpoint or credentials are absent; configured service failures fa
 See [the integration test guide](docs/integration-tests.md) for exact environment
 variables, local MinIO setup, CI examples, isolation/cleanup, and live-test limitations.
 
+### Optional real-browser validation
+
+`packages/browser-tests` is an isolated, package-local Playwright suite that runs
+adversarial artifacts through the real content-only listener in actual browser
+engines and records whether they enforce `sandboxed-web-v1` as documented — and
+demonstrates the profile's documented limits (pre-existing service worker,
+ordinary navigation, request cookies). It is optional: the root has no
+dependencies, `npm test` needs no browser, and nothing in the runtime imports it.
+
+```bash
+npm --prefix packages/browser-tests ci --ignore-scripts        # Playwright, pinned
+npm --prefix packages/browser-tests run install-browsers      # Chromium, Firefox, WebKit
+npm run test:browser                                          # OWA_BROWSERS=chromium,firefox to subset
+```
+
+The dated evidence record — exact engines and versions actually executed, and
+any engine not run — lives in [browser validation](docs/sandboxed-web-v1-browser-validation.md).
+
 ## OCI / ORAS transport
 
 Export the exact same OWA artifact as an OCI image layout:
@@ -418,9 +436,12 @@ Read the [origin architecture](docs/origins.md),
 [threat model](docs/sandboxed-web-v1-threat-model.md),
 [profile contract](docs/sandboxed-web-v1.md), [auth guide](docs/auth.md),
 [GC guide](docs/gc.md), [integrity guide](docs/integrity.md), and
-[optional browser guide](docs/sandboxed-web-v1-browser-validation.md).
+[browser validation record](docs/sandboxed-web-v1-browser-validation.md).
 Combined deterministic tests prove HTTP/auth policy and byte preservation, not
-browser enforcement; browser validation remains **not run**.
+browser enforcement. Real-browser enforcement of `sandboxed-web-v1` was observed
+with the optional `packages/browser-tests` suite in Chromium 153.0.8010.12 and
+Firefox 155.0 on 2026-09-21 (WebKit not run on that host — see the record); that
+is dated evidence for those engines, not a proof of universal browser security.
 
 ## Next milestones
 
