@@ -4,27 +4,36 @@ An experimental open specification and reference implementation for **portable, 
 
 The thesis: an AI agent, CLI, CI job, or application should be able to produce one web artifact that can be stored, moved, signed, and served by different hosts without adopting each host's private deployment model.
 
-## v0.2 status
+## Status
 
-The prototype now proves:
+| | |
+| --- | --- |
+| **Software / reference implementation** | **v0.4.0 release candidate** — experimental; see [CHANGELOG](CHANGELOG.md) and the [release checklist](docs/release.md) |
+| **Specification** | **v0.2 draft** ([docs/spec-v0.2.md](docs/spec-v0.2.md)); manifest `specVersion` **`owa.dev/v1`**, media type `application/vnd.openwebartifact.site.v1+json` |
+| **Runtime** | Node.js **22+** |
+| **CI** | **9 required checks**, all secretless: Linux/macOS/Windows × Node 22/24, real MinIO, Chromium/Firefox/WebKit, real ORAS + Zot ([docs/ci.md](docs/ci.md)) |
+| **Distribution** | source / reference implementation; every repository package is private, nothing is published to npm |
 
-- content-addressed files using SHA-256
-- deterministic canonical manifest identity
-- immutable releases
-- blob deduplication
-- mutable site -> active release pointer
-- rollback without re-upload
-- two-phase `plan -> direct upload -> commit` HTTP publishing
-- local signed upload URLs for the filesystem reference backend
-- S3 Signature V4 presigned uploads for R2/S3-compatible storage
-- filesystem and S3-compatible blob-store adapters
-- OCI image-layout export/import using the OWA manifest as artifact metadata
-- OCI layouts whose registry round-trip is continuously verified with ORAS v1.3.4 against a real Zot v2.1.21 registry
-- HTTP serving gateway
-- local and remote CLI workflows
-- required-by-default, site- and capability-scoped HTTP bearer authentication
-- optional local stdio MCP tools as a thin client over the same HTTP protocol
-- conformance tests, including the published AWS SigV4 test vector
+The software version and the protocol version are separate domains: v0.4.0
+implements the v0.2 protocol draft, and the protocol itself is not "v0.4".
+"v0.4" elsewhere in these docs (for example the content-only origin topology)
+refers to the reference software. This is **not yet a production multi-tenant
+hosting service** — see [Security / production status](#security--production-status).
+
+## What the reference implementation proves
+
+- content-addressed files using SHA-256 and deterministic canonical manifest identity, with an immutable published test vector, a portable multi-operation conformance corpus and a seeded property suite
+- deterministic, locale-independent directory packing: `manifest.files` ordered by Unicode code-point order of complete artifact paths, proven on Linux, macOS and Windows
+- immutable releases, blob deduplication, a mutable site -> active release pointer, and rollback without re-upload
+- two-phase `plan -> direct upload -> commit` HTTP publishing with commit-boundary integrity: a release is persisted only after every unique blob is verified against its manifest SHA-256 **and** size
+- local signed upload URLs for the filesystem backend; S3 Signature V4 presigned uploads for R2/S3-compatible storage with a mediated-by-default / explicitly-enforced direct-upload trust model
+- filesystem and S3-compatible blob-store adapters; live Cloudflare R2 evidence (operator-run) and a real MinIO integration lane in CI
+- conservative mark/sweep blob GC with publish leases protecting in-flight publishes
+- required-by-default, site- and capability-scoped HTTP bearer authentication; the `sandboxed-web-v1` static-preview response profile; a content/control origin split
+- real-browser enforcement evidence for `sandboxed-web-v1` in Chromium, Firefox and WebKit
+- OCI image-layout export/import using the OWA manifest as artifact metadata, with the registry round-trip continuously verified with ORAS v1.3.4 against a real Zot v2.1.21 registry, including duplicate-content file entries
+- an HTTP serving gateway, local and remote CLI workflows, and optional local stdio MCP tools as a thin client over the same HTTP protocol
+- conformance tests including the published AWS SigV4 test vector, and nine secretless GitHub Actions checks
 
 The core, HTTP server, and CLI use Node.js built-ins and have **zero third-party
 runtime dependencies**. The separately installed, optional MCP adapter adds three
@@ -408,16 +417,22 @@ docs/
   manifest.schema.json
   auth.md
   origins.md
+  sandboxed-web-v1.md          + threat model and browser validation record
   gc.md
   integrity.md
+  oci.md
   mcp.md
+  ci.md
   integration-tests.md
+  release.md                   maintainer release checklist and readiness table
+  release-notes-v0.4.0.md      release notes draft
+  conformance/                 portable corpus and cross-language guide
   test-vectors/
 ```
 
 ## Security / production status
 
-This is a protocol prototype, **not a production multi-tenant hosting service yet**.
+This is an experimental reference implementation, **not a production multi-tenant hosting service yet**.
 The [HTTP auth overlay](docs/auth.md) enforces exact site/capability boundaries
 for publishing, activation, and release inspection. It remains required by default;
 only explicit direct-loopback dev mode is tokenless. Tokens do not provide full
@@ -438,7 +453,7 @@ and commit verifies each blob's digest and size, not its ownership. Local operat
 access remains gated by filesystem permissions; storage and metadata are trusted.
 
 A production deployment needs clean, cookieless, content-only per-site origins
-separate from control/admin/API services. **v0.4 implements that topology**: see
+separate from control/admin/API services. **The v0.4.0 reference server implements that topology**: see
 [control and content origins](docs/origins.md). Configure a content origin
 (`OWA_CONTENT_BASE_DOMAIN`) and the server runs a control listener plus a
 content-only listener that binds one `Host` to one site, exposes no control
@@ -446,8 +461,9 @@ route, and drops the `?site=` selector. **With no content origin configured the
 server still runs the legacy shared-origin prototype**, where `?site=` shares an
 origin and protected APIs exist on all hosts; it prints a warning saying so.
 No-store does not erase existing service workers, caches or saved copies. TLS,
-secret custody, safe proxy logging, quotas, garbage collection and broader isolation
-remain operator responsibilities or future work.
+secret custody, safe proxy logging, quotas and broader tenant isolation remain
+operator responsibilities; blob garbage collection is provided (below) but release
+retention is not.
 
 Unreferenced blob objects (abandoned uploads and other true orphans) can be
 reclaimed with the conservative mark/sweep collector. It is dry-run by default,
@@ -485,12 +501,13 @@ of universal browser security.
 
 ## Next milestones
 
-1. Formal canonicalization compatibility suite across at least two languages.
-2. Broader live integration evidence against R2 and MinIO/S3.
-3. Production content/control origin isolation and separately reviewed interactive security profiles.
-4. Garbage collection and retention semantics for unreferenced blobs.
-5. OCI registry interoperability beyond the tested ORAS v1.3.4 / Zot v2.1.21 pair; registry transport itself stays with ORAS.
-6. Optional static capabilities (data/forms/secret proxy) only after the base lifecycle is stable.
+Directions that remain open after v0.4.0 (the portable corpus, origin split, GC,
+integrity gate, MinIO/browser/ORAS+Zot lanes and Unicode pack ordering are done):
+
+1. Independent, cross-language canonicalization and conformance-corpus implementation evidence beyond the reference runner.
+2. Broader operator-run live evidence where it adds information: additional S3-compatible providers, registries beyond the tested ORAS v1.3.4 / Zot v2.1.21 pair, authenticated/TLS registry transport (registry transport itself stays with ORAS).
+3. Production and multi-tenant hardening beyond the documented prototype boundaries: tenant-private storage, token revocation/key rings, release retention, quotas.
+4. Separately reviewed future interactive capabilities (data/forms/secret proxies) only after the static lifecycle is stable; `sandboxed-web-v1` stays script-disabled.
 
 ## License
 

@@ -359,7 +359,9 @@ requires the [auth overlay's capabilities](auth.md#capability-matrix) before
 protected storage work. Encoded slashes and percent-looking scopes fail the site
 grammar, rather than reaching metadata as unconstrained selectors. Required auth
 remains the default; tokenless control access is only explicit direct-loopback
-dev mode. Content-only origin separation is still future architectural work.
+dev mode. Content-only origin separation is supplied by the separate content
+listener described in [origins.md](origins.md), not by these checks; the legacy
+shared-origin server does not provide it.
 
 Storage/metadata remains trusted. The composed gateway checks returned site
 records for the requested slug and `s_` plus 20 lowercase hexadecimal digits,

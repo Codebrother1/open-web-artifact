@@ -213,6 +213,7 @@ export async function fixture(t, { mode = 'required', duplicate = false, content
     catch { throw new Error('Official MCP initialize failed (diagnostics intentionally withheld)'); }
     assert.ok(client.getServerCapabilities()?.tools, 'initialize advertises tools');
     assert.equal(client.getServerVersion()?.name, 'owa-mcp');
+    assert.equal(client.getServerVersion()?.version, '0.4.0', 'initialize advertises the software release version');
     const discovered = await client.listTools();
     assertSafe(JSON.stringify(discovered), secrets(), { fileBytes: true });
     child.tools = discovered.tools;
