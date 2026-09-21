@@ -40,6 +40,19 @@ The MinIO service is pinned to a **source commit**, not a floating tag, and the
 Playwright engines come from the exact package-local lockfile — see the lane
 descriptions below.
 
+## Job summaries
+
+Every `node --test` script in the root `package.json` runs the ordinary `spec`
+reporter on stdout **plus** `.github/scripts/test-summary-reporter.mjs`, which is
+a no-op unless `GITHUB_STEP_SUMMARY` is set (only inside Actions). There it
+appends, per script, the pass/fail/skip counts and each failing test's name,
+location and full error to the job summary shown on the run page. The browser
+suite's evidence reporter does the same with its engine versions, behaviour
+matrix and any failing cell's diagnostics. Failures are therefore readable from
+the public run page without downloading raw logs; the suites print no
+credentials, signed URLs or provider bodies by construction, so nothing
+sensitive can land in a summary.
+
 ## Lane 1 — `CI`: offline cross-platform correctness
 
 Six matrix cells, none `continue-on-error`:
@@ -89,10 +102,11 @@ source repository at the tag's commit and verifies the identity twice:
 1. `git clone --branch RELEASE.2025-10-15T17-29-55Z` must resolve to commit
    **`9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a`** (`git rev-parse HEAD` is
    compared; a mismatch fails the job);
-2. the binary is built with MinIO's own Makefile recipe (`-tags kqueue,osusergo
+2. the binary is built with MinIO's own Makefile recipe (`-tags kqueue
    -trimpath`, ldflags from `buildscripts/gen-ldflags.go` with
-   `MINIO_RELEASE=RELEASE`) and `minio --version` must print exactly
-   `version RELEASE.2025-10-15T17-29-55Z (commit-id=9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a)`.
+   `MINIO_RELEASE=RELEASE`) and `minio --version` must report
+   `RELEASE.2025-10-15T17-29-55Z` together with commit
+   `9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a`.
 
 The Go toolchain is pinned too: `GOTOOLCHAIN=go1.24.8` (the `toolchain` line of
 MinIO's `go.mod` at that commit), fetched through the Go module proxy and
