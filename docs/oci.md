@@ -71,7 +71,10 @@ layouts do). The requested `ref` is the **only** selector, and selection is
 3. Exactly **one** descriptor MUST match. **Zero** matches fail as *reference not
    found*; **more than one** exact match fails as *ambiguous*.
 4. A missing `annotations` object, a missing key, a `null`, number or boolean
-   value, an empty string, or any different string **does not match**.
+   value, or any different string **does not match**. An empty string is not
+   special: under exact equality it matches only when the caller explicitly
+   requested the empty string. The CLI does not accept an empty `--ref`, but the
+   library-level reader/writer retain that historical exact-string behaviour.
 5. Descriptor **order carries no meaning** and never breaks a tie: requesting
    `latest` does **not** fall back to `index.manifests[0]`, duplicates are not
    resolved first-wins or last-wins, and there is no "first valid-looking
