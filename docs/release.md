@@ -11,7 +11,7 @@ Three version numbers live in this repository and they do **not** move together:
 
 | Domain | Current value | Where it lives | What moves it |
 | --- | --- | --- | --- |
-| **Software / reference implementation** | **v0.4.0** (release candidate until tagged) | every `package.json` `version`, `CHANGELOG.md`, the Git tag, the GitHub Release title | a software release |
+| **Software / reference implementation** | **v0.4.0** | every `package.json` `version`, `CHANGELOG.md`, the Git tag, the GitHub Release title | a software release |
 | **Protocol / specification draft** | **v0.2 (Draft)** | [`docs/spec-v0.2.md`](spec-v0.2.md), the conformance corpus under `docs/conformance/v0.2/` | a new spec draft, decided separately |
 | **Manifest `specVersion`** | **`owa.dev/v1`** with media type `application/vnd.openwebartifact.site.v1+json` | `packages/spec/src/index.js`, every manifest | an incompatible manifest change, decided separately |
 
@@ -44,7 +44,7 @@ this checklist does not make).
 | Protocol identity | READY | Spec remains v0.2 draft; `specVersion` `owa.dev/v1`; media type `application/vnd.openwebartifact.site.v1+json`; canonical JSON and artifact digest unchanged. `docs/test-vectors/basic/*` byte-identical (whole-file SHA-256 pinned in [conformance/README.md](conformance/README.md)). |
 | Package metadata | READY | 13 `package.json` files all `0.4.0`, all `private: true`, all `engines.node >=22`; the two package-local lockfiles (`packages/mcp`, `packages/browser-tests`) record `0.4.0`; dependency versions unchanged (`@modelcontextprotocol/server` 2.0.0, `@modelcontextprotocol/client` 2.0.0, `@playwright/test` 1.63.0). No workspaces, no package manager tooling. |
 | MCP server-info version string | READY | `packages/mcp/src/adapter.js` advertises `{ name: 'owa-mcp', version: '0.4.0' }` to MCP clients, and the official SDK initialize test asserts that version at the protocol boundary. This is software metadata only; it does not affect the OWA protocol. |
-| Changelog | READY | `CHANGELOG.md` has `## 0.4.0 - Unreleased` summarizing merged work since 0.2.0; no invented 0.3.0 release (none was ever tagged); older sections intact. The date is filled in at tag time. |
+| Changelog | READY | `CHANGELOG.md` has the final `## 0.4.0 - 2026-09-21` section summarizing merged work since 0.2.0; no invented 0.3.0 release (none was ever tagged); older sections intact. |
 | Conformance corpus | READY | Portable `owa-conformance-v1` corpus under `docs/conformance/v0.2/` (canonical, parse, manifest, path, request, pack, blob) incl. Unicode pack-ordering and duplicate-content OCI anchors; `npm run test:conformance` 297 tests; static expectations authored independently of production code. |
 | Property testing | READY | Seeded (`0x4f574132`) deterministic properties, 424 scheduled iterations (`npm run test:property`); no wall-clock randomness. |
 | Cross-platform CI | READY | `CI` workflow: `offline (ubuntu\|macos\|windows-latest, node 22\|24)` — 6 required cells, secretless, `pull_request` + `push: main`. See [ci.md](ci.md). |
@@ -76,11 +76,11 @@ Every item must hold **before** the tag is created. Pull-request checks alone ar
 workflows must run and complete green on the exact merge commit.
 
 - [ ] The release-prep PR (closes #27) has been reviewed and merged.
-- [ ] The `main` commit to be tagged is recorded here: `__________`.
+- [ ] Select and record the exact reviewed `main` commit only after the final release-cut PR is merged and that commit's `push` workflows are all green.
 - [ ] Post-merge `main` GitHub Actions — `CI` (6 cells), `MinIO`, `Browsers`, `OCI` — have all **completed green on that commit** (not merely on the PR head).
 - [ ] Zero unexpected open issues or pull requests that are release blockers.
 - [ ] Every `package.json` version is exactly `0.4.0` and every package is `private: true` (see the verification script below).
-- [ ] `CHANGELOG.md` has the `0.4.0` section; replace `Unreleased` with the tag date at tag time.
+- [ ] `CHANGELOG.md` has the final `0.4.0` release date (`2026-09-21`) and no `Unreleased` marker for this release.
 - [ ] `docs/test-vectors/basic/*` are byte-identical to the pinned hashes (`sha256sum docs/test-vectors/basic/*`).
 - [ ] No secrets, temporary files, logs or local configuration are tracked (`git ls-files | grep -iE '\.env|\.log$|secret|credential'` is empty).
 - [ ] `git status --porcelain` is empty on the checkout being tagged.
@@ -130,8 +130,8 @@ sha256sum docs/test-vectors/basic/*
 ## Tag policy
 
 - Proposed tag: **`v0.4.0`**.
-- The tag MUST point exactly at the final reviewed `main` release commit recorded
-  in the pre-tag checklist — never at a PR head or a later commit.
+- The tag MUST point exactly at the final reviewed `main` release commit selected
+  after its post-merge push workflows are green — never at a PR head or a later commit.
 - Prefer an **annotated** tag when creating it with git/CLI, e.g.
   `git tag -a v0.4.0 <commit> -m "Open Web Artifact v0.4.0"` followed by
   `git push origin v0.4.0`. The repository has adopted no tag-signing policy;
@@ -154,7 +154,7 @@ sha256sum docs/test-vectors/basic/*
 
 ## Post-tag verification
 
-- [ ] `git rev-parse v0.4.0^{commit}` equals the recorded `main` release commit.
+- [ ] `git rev-parse v0.4.0^{commit}` equals the selected final reviewed `main` release commit.
 - [ ] The GitHub Release points at tag `v0.4.0` and therefore at that commit.
 - [ ] The release title is exactly `Open Web Artifact v0.4.0`.
 - [ ] The source `.zip` and `.tar.gz` archives are available from the release page.

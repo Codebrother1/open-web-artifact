@@ -6,7 +6,7 @@ remains the v0.2 specification draft and every manifest keeps `specVersion`
 There was no tagged 0.3.0 release; everything below was merged between 0.2.0 and
 0.4.0.
 
-## 0.4.0 - Unreleased
+## 0.4.0 - 2026-09-21
 
 First tagged release of the reference implementation (source-only; repository
 packages stay private). Protocol identity is unchanged: spec v0.2 draft,
