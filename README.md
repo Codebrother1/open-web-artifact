@@ -321,6 +321,7 @@ packages/
   storage-s3/          dependency-free S3/R2 SigV4 blob backend
   transport-oci/       OCI image-layout export/import
   server/              artifactd control listener + content listener
+  gc/                  operational blob garbage collector (dry run by default)
   cli/                 local/remote publish + OCI commands
   mcp/                 optional SDK-based stdio client of the HTTP API
   conformance/         protocol and portability tests
@@ -331,6 +332,7 @@ docs/
   manifest.schema.json
   auth.md
   origins.md
+  gc.md
   mcp.md
   integration-tests.md
   test-vectors/
@@ -370,9 +372,24 @@ No-store does not erase existing service workers, caches or saved copies. TLS,
 secret custody, safe proxy logging, quotas, garbage collection and broader isolation
 remain operator responsibilities or future work.
 
+Unreferenced blob objects (abandoned uploads and other true orphans) can be
+reclaimed with the conservative mark/sweep collector. It is dry-run by default,
+and **every stored release is a GC root** — active, inactive, rollback targets
+and expired-lifecycle releases all keep their blobs, and no release record is
+ever deleted:
+
+```bash
+npm run gc                 # preview what would be reclaimed
+npm run gc -- --apply      # reclaim it
+```
+
+See [blob garbage collection](docs/gc.md). Release retention/pruning is
+deliberately not implemented.
+
 Read the [origin architecture](docs/origins.md),
 [threat model](docs/sandboxed-web-v1-threat-model.md),
-[profile contract](docs/sandboxed-web-v1.md), [auth guide](docs/auth.md), and
+[profile contract](docs/sandboxed-web-v1.md), [auth guide](docs/auth.md),
+[GC guide](docs/gc.md), and
 [optional browser guide](docs/sandboxed-web-v1-browser-validation.md).
 Combined deterministic tests prove HTTP/auth policy and byte preservation, not
 browser enforcement; browser validation remains **not run**.

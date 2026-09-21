@@ -1,0 +1,634 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdir, mkdtemp, readdir, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  FilesystemBlobStore, FilesystemLeaseStore, FilesystemMetadataStore
+} from '../../storage-filesystem/src/index.js';
+import { S3BlobStore } from '../../storage-s3/src/index.js';
+import { PUBLISH_LEASE_TTL_SECONDS, commitManifest, planManifest, publishDirectory } from '../../core/src/index.js';
+import { artifactDigest, canonicalJson, validateManifest } from '../../spec/src/index.js';
+import { DEFAULT_GRACE_SECONDS, GcError, collectGarbage, formatReport } from '../src/index.js';
+
+const HOUR = 3600 * 1000;
+const NOW = new Date('2026-06-01T12:00:00.000Z');
+const clock = () => NOW;
+const digestOf = bytes => `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+
+function manifestFor(files, { expiresAt = null } = {}) {
+  const manifest = {
+    specVersion: 'owa.dev/v1',
+    artifactType: 'application/vnd.openwebartifact.site.v1+json',
+    entrypoint: files[0].path,
+    files: files.map(file => ({
+      path: file.path, digest: digestOf(Buffer.from(file.text, 'utf8')),
+      size: Buffer.byteLength(file.text), mediaType: file.mediaType ?? 'text/html'
+    })),
+    access: { visibility: 'public' },
+    lifecycle: { expiresAt }
+  };
+  validateManifest(manifest);
+  return manifest;
+}
+
+/** A filesystem environment with real stores and an injectable clock. */
+async function env(t) {
+  const root = await mkdtemp(join(tmpdir(), 'owa-gc-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const blobs = new FilesystemBlobStore(root);
+  const metadata = new FilesystemMetadataStore(root);
+  const leases = new FilesystemLeaseStore(root, { now: clock });
+  let siteCounter = 0;
+
+  /** Write a blob and backdate it so grace-period behavior is deterministic. */
+  async function writeBlob(text, { ageHours = 48 } = {}) {
+    const bytes = Buffer.from(text, 'utf8');
+    const digest = digestOf(bytes);
+    await blobs.put(digest, bytes);
+    const when = new Date(NOW.getTime() - ageHours * HOUR);
+    await utimes(blobs.path(digest), when, when);
+    return digest;
+  }
+
+  async function addRelease(slug, files, { active = true, expiresAt = null } = {}) {
+    const manifest = manifestFor(files, { expiresAt });
+    const id = `s_${createHash('sha256').update(slug).digest('hex').slice(0, 20)}`;
+    const releaseId = `r_${createHash('sha256').update(`${slug}:${siteCounter++}`).digest('hex').slice(0, 20)}`;
+    const existing = await metadata.getSite(slug);
+    const site = existing ?? { id, slug, activeReleaseId: null, createdAt: NOW.toISOString() };
+    if (active) site.activeReleaseId = releaseId;
+    await metadata.saveSite(site);
+    await metadata.saveRelease(site.id, {
+      id: releaseId, artifactDigest: artifactDigest(manifest), createdAt: NOW.toISOString(), manifest
+    });
+    return { site, releaseId, manifest };
+  }
+
+  const run = options => collectGarbage({ blobs, metadata, leases, now: clock, ...options });
+  return { root, blobs, metadata, leases, writeBlob, addRelease, run };
+}
+
+// ------------------------------------------------------ retention roots ---
+
+test('1-5. every stored release is a root and its blobs always survive', async t => {
+  const e = await env(t);
+  // Active, inactive, a very old rollback target, and an already-expired
+  // lifecycle release. None of these may ever become a candidate.
+  const active = await e.writeBlob('active release body');
+  const inactive = await e.writeBlob('inactive release body');
+  const rollback = await e.writeBlob('ancient rollback body', { ageHours: 24 * 365 * 3 });
+  const expired = await e.writeBlob('expired lifecycle body');
+  const shared = await e.writeBlob('shared across two releases');
+
+  await e.addRelease('alpha', [{ path: '/index.html', text: 'inactive release body' }, { path: '/s.html', text: 'shared across two releases' }], { active: false });
+  await e.addRelease('alpha', [{ path: '/index.html', text: 'active release body' }, { path: '/s.html', text: 'shared across two releases' }], { active: true });
+  await e.addRelease('beta', [{ path: '/index.html', text: 'ancient rollback body' }], { active: false });
+  await e.addRelease('gamma', [{ path: '/index.html', text: 'expired lifecycle body' }], { active: true, expiresAt: '2020-01-01T00:00:00.000Z' });
+
+  const report = await e.run({ apply: true });
+  assert.equal(report.candidates, 0, 'no release-referenced blob may be a candidate');
+  assert.equal(report.deleted, 0);
+  assert.equal(report.releasesScanned, 4, 'all four releases are roots');
+  // 5. six file references across four releases, but the digest shared by the
+  // two alpha releases is marked once, so five unique digests are marked.
+  assert.equal(report.releaseDigestsMarked, 5, 'shared content collapses to one mark');
+  for (const digest of [active, inactive, rollback, expired, shared]) {
+    assert.equal(await e.blobs.has(digest), true, `${digest} must survive`);
+  }
+});
+
+test('release records, active pointers and manifests are never modified by GC', async t => {
+  const e = await env(t);
+  await e.writeBlob('kept');
+  await e.writeBlob('orphan to delete');
+  const { site, releaseId, manifest } = await e.addRelease('alpha', [{ path: '/index.html', text: 'kept' }]);
+
+  const before = await e.metadata.getRelease(site.id, releaseId);
+  const beforeSite = await e.metadata.getSite('alpha');
+  const report = await e.run({ apply: true });
+  assert.equal(report.deleted, 1, 'only the orphan goes');
+
+  const after = await e.metadata.getRelease(site.id, releaseId);
+  const afterSite = await e.metadata.getSite('alpha');
+  assert.deepEqual(after, before, 'the release record is byte-for-byte untouched');
+  assert.deepEqual(afterSite, beforeSite, 'the active pointer is untouched');
+  assert.equal(canonicalJson(after.manifest), canonicalJson(manifest), 'canonical bytes unchanged');
+  assert.equal(artifactDigest(after.manifest), before.artifactDigest, 'artifact digest unchanged');
+  assert.ok(!JSON.stringify(after).includes('lease'), 'no lease/GC field enters a release record');
+  assert.ok(!JSON.stringify(after.manifest).includes('lease'), 'no lease/GC field enters a manifest');
+});
+
+// -------------------------------------------------------- orphan basics ---
+
+test('6-9. orphan lifecycle: candidate, dry-run keeps, apply deletes, young is spared', async t => {
+  const e = await env(t);
+  const orphan = await e.writeBlob('a true orphan', { ageHours: 48 });
+  const young = await e.writeBlob('too young to collect', { ageHours: 1 });
+
+  const dry = await e.run({});
+  assert.equal(dry.mode, 'dry-run');
+  assert.equal(dry.candidates, 1, '6. only the aged orphan is a candidate');
+  assert.deepEqual(dry.candidateDigests, [orphan]);
+  assert.equal(dry.youngSkipped, 1, '9. the young object is skipped');
+  assert.equal(dry.deleted, 0);
+  assert.equal(await e.blobs.has(orphan), true, '7. dry run deletes nothing');
+  assert.equal(await e.blobs.has(young), true);
+  assert.match(formatReport(dry), /Dry run: nothing was deleted/);
+
+  const applied = await e.run({ apply: true });
+  assert.equal(applied.mode, 'apply');
+  assert.equal(applied.deleted, 1, '8. apply deletes the orphan');
+  assert.equal(await e.blobs.has(orphan), false);
+  assert.equal(await e.blobs.has(young), true, '9. the young object still survives apply');
+});
+
+test('the grace period is honored exactly at the boundary', async t => {
+  const e = await env(t);
+  const justInside = await e.writeBlob('older than grace', { ageHours: 25 });
+  const justOutside = await e.writeBlob('younger than grace', { ageHours: 23 });
+  const report = await e.run({ graceSeconds: DEFAULT_GRACE_SECONDS });
+  assert.deepEqual(report.candidateDigests, [justInside]);
+  assert.equal(report.youngSkipped, 1);
+  assert.equal(justOutside.length > 0, true);
+});
+
+// -------------------------------------------------------------- leases ---
+
+test('10-12. leases protect unreferenced blobs, expire, and never shorten', async t => {
+  const e = await env(t);
+  const leased = await e.writeBlob('protected by an in-flight publish');
+
+  await e.leases.refresh([leased], { ttlSeconds: 3600 });
+  const protectedRun = await e.run({ apply: true });
+  assert.equal(protectedRun.leasedSkipped, 1, '10. an unexpired lease protects the orphan');
+  assert.equal(protectedRun.deleted, 0);
+  assert.equal(await e.blobs.has(leased), true);
+
+  // 12. a shorter re-plan must not shorten existing protection.
+  await e.leases.refresh([leased], { ttlSeconds: 60 });
+  const stored = (await e.leases.list()).find(lease => lease.digest === leased);
+  assert.equal(stored.expiresAt.getTime(), NOW.getTime() + 3600 * 1000, 'protection is never shortened');
+  // A longer re-plan does extend it.
+  await e.leases.refresh([leased], { ttlSeconds: 7200 });
+  const extended = (await e.leases.list()).find(lease => lease.digest === leased);
+  assert.equal(extended.expiresAt.getTime(), NOW.getTime() + 7200 * 1000, 'protection extends');
+
+  // 11. once expired it protects nothing.
+  const later = new Date(NOW.getTime() + 8000 * 1000);
+  const afterExpiry = await collectGarbage({
+    blobs: e.blobs, metadata: e.metadata, leases: e.leases, apply: true, now: () => later
+  });
+  assert.equal(afterExpiry.deleted, 1, '11. an expired lease does not protect forever');
+  assert.equal(await e.blobs.has(leased), false);
+});
+
+test('13-15. plan leases every unique manifest digest, including already-present blobs', async t => {
+  const e = await env(t);
+  // One blob already exists (so the plan will report it reusable), one does not,
+  // and two manifest paths share identical content.
+  const present = await e.writeBlob('already in storage');
+  const manifest = manifestFor([
+    { path: '/index.html', text: 'already in storage' },
+    { path: '/new.html', text: 'not yet uploaded' },
+    { path: '/copy.html', text: 'not yet uploaded' }
+  ]);
+
+  const plan = await planManifest({
+    manifest, blobs: e.blobs, leases: e.leases,
+    uploadFactory: async digest => ({ digest, method: 'PUT', url: 'https://storage.invalid/x', expiresIn: 900 })
+  });
+  assert.equal(plan.reused, 1, 'the present blob is reported reusable');
+  assert.equal(plan.uploads.length, 1, '15. duplicate content yields one upload');
+
+  const leased = await e.leases.list();
+  const digests = leased.map(lease => lease.digest).sort();
+  const expected = [...new Set(manifest.files.map(file => file.digest))].sort();
+  assert.deepEqual(digests, expected, '13/14. every unique digest is leased, present ones included');
+  assert.equal(leased.length, 2, '15. one lease per unique digest, not per file path');
+  assert.ok(digests.includes(present), '14. the already-present blob is leased too');
+
+  // The whole point: the reusable blob cannot be collected between plan and commit.
+  const report = await e.run({ apply: true });
+  assert.equal(report.deleted, 0, 'nothing in an in-flight publish is collectible');
+  assert.equal(report.leasedSkipped, 1, 'the present blob was protected by its lease');
+});
+
+test('the default publish lease is far longer than an upload grant', () => {
+  assert.equal(PUBLISH_LEASE_TTL_SECONDS, 86_400);
+  assert.ok(PUBLISH_LEASE_TTL_SECONDS > 900 * 10, 'must outlive the 900s direct-upload grant');
+});
+
+test('the local publishDirectory path takes the same lease protection', async t => {
+  const e = await env(t);
+  const directory = join(e.root, 'site');
+  await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, 'index.html'), '<h1>local publish</h1>');
+
+  await publishDirectory({ directory, slug: 'local', blobs: e.blobs, metadata: e.metadata, leases: e.leases });
+  const leased = await e.leases.list();
+  assert.equal(leased.length, 1, 'the trusted local publisher is not left racing GC unprotected');
+  assert.equal(leased[0].digest, digestOf(Buffer.from('<h1>local publish</h1>', 'utf8')));
+});
+
+// ------------------------------------------------------------ race model ---
+
+test('16-17. protection created after the first scan is caught by the final re-mark', async t => {
+  await t.test('16. a new lease prevents deletion', async t2 => {
+    const e = await env(t2);
+    const orphan = await e.writeBlob('orphan that gets leased mid-run');
+    const report = await e.run({
+      apply: true,
+      // Deterministic hook: runs after candidates are computed, before any delete.
+      beforeSweep: async () => { await e.leases.refresh([orphan], { ttlSeconds: 3600 }); }
+    });
+    assert.equal(report.candidates, 1, 'it WAS a candidate at first scan');
+    assert.equal(report.raceSkipped, 1, 'the re-check caught the new lease');
+    assert.equal(report.deleted, 0);
+    assert.equal(await e.blobs.has(orphan), true, 'the blob survives');
+  });
+
+  await t.test('17. a new release reference prevents deletion', async t2 => {
+    const e = await env(t2);
+    const orphan = await e.writeBlob('orphan that gets committed mid-run');
+    const report = await e.run({
+      apply: true,
+      beforeSweep: async () => {
+        await e.addRelease('late', [{ path: '/index.html', text: 'orphan that gets committed mid-run' }]);
+      }
+    });
+    assert.equal(report.candidates, 1);
+    assert.equal(report.raceSkipped, 1, 'the re-check caught the new release');
+    assert.equal(report.deleted, 0);
+    assert.equal(await e.blobs.has(orphan), true);
+  });
+});
+
+// ------------------------------------------------------- fail-closed ----
+
+test('18-21. malformed metadata or lease state aborts before any delete', async t => {
+  const cases = [
+    ['18. malformed site record', async e => {
+      await writeFile(join(e.root, 'sites', 's_'.padEnd(22, 'a'), 'site.json'), '{ not json', 'utf8').catch(async () => {
+        await mkdir(join(e.root, 'sites', `s_${'a'.repeat(20)}`), { recursive: true });
+        await writeFile(join(e.root, 'sites', `s_${'a'.repeat(20)}`, 'site.json'), '{ not json', 'utf8');
+      });
+    }],
+    ['18b. unexpected directory under sites/', async e => {
+      await mkdir(join(e.root, 'sites', 'not-a-site-id'), { recursive: true });
+    }],
+    ['19. malformed release record', async e => {
+      const { site } = await e.addRelease('alpha', [{ path: '/index.html', text: 'kept' }]);
+      await writeFile(join(e.root, 'sites', site.id, 'releases', `r_${'b'.repeat(20)}.json`), '{ truncated', 'utf8');
+    }],
+    ['20. stored release whose manifest no longer validates', async e => {
+      const { site } = await e.addRelease('alpha', [{ path: '/index.html', text: 'kept' }]);
+      const bad = { id: `r_${'c'.repeat(20)}`, artifactDigest: `sha256:${'0'.repeat(64)}`,
+        createdAt: NOW.toISOString(), manifest: { specVersion: 'owa.dev/v1', files: 'not an array' } };
+      await writeFile(join(e.root, 'sites', site.id, 'releases', `${bad.id}.json`), JSON.stringify(bad), 'utf8');
+    }],
+    ['20b. release whose artifactDigest disagrees with its manifest', async e => {
+      const { site } = await e.addRelease('alpha', [{ path: '/index.html', text: 'kept' }]);
+      const manifest = manifestFor([{ path: '/index.html', text: 'tampered' }]);
+      const bad = { id: `r_${'d'.repeat(20)}`, artifactDigest: `sha256:${'1'.repeat(64)}`,
+        createdAt: NOW.toISOString(), manifest };
+      await writeFile(join(e.root, 'sites', site.id, 'releases', `${bad.id}.json`), JSON.stringify(bad), 'utf8');
+    }],
+    ['21. malformed lease record', async e => {
+      await mkdir(join(e.root, 'gc-leases', 'sha256'), { recursive: true });
+      await writeFile(join(e.root, 'gc-leases', 'sha256', `${'e'.repeat(64)}.json`), '{ bad', 'utf8');
+    }],
+    ['21b. lease record whose digest does not match its filename', async e => {
+      await mkdir(join(e.root, 'gc-leases', 'sha256'), { recursive: true });
+      await writeFile(join(e.root, 'gc-leases', 'sha256', `${'f'.repeat(64)}.json`),
+        JSON.stringify({ digest: `sha256:${'0'.repeat(64)}`, expiresAt: NOW.toISOString() }), 'utf8');
+    }]
+  ];
+
+  for (const [name, corrupt] of cases) {
+    await t.test(name, async t2 => {
+      const e = await env(t2);
+      const orphan = await e.writeBlob('an orphan that must NOT be deleted');
+      let deleted = 0;
+      const guarded = { ...e.blobs, listBlobs: () => e.blobs.listBlobs(), path: d => e.blobs.path(d),
+        has: d => e.blobs.has(d), delete: async d => { deleted++; return e.blobs.delete(d); } };
+      await corrupt(e);
+      await assert.rejects(
+        () => collectGarbage({ blobs: guarded, metadata: e.metadata, leases: e.leases, apply: true, now: clock }),
+        error => error instanceof GcError && typeof error.code === 'string');
+      assert.equal(deleted, 0, 'no delete may be attempted when metadata cannot be trusted');
+      assert.equal(await e.blobs.has(orphan), true, 'the orphan survives a failed run');
+    });
+  }
+});
+
+test('22-24. storage failures abort or stay idempotent, and never leak a provider body', async t => {
+  const e = await env(t);
+  const orphan = await e.writeBlob('orphan');
+
+  await t.test('22. a listing failure aborts before any delete', async () => {
+    let deleted = 0;
+    const failing = {
+      listBlobs: async () => { throw Object.assign(new Error('provider said <Error>secret-bucket</Error>'), { code: 'OWA_GC_LIST_FAILED' }); },
+      delete: async () => { deleted++; }
+    };
+    await assert.rejects(
+      () => collectGarbage({ blobs: failing, metadata: e.metadata, leases: e.leases, apply: true, now: clock }),
+      error => error instanceof GcError && error.code === 'OWA_GC_LIST_FAILED'
+        && !error.message.includes('secret-bucket'));
+    assert.equal(deleted, 0);
+  });
+
+  await t.test('23. a delete failure is redacted to a fixed code', async () => {
+    const failing = {
+      listBlobs: () => e.blobs.listBlobs(),
+      delete: async () => { throw new Error('AccessDenied: key=owa/blobs/... X-Amz-Signature=deadbeef'); }
+    };
+    await assert.rejects(
+      () => collectGarbage({ blobs: failing, metadata: e.metadata, leases: e.leases, apply: true, now: clock }),
+      error => error instanceof GcError && error.code === 'OWA_GC_DELETE_FAILED'
+        && !/X-Amz-Signature|AccessDenied/.test(error.message));
+  });
+
+  await t.test('24. deleting an already-missing blob is idempotent', async () => {
+    await e.blobs.delete(orphan);
+    await e.blobs.delete(orphan); // second delete must not throw
+    assert.equal(await e.blobs.has(orphan), false);
+  });
+});
+
+// ------------------------------------------------- filesystem enumeration ---
+
+test('25-27. filesystem enumeration stays inside the blob root and ignores strangers', async t => {
+  const e = await env(t);
+  const real = await e.writeBlob('a genuine blob');
+
+  // Unrelated files in and around the blob namespace.
+  const outside = join(e.root, 'outside-secret.txt');
+  await writeFile(outside, 'must never be touched', 'utf8');
+  await writeFile(join(e.root, 'blobs', 'sha256', 'not-a-digest.txt'), 'stray', 'utf8');
+  await writeFile(join(e.root, 'blobs', 'sha256', `${'z'.repeat(64)}`), 'bad hex', 'utf8');
+  await mkdir(join(e.root, 'blobs', 'sha512'), { recursive: true });
+  await writeFile(join(e.root, 'blobs', 'sha512', `${'a'.repeat(64)}`), 'wrong algorithm', 'utf8');
+  await mkdir(join(e.root, 'blobs', 'sha256', `${'b'.repeat(64)}.d`), { recursive: true });
+
+  // 26. a symlink named like a valid digest, pointing outside the root.
+  const escape = join(e.root, 'blobs', 'sha256', 'c'.repeat(64));
+  await symlink(outside, escape);
+
+  const listed = await e.blobs.listBlobs();
+  assert.deepEqual(listed.map(entry => entry.digest), [real], '25/26/27. only the genuine blob is enumerated');
+
+  const report = await e.run({ apply: true, graceSeconds: 0 });
+  assert.equal(report.deleted, 1, 'only the real orphan blob is deleted');
+  assert.equal(existsSync(outside), true, '27. an unrelated file outside the root is untouched');
+  assert.equal(existsSync(escape), true, '26. the symlink itself is not followed or deleted');
+  assert.equal(existsSync(join(e.root, 'blobs', 'sha256', 'not-a-digest.txt')), true, '27. strays are left alone');
+  assert.equal(existsSync(join(e.root, 'blobs', 'sha512', `${'a'.repeat(64)}`)), true, 'another algorithm is out of scope');
+
+  // The escape target's content is intact.
+  assert.equal((await stat(outside)).size, Buffer.byteLength('must never be touched'));
+});
+
+test('a digest outside the blob root cannot be deleted through the store', async t => {
+  const e = await env(t);
+  for (const bad of ['sha256:../../etc/passwd', 'sha256:' + 'g'.repeat(64), 'not-a-digest', '', 'sha512:' + 'a'.repeat(64)]) {
+    await assert.rejects(() => e.blobs.delete(bad), error => error.code === 'OWA_GC_INVALID_DIGEST');
+  }
+});
+
+// -------------------------------------------------- publish compatibility ---
+
+test('36-40. plan/upload/commit, dedup, digests, release shape and rollback are unchanged', async t => {
+  const e = await env(t);
+  const directory = join(e.root, 'site');
+  await mkdir(join(directory, 'assets'), { recursive: true });
+  await writeFile(join(directory, 'index.html'), '<h1>v1</h1>');
+  await writeFile(join(directory, 'assets', 'a.js'), 'console.log(1);\n');
+  await writeFile(join(directory, 'assets', 'b.js'), 'console.log(1);\n'); // duplicate content
+
+  const first = await publishDirectory({ directory, slug: 'demo', blobs: e.blobs, metadata: e.metadata, leases: e.leases });
+  assert.equal(first.uploaded, 2, '36. duplicate content still uploads one blob');
+  assert.equal(first.reused, 0);
+
+  const second = await publishDirectory({ directory, slug: 'demo', blobs: e.blobs, metadata: e.metadata, leases: e.leases });
+  assert.equal(second.uploaded, 0, '37. identical re-publish uploads zero blobs');
+  assert.equal(second.reused, 2);
+  assert.equal(second.release.artifactDigest, first.release.artifactDigest, '38. artifact digest unchanged');
+
+  // 39. release record shape is exactly what it was before GC existed.
+  assert.deepEqual(Object.keys(second.release).sort(), ['artifactDigest', 'createdAt', 'id', 'manifest']);
+  assert.ok(!Object.hasOwn(second.release, 'leases'), 'no GC field on a release record');
+
+  // 40. rollback to the first release still works and is untouched by GC.
+  const site = await e.metadata.getSite('demo');
+  const releases = await e.metadata.listAllReleases(site.id);
+  assert.equal(releases.length, 2);
+  await e.run({ apply: true, graceSeconds: 0 });
+  const after = await e.metadata.listAllReleases(site.id);
+  assert.deepEqual(after.map(r => r.id).sort(), releases.map(r => r.id).sort(), 'GC deleted no release');
+  for (const release of after) {
+    assert.equal(await e.blobs.has(release.manifest.files[0].digest), true, 'rollback target blobs survive');
+  }
+});
+
+test('commit does not need to clean up leases: release marking already wins', async t => {
+  const e = await env(t);
+  const manifest = manifestFor([{ path: '/index.html', text: 'committed content' }]);
+  await e.blobs.put(manifest.files[0].digest, Buffer.from('committed content', 'utf8'));
+  await e.leases.refresh([manifest.files[0].digest], { ttlSeconds: 60 });
+  await commitManifest({
+    slug: 'demo', manifest, expectedArtifactDigest: artifactDigest(manifest),
+    blobs: e.blobs, metadata: e.metadata
+  });
+  // Long after the lease expires, the release keeps the blob alive.
+  const later = new Date(NOW.getTime() + 10 * 24 * HOUR);
+  const report = await collectGarbage({ blobs: e.blobs, metadata: e.metadata, leases: e.leases, apply: true, now: () => later });
+  assert.equal(report.deleted, 0);
+  assert.equal(await e.blobs.has(manifest.files[0].digest), true);
+});
+
+test('expired lease records are pruned only on apply, never during a dry run', async t => {
+  const e = await env(t);
+  await e.leases.refresh([digestOf(Buffer.from('x'))], { ttlSeconds: 60 });
+  const later = new Date(NOW.getTime() + 3600 * 1000);
+
+  const dry = await collectGarbage({ blobs: e.blobs, metadata: e.metadata, leases: e.leases, now: () => later, pruneExpiredLeases: true });
+  assert.equal(dry.expiredLeasesCleaned, 0, 'a dry run performs no destructive mutation at all');
+  assert.equal((await e.leases.list()).length, 1);
+
+  const applied = await collectGarbage({ blobs: e.blobs, metadata: e.metadata, leases: e.leases, apply: true, now: () => later, pruneExpiredLeases: true });
+  assert.equal(applied.expiredLeasesCleaned, 1);
+  assert.equal((await e.leases.list()).length, 0);
+});
+
+test('the report never contains a credential, URL or provider body', async t => {
+  const e = await env(t);
+  await e.writeBlob('orphan');
+  const report = await e.run({});
+  const text = `${JSON.stringify(report)}\n${formatReport(report)}`;
+  assert.ok(!/Bearer |owa1\.|X-Amz-|Signature=|AKIA|secretAccessKey|https?:\/\//.test(text),
+    'operator output carries only counts, bytes and digests');
+});
+
+test('GC refuses to run against a store without operational support', async t => {
+  const e = await env(t);
+  await assert.rejects(
+    () => collectGarbage({ blobs: { has: async () => false }, metadata: e.metadata, now: clock }),
+    error => error instanceof GcError && error.code === 'OWA_GC_INVALID_CONFIG');
+  await assert.rejects(
+    () => collectGarbage({ blobs: e.blobs, metadata: e.metadata, graceSeconds: -1, now: clock }),
+    error => error instanceof GcError && error.code === 'OWA_GC_INVALID_CONFIG');
+});
+
+// ------------------------------------------------------------ S3 / R2 ----
+
+/** An S3BlobStore whose HTTP layer is replaced by a scripted responder. */
+function s3Fixture({ pages = [], onRequest = () => {}, prefix = 'owa' } = {}) {
+  const requests = [];
+  const store = new S3BlobStore({
+    endpoint: 'https://acct.r2.cloudflarestorage.com', bucket: 'bucket',
+    region: 'auto', accessKeyId: 'AKIDEXAMPLE', secretAccessKey: 'wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY',
+    prefix, now: () => NOW
+  });
+  const realFetch = globalThis.fetch;
+  let page = 0;
+  globalThis.fetch = async (url, options) => {
+    const record = { url: new URL(url.toString()), method: options.method, headers: options.headers };
+    requests.push(record);
+    onRequest(record);
+    if (options.method === 'GET') {
+      const body = pages[Math.min(page++, pages.length - 1)] ?? '<ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>';
+      return { ok: true, status: 200, text: async () => body, arrayBuffer: async () => new ArrayBuffer(0) };
+    }
+    return { ok: true, status: 204, text: async () => '', arrayBuffer: async () => new ArrayBuffer(0) };
+  };
+  return { store, requests, restore: () => { globalThis.fetch = realFetch; } };
+}
+
+const contents = (key, { size = 10, modified = '2026-05-01T00:00:00.000Z' } = {}) =>
+  `<Contents><Key>${key}</Key><Size>${size}</Size><LastModified>${modified}</LastModified></Contents>`;
+
+test('28-30. S3 listing is prefix-confined and ignores malformed or neighbouring keys', async t => {
+  const good = 'a'.repeat(64);
+  const fixture = s3Fixture({
+    pages: [`<ListBucketResult>
+      ${contents(`owa/blobs/sha256/${good}`)}
+      ${contents('owa/blobs/sha256/not-hex')}
+      ${contents(`owa/blobs/sha256/${good}/nested`)}
+      ${contents(`owa/blobs/sha512/${good}`)}
+      ${contents(`owa-other/blobs/sha256/${'b'.repeat(64)}`)}
+      ${contents('unrelated/customer-data.csv')}
+      ${contents(`owa/blobs/sha256/${'C'.repeat(64)}`)}
+      <IsTruncated>false</IsTruncated></ListBucketResult>`]
+  });
+  t.after(fixture.restore);
+
+  const listed = await fixture.store.listBlobs();
+  assert.deepEqual(listed.map(entry => entry.digest), [`sha256:${good}`],
+    '28/29/30. only exact OWA blob keys under the configured prefix are eligible');
+
+  const query = fixture.requests[0].url.searchParams;
+  assert.equal(query.get('prefix'), 'owa/blobs/sha256/', '28. listing is scoped to the OWA blob prefix');
+  assert.equal(query.get('list-type'), '2');
+});
+
+test('31-32. ListObjectsV2 pagination follows and signs the continuation token', async t => {
+  const first = 'a'.repeat(64), second = 'b'.repeat(64);
+  // A token with characters that MUST be percent-encoded identically in the URL
+  // and in the canonical query, or the signature will not match.
+  const token = '1/abc+def=ghi jkl';
+  const fixture = s3Fixture({
+    pages: [
+      `<ListBucketResult>${contents(`owa/blobs/sha256/${first}`)}<IsTruncated>true</IsTruncated><NextContinuationToken>${token.replace(/&/g, '&amp;')}</NextContinuationToken></ListBucketResult>`,
+      `<ListBucketResult>${contents(`owa/blobs/sha256/${second}`)}<IsTruncated>false</IsTruncated></ListBucketResult>`
+    ]
+  });
+  t.after(fixture.restore);
+
+  const listed = await fixture.store.listBlobs();
+  assert.deepEqual(listed.map(entry => entry.digest).sort(), [`sha256:${first}`, `sha256:${second}`].sort(),
+    '31. both pages are returned');
+  assert.equal(fixture.requests.length, 2, 'exactly two list calls');
+  assert.equal(fixture.requests[0].url.searchParams.get('continuation-token'), null);
+  assert.equal(fixture.requests[1].url.searchParams.get('continuation-token'), token,
+    '32. the token round-trips through URL encoding intact');
+  assert.ok(fixture.requests[1].headers.authorization.startsWith('AWS4-HMAC-SHA256 '), 'the paged request is signed');
+});
+
+test('a truncated listing with no continuation token fails closed', async t => {
+  const fixture = s3Fixture({
+    pages: [`<ListBucketResult>${contents(`owa/blobs/sha256/${'a'.repeat(64)}`)}<IsTruncated>true</IsTruncated></ListBucketResult>`]
+  });
+  t.after(fixture.restore);
+  await assert.rejects(() => fixture.store.listBlobs(), error => error.code === 'OWA_GC_LIST_FAILED');
+});
+
+test('33-34. S3 DELETE is signed with storage credentials and carries no OWA bearer', async t => {
+  const fixture = s3Fixture({});
+  t.after(fixture.restore);
+  const digest = `sha256:${'a'.repeat(64)}`;
+  await fixture.store.delete(digest);
+
+  const request = fixture.requests.at(-1);
+  assert.equal(request.method, 'DELETE');
+  assert.equal(request.url.pathname, `/bucket/owa/blobs/sha256/${'a'.repeat(64)}`, '33. exact key only');
+  assert.equal(request.url.search, '', 'no query material on a delete');
+  const auth = request.headers.authorization;
+  assert.ok(auth.startsWith('AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/'), '33. storage SigV4 only');
+  assert.ok(!/^Bearer /i.test(auth) && !/owa1\./.test(JSON.stringify(request.headers)),
+    '34. no OWA bearer is ever sent to storage');
+});
+
+test('S3 delete is idempotent for a missing key and redacts provider bodies', async t => {
+  const realFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = realFetch; });
+  const store = new S3BlobStore({
+    endpoint: 'https://acct.r2.cloudflarestorage.com', bucket: 'bucket', region: 'auto',
+    accessKeyId: 'AKIDEXAMPLE', secretAccessKey: 'wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY', now: () => NOW
+  });
+  globalThis.fetch = async () => ({ ok: false, status: 404, text: async () => '', arrayBuffer: async () => new ArrayBuffer(0) });
+  await store.delete(`sha256:${'a'.repeat(64)}`); // 404 must not throw
+
+  globalThis.fetch = async () => ({ ok: false, status: 403, text: async () => '<Error><Code>AccessDenied</Code><Key>secret</Key></Error>', arrayBuffer: async () => new ArrayBuffer(0) });
+  await assert.rejects(() => store.delete(`sha256:${'a'.repeat(64)}`),
+    error => error.code === 'OWA_GC_DELETE_FAILED' && !/AccessDenied|secret/.test(error.message));
+});
+
+test('35. a session token is signed for list and delete when configured', async t => {
+  const realFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = realFetch; });
+  const seen = [];
+  globalThis.fetch = async (url, options) => {
+    seen.push(options.headers);
+    return { ok: true, status: 200, text: async () => '<ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>', arrayBuffer: async () => new ArrayBuffer(0) };
+  };
+  const store = new S3BlobStore({
+    endpoint: 'https://acct.r2.cloudflarestorage.com', bucket: 'bucket', region: 'auto',
+    accessKeyId: 'AKIDEXAMPLE', secretAccessKey: 'wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY',
+    sessionToken: 'session-token-value', now: () => NOW
+  });
+  await store.listBlobs();
+  await store.delete(`sha256:${'a'.repeat(64)}`);
+  for (const headers of seen) {
+    assert.equal(headers['x-amz-security-token'], 'session-token-value');
+    assert.ok(headers.authorization.includes('x-amz-security-token'), 'the token is part of SignedHeaders');
+  }
+});
+
+test('S3 GC operations leave existing publish presigning untouched', async t => {
+  const store = new S3BlobStore({
+    endpoint: 'https://acct.r2.cloudflarestorage.com', bucket: 'bucket', region: 'auto',
+    accessKeyId: 'AKIDEXAMPLE', secretAccessKey: 'wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY', now: () => NOW
+  });
+  // Fixed expectation: the publish grant shape must not drift because GC now
+  // shares the signer. Query names, order and the signed-headers set are pinned.
+  const url = new URL(await store.presign('PUT', store.key(`sha256:${'a'.repeat(64)}`), { expires: 900 }));
+  assert.deepEqual([...url.searchParams.keys()].sort(),
+    ['X-Amz-Algorithm', 'X-Amz-Credential', 'X-Amz-Date', 'X-Amz-Expires', 'X-Amz-SignedHeaders', 'X-Amz-Signature'].sort());
+  assert.equal(url.searchParams.get('X-Amz-SignedHeaders'), 'host');
+  assert.equal(url.searchParams.get('X-Amz-Expires'), '900');
+  assert.match(url.searchParams.get('X-Amz-Signature'), /^[0-9a-f]{64}$/);
+});

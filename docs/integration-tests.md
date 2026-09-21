@@ -41,6 +41,7 @@ Partially configured cases skip with the names of the missing variables.
 | MinIO | Path-style | MinIO endpoint, bucket, access key, and secret below |
 | MinIO | Virtual-host | MinIO bucket/credentials plus the separate virtual endpoint |
 | Cloudflare R2 | Path-style | R2 endpoint, bucket, access key, and secret below |
+| Cloudflare R2 GC | Path-style | Same R2 variables; runs the mark/sweep collector in a UUID-isolated `owa-gc-integration/<uuid>` prefix |
 
 Each enabled case starts an ephemeral artifactd on loopback with the real S3 blob
 adapter and fresh local metadata, then tests:

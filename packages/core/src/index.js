@@ -41,9 +41,38 @@ export function uniqueFileDigests(manifest) {
   return [...new Set(manifest.files.map(file => file.digest))];
 }
 
-export async function planManifest({manifest, blobs, uploadFactory}) {
+/**
+ * Default publish-lease lifetime: 24 hours.
+ *
+ * Deliberately far longer than the 900-second direct-upload grant, because the
+ * lease must outlive the whole plan -> upload -> commit window (including
+ * retries and a re-issued grant), not just one presigned URL. It is still
+ * bounded: a client that waits longer than this before committing may find an
+ * otherwise-unreferenced blob collected and must re-plan.
+ */
+export const PUBLISH_LEASE_TTL_SECONDS = 86_400;
+
+/**
+ * Protect every unique digest in a validated manifest for the publish window.
+ *
+ * ALL unique digests are leased, including ones already present in storage.
+ * Leasing only the missing uploads would be unsafe: a digest that is currently
+ * an orphan can be reported as reusable by the plan and then collected before
+ * commit, so the client would be told it need not upload and commit would fail.
+ * Leases are operational state only: nothing here touches the manifest,
+ * canonical JSON, artifact digest, release record or any HTTP response body.
+ */
+async function leaseManifestDigests(leases, manifest, ttlSeconds) {
+  if (!leases) return;
+  await leases.refresh(uniqueFileDigests(manifest), { ttlSeconds });
+}
+
+export async function planManifest({manifest, blobs, uploadFactory, leases=null, leaseTtlSeconds=PUBLISH_LEASE_TTL_SECONDS}) {
   validateManifest(manifest);
   const digest = artifactDigest(manifest);
+  // Lease BEFORE probing existence: otherwise a blob could be collected between
+  // the has() that reported it reusable and the lease that protects it.
+  await leaseManifestDigests(leases, manifest, leaseTtlSeconds);
   const uploads=[]; let reused=0;
   for (const fileDigest of uniqueFileDigests(manifest)) {
     if (await blobs.has(fileDigest)) { reused++; continue; }
@@ -66,8 +95,11 @@ export async function commitManifest({slug,manifest,expectedArtifactDigest,blobs
   return {site,release};
 }
 
-export async function publishDirectory({directory,slug,blobs,metadata}) {
+export async function publishDirectory({directory,slug,blobs,metadata,leases=null,leaseTtlSeconds=PUBLISH_LEASE_TTL_SECONDS}) {
   const packed=await packDirectory(directory); let uploaded=0,reused=0;
+  // The local/trusted publisher races GC exactly like the HTTP path does, so it
+  // takes the same lease protection rather than relying on being "internal".
+  await leaseManifestDigests(leases,packed.manifest,leaseTtlSeconds);
   for(const [digest,data] of packed.blobs){if(await blobs.has(digest))reused++;else{await blobs.put(digest,data);uploaded++;}}
   const {site,release}=await commitManifest({slug,manifest:packed.manifest,expectedArtifactDigest:packed.artifactDigest,blobs,metadata});
   return {site,release,uploaded,reused};
