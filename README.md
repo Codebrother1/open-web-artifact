@@ -11,7 +11,8 @@ The thesis: an AI agent, CLI, CI job, or application should be able to produce o
 | **Software / reference implementation** | **v0.4.0** — experimental; see [CHANGELOG](CHANGELOG.md) and the [release checklist](docs/release.md) |
 | **Specification** | **v0.2 draft** ([docs/spec-v0.2.md](docs/spec-v0.2.md)); manifest `specVersion` **`owa.dev/v1`**, media type `application/vnd.openwebartifact.site.v1+json` |
 | **Runtime** | Node.js **22+** |
-| **CI** | **9 required checks**, all secretless: Linux/macOS/Windows × Node 22/24, real MinIO, Chromium/Firefox/WebKit, real ORAS + Zot ([docs/ci.md](docs/ci.md)) |
+| **CI** | **10 checks**, all secretless: Linux/macOS/Windows × Node 22/24, real MinIO, Chromium/Firefox/WebKit, real ORAS + Zot, and the independent Go conformance runner ([docs/ci.md](docs/ci.md)) |
+| **Conformance** | portable corpus independently implemented in **JavaScript** (reference) and **Go** ([docs/independent-implementation.md](docs/independent-implementation.md)) |
 | **Distribution** | source / reference implementation; every repository package is private, nothing is published to npm |
 
 The software version and the protocol version are separate domains: v0.4.0
@@ -33,7 +34,8 @@ hosting service** — see [Security / production status](#security--production-s
 - real-browser enforcement evidence for `sandboxed-web-v1` in Chromium, Firefox and WebKit
 - OCI image-layout export/import using the OWA manifest as artifact metadata, with the registry round-trip continuously verified with ORAS v1.3.4 against a real Zot v2.1.21 registry, including duplicate-content file entries
 - an HTTP serving gateway, local and remote CLI workflows, and optional local stdio MCP tools as a thin client over the same HTTP protocol
-- conformance tests including the published AWS SigV4 test vector, and nine secretless GitHub Actions checks
+- conformance tests including the published AWS SigV4 test vector, and ten secretless GitHub Actions checks
+- portable conformance independently implemented in JavaScript and Go: a standard-library-only Go runner derives the same canonical bytes, digests, validation categories, request resolutions, pack results and OCI-layout results from the published spec and static corpus alone, with a shared static anchor and no call between the two implementations ([docs/independent-implementation.md](docs/independent-implementation.md))
 
 The core, HTTP server, and CLI use Node.js built-ins and have **zero third-party
 runtime dependencies**. The separately installed, optional MCP adapter adds three
@@ -411,6 +413,9 @@ packages/
   mcp/                 optional SDK-based stdio client of the HTTP API
   conformance/         protocol and portability tests
 
+implementations/
+  go-conformance/      independent standard-library Go conformance implementation (not a server or SDK)
+
 docs/
   spec-v0.1.md
   spec-v0.2.md
@@ -427,6 +432,7 @@ docs/
   release.md                   maintainer release checklist and readiness table
   release-notes-v0.4.0.md      release notes draft
   conformance/                 portable corpus and cross-language guide
+  independent-implementation.md  the Go conformance implementation: scope, independence rules, ambiguities
   test-vectors/
 ```
 

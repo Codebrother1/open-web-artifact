@@ -6,7 +6,8 @@
     "Materialize input.files beneath a fresh directory, then input.symlinks; call packDirectory with input.entrypoint. Always remove temporary directories.",
     "contentBase64 encodes exact bytes. Symlink target is relative to the link; targetType directory is only a filesystem setup hint. Symlinks must be rejected even if safe-looking or dangling.",
     "Ordering: packDirectory places file entries in manifest.files by sorting the COMPLETE artifact path strings lexicographically by Unicode code-point values (numerically at the first difference; a shorter prefix first), exactly the relation canonical JSON uses for object keys. No locale collation, no Unicode normalization, no case folding, no natural/numeric ordering, no UTF-16 code-unit ordering; the exact strings the filesystem exposed are compared. pack-unicode-code-point-order and pack-unicode-no-normalization are the portable Unicode anchors (U+E000 sorts before U+10000). Canonicalization itself still preserves any existing files array order; manually authored manifests are not required to be sorted.",
-    "expected.manifest, canonicalJson, artifactDigest, blobDigests are static independent goldens; every returned blob must also equal the source bytes."
+    "expected.manifest, canonicalJson, artifactDigest, blobDigests are static independent goldens; every returned blob must also equal the source bytes.",
+    "pack-cross-language-anchor is the static rendezvous point for independent implementations (issue #31): the JavaScript reference and the Go conformance implementation each check its expected canonicalJson, artifactDigest and blobDigests from this file; neither calls the other. Four entries share one content digest under two media types and the names span ASCII, Greek, CJK, private-use and supplementary code points."
   ],
   "vectors": [
     {
@@ -575,6 +576,109 @@
           "sha256:e75fb60ddfe7057d7f290dd5d8e2af0362282c3a3ee3894e82ba9d9fabb286a4",
           "sha256:f493f7cd3f25278aa2d1405275af58d4e726174a708b0872a82c0ece92d4ef20",
           "sha256:fc04b5ac0e9d30555463258ec6c4bd33dfa48481398755b57689859ff4179d5f"
+        ]
+      }
+    },
+    {
+      "id": "pack-cross-language-anchor",
+      "description": "Static cross-implementation anchor (issue #31): seven files in scrambled fixture order whose complete artifact paths must sort by Unicode code point (ASCII < Greek U+03A9 < CJK U+4E2D < private-use U+E000 < supplementary U+1F331, and /assets/<U+10000>.js first because \"a\" < \"i\"), while four entries — three .txt and one .js under three different directories — hold identical bytes and therefore share ONE content digest under TWO different OWA media types. The expected canonical JSON, artifact digest and blob digests were authored with an independent standard-library encoder; every conforming implementation, in any language, must reproduce them from this input without consulting another implementation.",
+      "input": {
+        "files": [
+          {
+            "path": "🌱/notes.txt",
+            "contentBase64": "c2VlZGxpbmcgZGlyZWN0b3J5IFUrMUYzMzEK"
+          },
+          {
+            "path": "中/copy.txt",
+            "contentBase64": "dGhlIHNhbWUgYnl0ZXMgYXQgc2V2ZXJhbCBwYXRocwo="
+          },
+          {
+            "path": "index.html",
+            "contentBase64": "PCFkb2N0eXBlIGh0bWw+PHRpdGxlPmNyb3NzLWxhbmd1YWdlIGFuY2hvcjwvdGl0bGU+Cg=="
+          },
+          {
+            "path": "assets/𐀀.js",
+            "contentBase64": "dGhlIHNhbWUgYnl0ZXMgYXQgc2V2ZXJhbCBwYXRocwo="
+          },
+          {
+            "path": ".css",
+            "contentBase64": "Ym9keSB7IGNvbG9yOiByZ2IoMSwgMiwgMyk7IH0K"
+          },
+          {
+            "path": "shared.txt",
+            "contentBase64": "dGhlIHNhbWUgYnl0ZXMgYXQgc2V2ZXJhbCBwYXRocwo="
+          },
+          {
+            "path": "Ω/shared.txt",
+            "contentBase64": "dGhlIHNhbWUgYnl0ZXMgYXQgc2V2ZXJhbCBwYXRocwo="
+          }
+        ],
+        "symlinks": [],
+        "entrypoint": "/index.html"
+      },
+      "expected": {
+        "canonicalJson": "{\"access\":{\"visibility\":\"unlisted\"},\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:8f8b54cb66cd5db57de8c580ed23c38d936af9550f6d29f91ec2ab4820bf161f\",\"mediaType\":\"text/javascript; charset=utf-8\",\"path\":\"/assets/𐀀.js\",\"size\":32},{\"digest\":\"sha256:b68413c92866ed085e7dbdd258946058a497b6253e710b4d615f3efcb7738183\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/index.html\",\"size\":52},{\"digest\":\"sha256:8f8b54cb66cd5db57de8c580ed23c38d936af9550f6d29f91ec2ab4820bf161f\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/shared.txt\",\"size\":32},{\"digest\":\"sha256:8f8b54cb66cd5db57de8c580ed23c38d936af9550f6d29f91ec2ab4820bf161f\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/Ω/shared.txt\",\"size\":32},{\"digest\":\"sha256:8f8b54cb66cd5db57de8c580ed23c38d936af9550f6d29f91ec2ab4820bf161f\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/中/copy.txt\",\"size\":32},{\"digest\":\"sha256:39eac723d7bb8a05bea2aa57d7b528eb83ed8f8dfe18e4f9659997457961a497\",\"mediaType\":\"text/css; charset=utf-8\",\"path\":\"/.css\",\"size\":30},{\"digest\":\"sha256:e0794dd6c07bdec065c1a63a633f361b6dd745190e9d16c4be615c84847df911\",\"mediaType\":\"text/plain; charset=utf-8\",\"path\":\"/🌱/notes.txt\",\"size\":27}],\"lifecycle\":{\"expiresAt\":null},\"specVersion\":\"owa.dev/v1\"}",
+        "artifactDigest": "sha256:9a2bb62c7756c8f2b06cffce88985a00a32941b9440c53d1f5e833dd6e55c1b8",
+        "manifest": {
+          "specVersion": "owa.dev/v1",
+          "artifactType": "application/vnd.openwebartifact.site.v1+json",
+          "entrypoint": "/index.html",
+          "files": [
+            {
+              "path": "/assets/𐀀.js",
+              "digest": "sha256:8f8b54cb66cd5db57de8c580ed23c38d936af9550f6d29f91ec2ab4820bf161f",
+              "size": 32,
+              "mediaType": "text/javascript; charset=utf-8"
+            },
+            {
+              "path": "/index.html",
+              "digest": "sha256:b68413c92866ed085e7dbdd258946058a497b6253e710b4d615f3efcb7738183",
+              "size": 52,
+              "mediaType": "text/html; charset=utf-8"
+            },
+            {
+              "path": "/shared.txt",
+              "digest": "sha256:8f8b54cb66cd5db57de8c580ed23c38d936af9550f6d29f91ec2ab4820bf161f",
+              "size": 32,
+              "mediaType": "text/plain; charset=utf-8"
+            },
+            {
+              "path": "/Ω/shared.txt",
+              "digest": "sha256:8f8b54cb66cd5db57de8c580ed23c38d936af9550f6d29f91ec2ab4820bf161f",
+              "size": 32,
+              "mediaType": "text/plain; charset=utf-8"
+            },
+            {
+              "path": "/中/copy.txt",
+              "digest": "sha256:8f8b54cb66cd5db57de8c580ed23c38d936af9550f6d29f91ec2ab4820bf161f",
+              "size": 32,
+              "mediaType": "text/plain; charset=utf-8"
+            },
+            {
+              "path": "/.css",
+              "digest": "sha256:39eac723d7bb8a05bea2aa57d7b528eb83ed8f8dfe18e4f9659997457961a497",
+              "size": 30,
+              "mediaType": "text/css; charset=utf-8"
+            },
+            {
+              "path": "/🌱/notes.txt",
+              "digest": "sha256:e0794dd6c07bdec065c1a63a633f361b6dd745190e9d16c4be615c84847df911",
+              "size": 27,
+              "mediaType": "text/plain; charset=utf-8"
+            }
+          ],
+          "access": {
+            "visibility": "unlisted"
+          },
+          "lifecycle": {
+            "expiresAt": null
+          }
+        },
+        "blobDigests": [
+          "sha256:39eac723d7bb8a05bea2aa57d7b528eb83ed8f8dfe18e4f9659997457961a497",
+          "sha256:8f8b54cb66cd5db57de8c580ed23c38d936af9550f6d29f91ec2ab4820bf161f",
+          "sha256:b68413c92866ed085e7dbdd258946058a497b6253e710b4d615f3efcb7738183",
+          "sha256:e0794dd6c07bdec065c1a63a633f361b6dd745190e9d16c4be615c84847df911"
         ]
       }
     }
