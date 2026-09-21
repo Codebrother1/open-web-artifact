@@ -50,6 +50,10 @@ For `blob`:
 
 These cases test existing OCI boundaries. Manifest validation does not verify bytes, and neither commit-time rehashing nor S3 behavior is added by these fixtures.
 
+## Independent implementations
+
+The corpus is consumed by two independent implementations that never call each other: the JavaScript reference (`packages/*`, run by [`fixtures.test.js`](../../packages/conformance/src/fixtures.test.js)) and a **standard-library-only Go implementation** under [`implementations/go-conformance/`](../../implementations/go-conformance/) (`go test ./implementations/go-conformance/...` or `npm run test:go-conformance`), derived from this guide, [`spec-v0.2.md`](../spec-v0.2.md), [`oci.md`](../oci.md) and the static vectors — not from the JavaScript source. [`pack-cross-language-anchor`](v0.2/pack.json) is the shared static rendezvous point: seven Unicode-named files in scrambled order, four of which hold identical bytes under two media types, whose expected canonical JSON, artifact digest and blob digests were authored with an independent encoder and are checked by both runners from the same bytes. Scope, independence rules and the specification ambiguities the Go work surfaced (notably that pack media-type detection is pinned only for `.html`, `.css`, `.js` and `.txt`) are recorded in [`independent-implementation.md`](../independent-implementation.md).
+
 ## Language-neutral runner
 
 The operation table is the adapter contract. A runner can use its own parser, validator, canonicalizer, resolver, packer, and OCI implementation:

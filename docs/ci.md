@@ -1,9 +1,9 @@
 # Continuous integration
 
-The repository runs four **independent** GitHub Actions workflows on every pull
+The repository runs five **independent** GitHub Actions workflows on every pull
 request, on every push to `main`, and on demand (`workflow_dispatch`). They are
 deliberately separate so that an offline failure never hides whether the MinIO,
-browser or OCI lanes are healthy, and vice versa.
+browser, OCI or Go-conformance lanes are healthy, and vice versa.
 
 Automatic CI is **secretless**: it uses ordinary `pull_request` events (never
 `pull_request_target`), a read-only token (`permissions: contents: read`), no
@@ -16,11 +16,12 @@ repository secrets, and no hosted-storage credentials. Cloudflare R2 is
 | `MinIO` | `.github/workflows/minio.yml` | `minio (mediated + enforced, node 24)` | `ubuntu-latest` | 25 min |
 | `Browsers` | `.github/workflows/browser.yml` | `browsers (chromium, firefox, webkit)` | `ubuntu-latest` | 25 min |
 | `OCI` | `.github/workflows/oci.yml` | `oci (oras + zot, node 24)` | `ubuntu-latest` | 15 min |
+| `Go conformance` | `.github/workflows/go-conformance.yml` | `go-conformance (go 1.27, ubuntu)` | `ubuntu-latest` | 10 min |
 
 Each workflow has its own concurrency group (`ci-offline-*`, `ci-minio-*`,
-`ci-browsers-*`, `ci-oci-*`, keyed by PR number or ref) with
-`cancel-in-progress: true`, so a newer push cancels only that workflow's stale
-run for the same PR — one workflow never cancels another.
+`ci-browsers-*`, `ci-oci-*`, `ci-go-conformance-*`, keyed by PR number or ref)
+with `cancel-in-progress: true`, so a newer push cancels only that workflow's
+stale run for the same PR — one workflow never cancels another.
 
 ## Pinned actions and services
 
@@ -32,10 +33,13 @@ else is `node`, `npm`, `git` and shell.
 | --- | --- | --- |
 | `actions/checkout` | `3d3c42e5aac5ba805825da76410c181273ba90b1` | `v7.0.1` |
 | `actions/setup-node` | `820762786026740c76f36085b0efc47a31fe5020` | `v7.0.0` |
+| `actions/setup-go` | `b7ad1dad31e06c5925ef5d2fc7ad053ef454303e` | `v7.0.0` |
 
-Both are used with `persist-credentials: false` so the job token is not left in
-the checkout. No cache action is used yet: measured first-run times fit the
-timeouts, and a cache can be added later without changing any test.
+Checkout is always used with `persist-credentials: false` so the job token is
+not left in the checkout. No cache action is used: measured first-run times fit
+the timeouts, and a cache can be added later without changing any test
+(`setup-go` runs with `cache: false`; the Go module has no dependencies to
+cache).
 
 The MinIO service is pinned to a **source commit**, not a floating tag, and the
 Playwright engines come from the exact package-local lockfile — see the lane
@@ -219,6 +223,32 @@ see [oci.md](oci.md) for the representation, commands and claims.
   `secrets.*` reference exists. No hosted registry is contacted after the two
   release downloads; no registry login happens anywhere.
 
+## Lane 5 — `Go conformance`: an independent implementation runs the same corpus
+
+Proves that the published specification and static corpus are precise enough
+for a **second implementation in another language** to derive the same results.
+`implementations/go-conformance` is a standard-library-only Go implementation
+written from [spec-v0.2.md](spec-v0.2.md), the [conformance guide](conformance/README.md),
+[oci.md](oci.md) and the static vectors — never from the JavaScript packages
+(see [independent-implementation.md](independent-implementation.md)).
+
+- **Toolchain**: `actions/setup-go` pinned by commit SHA installs Go **1.27**
+  (major/minor pinned, `check-latest: false`, no cache). The job prints
+  `go version`.
+- **Independence proof**: a step fails the job if `go.mod` acquires a `require`
+  directive or if `go list -deps` reports any non-standard-library import. No
+  Node, npm or repository JavaScript runs in this lane; the Go tests read only
+  `docs/conformance/v0.2/*.json` and `docs/test-vectors/basic/*`.
+- **Checks**: `gofmt -l` must be empty, `go vet ./...` clean, then
+  `go test ./... -count=1 -v` — one subtest per corpus vector (286 vectors across
+  the 7 corpus files, plus the immutable basic vectors and independent
+  regression anchors), with `TestCorpusCoverage` failing if any corpus file has
+  no Go harness. Skipping is not possible: the harness has no skip path.
+- **Rendezvous with the JavaScript reference**: the static vector
+  `pack-cross-language-anchor` is checked by this lane and by the offline lane's
+  `npm run test:conformance` from the same checked-in bytes; the two
+  implementations never call each other.
+
 ## R2 is not in automatic CI
 
 The live Cloudflare R2 suites (`OWA_TEST_R2_*`) need real credentials. Giving
@@ -269,6 +299,10 @@ node .github/scripts/zot.mjs start /tmp/oci-tools/zot-linux-amd64 /tmp/zot-state
 export OWA_TEST_OCI_REGISTRY=http://127.0.0.1:<port printed by zot.mjs> OWA_TEST_ORAS_BIN=/tmp/oci-tools/oras/oras
 OWA_TEST_OCI_REQUIRED=1 npm run test:oci
 node .github/scripts/zot.mjs alive && node .github/scripts/zot.mjs stop /tmp/zot-state
+
+# Lane 5 — any OS with Go 1.22+ installed (no Node required)
+cd implementations/go-conformance && test -z "$(gofmt -l .)" && go vet ./... && go test ./... -count=1 -v
+# or, from the repository root: npm run test:go-conformance
 ```
 
 ## What the first runs showed (2026-09-21)
@@ -300,6 +334,7 @@ their row tallies, and — on failure — each failing test with its error.
 
 The job names above (`offline (<os>, node <n>)` × 6, `minio (mediated +
 enforced, node 24)`, `browsers (chromium, firefox, webkit)`, `oci (oras + zot,
-node 24)`) are stable and intended to become **required status checks**. Branch protection is a repository
+node 24)`, `go-conformance (go 1.27, ubuntu)`) are stable and intended to become
+**required status checks**. Branch protection is a repository
 setting configured by a maintainer outside these workflow files; this document
 does not change it.
