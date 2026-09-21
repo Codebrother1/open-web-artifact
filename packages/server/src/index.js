@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { FilesystemBlobStore, FilesystemLeaseStore, FilesystemMetadataStore } from '../../storage-filesystem/src/index.js';
 import { S3BlobStore } from '../../storage-s3/src/index.js';
-import { activateRelease, commitManifest, planManifest, resolveRequestPath } from '../../core/src/index.js';
+import { IntegrityError, activateRelease, commitManifest, planManifest, resolveRequestPath } from '../../core/src/index.js';
 import { sha256 } from '../../spec/src/index.js';
 import { AuthError, createAuthorizer, isSiteScope } from './auth.js';
 import { artifactHeaders, securityHeaders } from './security-profile.js';
@@ -282,6 +282,14 @@ function createListener(dispatch){
       }
       // Fixed Host-binding failures. The body never echoes the received Host.
       if (e instanceof ContentHostError) return json(res,e.status,{error:e.message,code:e.code});
+      // Fixed integrity vocabulary only. The body never carries a storage key,
+      // path, provider body, signed URL or credential; OWA_BLOB_MISSING keeps
+      // its historical shape.
+      if (e instanceof IntegrityError) {
+        const message = e.code === 'OWA_BLOB_MISSING' ? 'Missing blob'
+          : e.code === 'OWA_BLOB_INTEGRITY' ? 'Blob integrity check failed' : 'Blob integrity could not be verified';
+        return json(res,500,{error:message,code:e.code});
+      }
       // Only a fixed, recognized core failure is surfaced; provider errors and
       // nested causes can contain presigned URLs and must never be reflected.
       if (e instanceof Error && /^Missing blob sha256:[0-9a-f]{64}(?![\s\S])/.test(e.message)) return json(res,500,{error:'Missing blob',code:'OWA_BLOB_MISSING'});

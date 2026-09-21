@@ -314,7 +314,8 @@ test('security: official stdio publish isolates S3/R2 and same-origin storage cr
         const query = put.url.searchParams;
         assert.ok(query.get('X-Amz-Algorithm') === 'AWS4-HMAC-SHA256', 'S3 algorithm must survive the HTTP request');
         assert.ok(query.get('X-Amz-Date') === '20250102T030405Z' && query.get('X-Amz-Expires') === '600', 'Fixed signer date and expiry must survive');
-        assert.ok(query.get('X-Amz-SignedHeaders') === 'host', 'Provider must sign only host');
+        assert.ok(query.get('X-Amz-SignedHeaders') === 'host;if-none-match;x-amz-checksum-sha256', 'Provider signs host plus the integrity-binding storage headers, never OWA material');
+        assert.ok(typeof put.headers['x-amz-checksum-sha256'] === 'string' && put.headers['if-none-match'] === '*', 'CLI sends exactly the grant storage headers with the PUT');
         assert.ok(query.get('X-Amz-Credential') === `SYNTHETIC_ACCESS_KEY/20250102/${region}/s3/aws4_request`, 'Expected fake provider credential scope');
         assert.ok(query.get('X-Amz-Security-Token') === 'synthetic-s3-session-token', 'Provider session token must stay in the grant');
         assert.ok(/^[0-9a-f]{64}$/.test(query.get('X-Amz-Signature')), 'Provider signature must be present');

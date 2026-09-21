@@ -6,6 +6,16 @@ function amzDate(date) { return date.toISOString().replace(/[:-]|\.\d{3}/g,''); 
 function dateStamp(date) { return amzDate(date).slice(0,8); }
 function enc(value) { return encodeURIComponent(value).replace(/[!'()*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`); }
 function encodePath(path) { return path.split('/').map(enc).join('/'); }
+/** Base64 SHA-256 of the object bytes, as S3 checksum headers carry it, derived from the CAS digest. */
+function checksumFor(digest) { return Buffer.from(digest.slice('sha256:'.length), 'hex').toString('base64'); }
+/**
+ * Headers a client MUST send with a direct upload grant. Both are SigV4-signed
+ * into the presigned URL, so they cannot be dropped or altered; the provider
+ * validates the checksum against the actual payload bytes and refuses to
+ * overwrite an existing object. Together: a grant can only ever create the one
+ * correct object, and a still-valid grant cannot corrupt it after commit.
+ */
+export function uploadHeadersFor(digest) { return { 'x-amz-checksum-sha256': checksumFor(digest), 'if-none-match': '*' }; }
 function canonicalQuery(params) { return [...params.entries()].sort(([a,av],[b,bv])=>a===b?av.localeCompare(bv):a.localeCompare(b)).map(([k,v])=>`${enc(k)}=${enc(v)}`).join('&'); }
 
 /** Fixed-shape storage failure. Never carries a provider body, URL or credential. */
@@ -66,16 +76,24 @@ export class S3BlobStore {
   signingKey(date) { const kDate=hmac(Buffer.from(`AWS4${this.secretAccessKey}`),date); const kRegion=hmac(kDate,this.region); const kService=hmac(kRegion,'s3'); return hmac(kService,'aws4_request'); }
   credentialScope(date) { return `${date}/${this.region}/s3/aws4_request`; }
 
-  presign(method,key,{expires=900}={}) {
+  /**
+   * Presign a request. `headers`, when given, are SIGNED into the grant: the
+   * client must send exactly those values or the provider rejects the request
+   * with SignatureDoesNotMatch. With no headers the output is byte-identical
+   * to the historical host-only presign.
+   */
+  presign(method,key,{expires=900,headers={}}={}) {
     const now=this.now(), stamp=dateStamp(now), timestamp=amzDate(now), url=this.urlForKey(key);
     const host=url.host, scope=this.credentialScope(stamp);
+    const signing={host,...Object.fromEntries(Object.entries(headers).map(([name,value])=>[name.toLowerCase(),String(value).trim()]))};
+    const signedNames=Object.keys(signing).sort();
     url.searchParams.set('X-Amz-Algorithm','AWS4-HMAC-SHA256');
     url.searchParams.set('X-Amz-Credential',`${this.accessKeyId}/${scope}`);
     url.searchParams.set('X-Amz-Date',timestamp);
     url.searchParams.set('X-Amz-Expires',String(expires));
-    url.searchParams.set('X-Amz-SignedHeaders','host');
+    url.searchParams.set('X-Amz-SignedHeaders',signedNames.join(';'));
     if(this.sessionToken) url.searchParams.set('X-Amz-Security-Token',this.sessionToken);
-    const canonicalRequest=[method,url.pathname,canonicalQuery(url.searchParams),`host:${host}\n`,'host','UNSIGNED-PAYLOAD'].join('\n');
+    const canonicalRequest=[method,url.pathname,canonicalQuery(url.searchParams),signedNames.map(name=>`${name}:${signing[name]}\n`).join(''),signedNames.join(';'),'UNSIGNED-PAYLOAD'].join('\n');
     const stringToSign=['AWS4-HMAC-SHA256',timestamp,scope,hashHex(canonicalRequest)].join('\n');
     const signature=hmac(this.signingKey(stamp),stringToSign,'hex');
     url.searchParams.set('X-Amz-Signature',signature);
@@ -88,7 +106,7 @@ export class S3BlobStore {
    * before; only GC's ListObjectsV2 passes signed query parameters.
    * `url` overrides the key-derived URL for bucket-level operations.
    */
-  async signedFetch(method,key,{body=null,query=null,url:overrideUrl=null}={}) {
+  async signedFetch(method,key,{body=null,query=null,url:overrideUrl=null,headers:extraHeaders={}}={}) {
     const now=this.now(), stamp=dateStamp(now), timestamp=amzDate(now);
     const url=overrideUrl??this.urlForKey(key);
     const host=url.host;
@@ -100,6 +118,8 @@ export class S3BlobStore {
     const target=`${url.origin}${url.pathname}${canonicalQueryString?`?${canonicalQueryString}`:''}`;
     const payloadHash=hashHex(body ?? '');
     const signingHeaders={'host':host,'x-amz-content-sha256':payloadHash,'x-amz-date':timestamp};
+    // Extra headers are signed AND sent, so they are part of the request contract.
+    for(const [name,value] of Object.entries(extraHeaders)) signingHeaders[name.toLowerCase()]=String(value).trim();
     if(this.sessionToken) signingHeaders['x-amz-security-token']=this.sessionToken;
     const signedHeaderNames=Object.keys(signingHeaders).sort();
     const canonicalHeaders=signedHeaderNames.map(name=>`${name}:${signingHeaders[name]}\n`).join('');
@@ -108,6 +128,7 @@ export class S3BlobStore {
     const stringToSign=['AWS4-HMAC-SHA256',timestamp,scope,hashHex(canonicalRequest)].join('\n');
     const signature=hmac(this.signingKey(stamp),stringToSign,'hex');
     const headers={'x-amz-content-sha256':payloadHash,'x-amz-date':timestamp};
+    for(const [name,value] of Object.entries(extraHeaders)) headers[name.toLowerCase()]=String(value).trim();
     if(this.sessionToken) headers['x-amz-security-token']=this.sessionToken;
     headers.authorization=`AWS4-HMAC-SHA256 Credential=${this.accessKeyId}/${scope}, SignedHeaders=${signedHeaderNames.join(';')}, Signature=${signature}`;
     return fetch(target,{method,headers,body});
@@ -115,8 +136,54 @@ export class S3BlobStore {
 
   async has(digest) { const res=await this.signedFetch('HEAD',this.key(digest)); if(res.status===404)return false; if(!res.ok)throw new Error(`S3 HEAD failed: ${res.status} ${await res.text()}`); return true; }
   async get(digest) { const res=await this.signedFetch('GET',this.key(digest)); if(!res.ok)throw new Error(`S3 GET failed: ${res.status} ${await res.text()}`); return new Uint8Array(await res.arrayBuffer()); }
-  async put(digest,data) { const res=await this.signedFetch('PUT',this.key(digest),{body:Buffer.from(data)}); if(!res.ok)throw new Error(`S3 PUT failed: ${res.status} ${await res.text()}`); }
-  async createUpload(digest,{expires=900}={}) { return {digest,method:'PUT',url:this.presign('PUT',this.key(digest),{expires}),expiresIn:expires}; }
+  // Trusted writes also declare the checksum, so the provider validates the
+  // bytes and leaves SHA-256 evidence that verifyBlob can later read cheaply.
+  async put(digest,data) { const res=await this.signedFetch('PUT',this.key(digest),{body:Buffer.from(data),headers:{'x-amz-checksum-sha256':checksumFor(digest)}}); if(!res.ok)throw new Error(`S3 PUT failed: ${res.status} ${await res.text()}`); }
+  /**
+   * Direct-upload grant: a presigned PUT on the final CAS key whose SIGNED
+   * headers bind it to this digest's checksum and to create-once semantics.
+   * The `headers` field tells the client exactly what it must send.
+   */
+  async createUpload(digest,{expires=900}={}) {
+    const headers=uploadHeadersFor(digest);
+    return {digest,method:'PUT',url:this.presign('PUT',this.key(digest),{expires,headers}),expiresIn:expires,headers};
+  }
+
+  /**
+   * Strong integrity verification (issue #10). One HEAD with checksum mode:
+   * a 404 is MISSING; a Content-Length other than the declared size is
+   * INTEGRITY; a provider-validated x-amz-checksum-sha256 equal to the expected
+   * value is accepted with zero payload transfer. Any other case — no evidence,
+   * a composite multipart value, a mismatch — falls through to a definitive
+   * streaming GET + SHA-256 of the actual bytes, bounded at the declared size.
+   * Provider bodies never surface; failures are fixed codes.
+   */
+  async verifyBlob({digest,size}={}) {
+    if(!/^sha256:[0-9a-f]{64}$/.test(String(digest??''))||!Number.isSafeInteger(size)||size<0) throw new S3OperationError('OWA_BLOB_UNVERIFIED');
+    const key=this.key(digest);
+    let head;
+    try { head=await this.signedFetch('HEAD',key,{headers:{'x-amz-checksum-mode':'ENABLED'}}); await head.arrayBuffer().catch(()=>{}); }
+    catch { throw new S3OperationError('OWA_BLOB_UNVERIFIED'); }
+    if(head.status===404) throw new S3OperationError('OWA_BLOB_MISSING');
+    if(!head.ok) throw new S3OperationError('OWA_BLOB_UNVERIFIED');
+    const length=Number(head.headers.get('content-length'));
+    if(!Number.isSafeInteger(length)||length!==size) throw new S3OperationError('OWA_BLOB_INTEGRITY');
+    if(head.headers.get('x-amz-checksum-sha256')===checksumFor(digest)) return {ok:true,method:'provider-checksum'};
+    let res;
+    try { res=await this.signedFetch('GET',key); } catch { throw new S3OperationError('OWA_BLOB_UNVERIFIED'); }
+    if(res.status===404){ await res.arrayBuffer().catch(()=>{}); throw new S3OperationError('OWA_BLOB_MISSING'); }
+    if(!res.ok||!res.body){ await res.arrayBuffer().catch(()=>{}); throw new S3OperationError('OWA_BLOB_UNVERIFIED'); }
+    const hash=createHash('sha256'); let count=0;
+    try {
+      for await (const chunk of res.body) {
+        count+=chunk.byteLength;
+        if(count>size) throw new S3OperationError('OWA_BLOB_INTEGRITY'); // Longer than declared: stop.
+        hash.update(chunk);
+      }
+    } catch(error) { throw error instanceof S3OperationError ? error : new S3OperationError('OWA_BLOB_UNVERIFIED'); }
+    if(count!==size||hash.digest('hex')!==digest.slice('sha256:'.length)) throw new S3OperationError('OWA_BLOB_INTEGRITY');
+    return {ok:true,method:'rehash'};
+  }
 
   /** Bucket-level URL for operations that address the bucket, not one object. */
   bucketUrl() {

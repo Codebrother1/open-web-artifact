@@ -425,3 +425,14 @@ failure; it is not live required-auth or TLS coverage. See
 [integration-tests.md](integration-tests.md) for the live matrix, configuration,
 cleanup, and evidence limitations. Do not equate skipped live cases or offline
 success with tested provider interoperability.
+
+## Storage grant headers
+
+S3/R2 upload grants carry a `headers` field naming the storage headers the
+client must send with the PUT: `x-amz-checksum-sha256` and `if-none-match`.
+Both are SigV4-signed into the grant, so they cannot be dropped or altered, and
+the storage service validates the checksum against the payload. They are
+integrity-binding **storage grant material**: they create no OWA capability,
+never carry a bearer, and the CLI re-derives the checksum locally rather than
+trusting the control plane. See
+[commit-boundary blob integrity](integrity.md).

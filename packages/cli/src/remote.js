@@ -96,14 +96,35 @@ async function safeFetch(url, options) {
   try { return await fetch(url, { ...options, redirect: 'error', credentials: 'omit' }); }
   catch { throw new CliError('OWA_CLI_NETWORK'); }
 }
+// The only storage headers a grant may instruct the client to send. Each value
+// is re-derived or pinned locally, so a hostile control plane cannot turn the
+// upload into a vehicle for arbitrary headers: the checksum MUST equal the
+// digest being uploaded, and create-once MUST be exactly "*".
+const STORAGE_HEADERS = Object.freeze(['x-amz-checksum-sha256', 'if-none-match']);
+function storageHeaders(upload) {
+  if (!Object.hasOwn(upload, 'headers')) return {};
+  if (!isRecord(upload.headers)) throw new CliError('OWA_CLI_GRANT');
+  const entries = Object.entries(upload.headers);
+  if (entries.length === 0) throw new CliError('OWA_CLI_GRANT');
+  const out = {};
+  for (const [name, value] of entries) {
+    const lower = name.toLowerCase();
+    if (!STORAGE_HEADERS.includes(lower) || typeof value !== 'string' || Object.hasOwn(out, lower)) throw new CliError('OWA_CLI_GRANT');
+    if (lower === 'x-amz-checksum-sha256' && value !== Buffer.from(upload.digest.slice('sha256:'.length), 'hex').toString('base64')) throw new CliError('OWA_CLI_GRANT');
+    if (lower === 'if-none-match' && value !== '*') throw new CliError('OWA_CLI_GRANT');
+    out[lower] = value;
+  }
+  return out;
+}
 function uploadRequest(upload, client, slug, blobs) {
   if (!isRecord(upload) || !isDigest(upload.digest) || !blobs.has(upload.digest)
-    || Object.hasOwn(upload, 'headers')
     || (Object.hasOwn(upload, 'method') && upload.method !== 'PUT')
-    || (Object.hasOwn(upload, 'authorization') && upload.authorization !== 'bearer'))
+    || (Object.hasOwn(upload, 'authorization') && upload.authorization !== 'bearer')
+    // A local bearer grant never carries storage headers; a storage grant never carries a bearer.
+    || (upload.authorization === 'bearer' && Object.hasOwn(upload, 'headers')))
     throw new CliError('OWA_CLI_GRANT');
   const url = httpUrl(upload.url, 'OWA_CLI_GRANT');
-  const headers = {};
+  const headers = storageHeaders(upload);
   if (upload.authorization === 'bearer') {
     const rawPath = upload.url.match(/^https?:\/\/[^/?#]+([^?#]*)/i)?.[1];
     const query = url.searchParams;
@@ -119,7 +140,7 @@ function uploadRequest(upload, client, slug, blobs) {
     if (client.token) headers.authorization = `Bearer ${client.token}`;
   }
   // Explicitly constructed upload headers, never the control-plane headers.
-  return { url: url.href, options: { method: 'PUT', headers, body: Buffer.from(blobs.get(upload.digest)) } };
+  return { url: url.href, createOnce: headers['if-none-match'] === '*', options: { method: 'PUT', headers, body: Buffer.from(blobs.get(upload.digest)) } };
 }
 
 export async function remotePublishResult(directory, slug, server, { activate = true } = {}) {
@@ -137,6 +158,11 @@ export async function remotePublishResult(directory, slug, server, { activate = 
   if (new Set(plan.uploads.map(upload => upload.digest)).size !== uploads.length) throw new CliError('OWA_CLI_GRANT');
   for (const upload of uploads) {
     const res = await safeFetch(upload.url, upload.options);
+    // A create-once grant answers 412 when the object already exists — e.g. a
+    // retried upload whose first attempt did land, or a concurrent publisher of
+    // the same content. That object can only have been written through a
+    // checksum-bound grant for this digest, and commit verifies it regardless.
+    if (res.status === 412 && upload.createOnce) continue;
     if (!res.ok) throw new CliError('OWA_CLI_UPLOAD', res.status);
   }
   const commit = await client.request(`${path}/commit`, { ...body, ...(activate === false ? { activate: false } : {}) });

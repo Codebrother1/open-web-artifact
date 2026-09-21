@@ -333,6 +333,7 @@ docs/
   auth.md
   origins.md
   gc.md
+  integrity.md
   mcp.md
   integration-tests.md
   test-vectors/
@@ -386,10 +387,17 @@ npm run gc -- --apply      # reclaim it
 See [blob garbage collection](docs/gc.md). Release retention/pruning is
 deliberately not implemented.
 
+Commit is an **integrity gate**: a release is persisted only after every unique
+referenced blob is strongly verified against its manifest SHA-256 **and** size —
+provider-validated checksum evidence on S3/R2, a streaming rehash otherwise.
+Direct-upload grants are checksum-bound and create-once, so a still-valid grant
+cannot corrupt a committed object. See
+[commit-boundary blob integrity](docs/integrity.md).
+
 Read the [origin architecture](docs/origins.md),
 [threat model](docs/sandboxed-web-v1-threat-model.md),
 [profile contract](docs/sandboxed-web-v1.md), [auth guide](docs/auth.md),
-[GC guide](docs/gc.md), and
+[GC guide](docs/gc.md), [integrity guide](docs/integrity.md), and
 [optional browser guide](docs/sandboxed-web-v1-browser-validation.md).
 Combined deterministic tests prove HTTP/auth policy and byte preservation, not
 browser enforcement; browser validation remains **not run**.

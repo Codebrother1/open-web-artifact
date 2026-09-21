@@ -66,7 +66,8 @@ function verifyUpload(upload, packed, store) {
   assert.equal(url.hostname, store.addressingStyle === 'path' ? endpoint.hostname : `${store.bucket}.${endpoint.hostname}`);
   assert.equal(url.pathname, store.addressingStyle === 'path' ? `/${store.bucket}/${key}` : `/${key}`);
   assert.equal(url.searchParams.get('X-Amz-Algorithm'), 'AWS4-HMAC-SHA256');
-  assert.equal(url.searchParams.get('X-Amz-SignedHeaders'), 'host');
+  assert.equal(url.searchParams.get('X-Amz-SignedHeaders'), 'host;if-none-match;x-amz-checksum-sha256', 'grant is checksum-bound and create-once');
+  assert.deepEqual(upload.headers, { 'x-amz-checksum-sha256': Buffer.from(upload.digest.slice('sha256:'.length), 'hex').toString('base64'), 'if-none-match': '*' });
   assert.match(url.searchParams.get('X-Amz-Signature'), /^[0-9a-f]{64}$/);
   assert.equal(url.searchParams.get('X-Amz-Expires'), String(upload.expiresIn));
   // Boolean assertions keep credential values out of failure diagnostics.
@@ -152,16 +153,32 @@ for (const entry of cases) {
         assert.equal(plan.reused, expectedReused);
         assert.deepEqual(plan.uploads.map(u => u.digest).sort(), [...expectedDigests].sort());
         let uploaded = 0;
+        const grants = [];
         for (const upload of plan.uploads) {
           verifyUpload(upload, packed, store);
           attempted.add(upload.digest); // Also clean up a PUT whose response is lost.
-          const put = await fetch(upload.url, { method: upload.method, body: Buffer.from(packed.blobs.get(upload.digest)) });
+          const bytes = Buffer.from(packed.blobs.get(upload.digest));
+          // Same-length WRONG bytes with the grant's own headers: the PROVIDER must
+          // refuse them, because the checksum is validated against the payload.
+          const wrong = await fetch(upload.url, { method: upload.method, headers: upload.headers, body: Buffer.from(bytes.map(b => b ^ 0xff)) });
+          await wrong.arrayBuffer();
+          assert.equal(wrong.status, 400, `Provider rejects wrong bytes under a checksum-bound grant (HTTP ${wrong.status})`);
+          const put = await fetch(upload.url, { method: upload.method, headers: upload.headers, body: bytes });
           await put.arrayBuffer();
           assert.ok(put.ok, `Direct PUT HTTP status ${put.status}`);
           uploaded++;
+          grants.push({ upload, bytes });
         }
         assert.equal(uploaded, expectedUploads, 'Actual direct upload count');
         const commit = await post(base, slug, 'commit', packed, 201);
+        // POST-COMMIT TOCTOU: the still-valid grants must not be able to corrupt
+        // the committed object. Create-once fails first; checksum would too.
+        for (const { upload, bytes } of grants) {
+          const again = await fetch(upload.url, { method: upload.method, headers: upload.headers, body: Buffer.from(bytes.map(b => b ^ 0xff)) });
+          await again.arrayBuffer();
+          assert.ok(again.status === 412 || again.status === 400, `Still-valid grant cannot overwrite committed CAS (HTTP ${again.status})`);
+          assert.ok(Buffer.from(await store.get(upload.digest)).equals(bytes), 'committed bytes are unchanged after the reuse attempt');
+        }
         assert.equal(commit.artifactDigest, packed.artifactDigest);
         assert.equal(commit.activeReleaseId, commit.releaseId);
         assert.ok(!releases.some(r => r.id === commit.releaseId), 'Each commit creates an immutable release');

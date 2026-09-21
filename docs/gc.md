@@ -108,6 +108,10 @@ between the `has()` that called it reusable and the lease that protects it.
 - **Commit needs no lease cleanup.** Once the release exists, release marking
   protects the blobs regardless of the lease, so the lease is simply allowed to
   expire. `--prune-expired-leases` removes expired records during an apply run.
+- **The lease also covers integrity repair.** When plan finds an existing object
+  that is *proven* corrupt it deletes it and re-issues a grant (see
+  [integrity.md](integrity.md)); that delete happens under the lease taken above,
+  so a concurrent GC sweep cannot race the replacement upload.
 
 ### Lease storage
 
