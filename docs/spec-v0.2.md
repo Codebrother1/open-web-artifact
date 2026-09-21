@@ -138,6 +138,7 @@ The [conformance guide](conformance/README.md) defines operation-specific fixtur
 Issue 5 does not fix the following existing limitations:
 - The reference directory packer uses locale-sensitive `localeCompare` for file ordering. The pack fixtures pin explicit expected arrays for lowercase ASCII names, not universal cross-locale ordering of arbitrary Unicode filenames. Once a manifest exists, its array order is fully specified and MUST be preserved.
 - OCI import indexes layers by digest, collapsing entries with the same content digest and potentially conflicting path annotations. Duplicate-content manifests are valid; supporting all such OCI round-trips is a separate transport issue.
+- *Non-normative OCI transport note:* an OCI layer descriptor `mediaType` must be an RFC 6838 type/subtype, so the OCI transport maps the OWA `mediaType` to that form (`text/html; charset=utf-8` → `text/html`; unrepresentable values → `application/octet-stream`) in descriptors only. The canonical OWA manifest — the OCI config blob — keeps the full value, so manifest validation, canonical JSON and artifact digests are unaffected. See [oci.md](oci.md).
 - Commit checks blob existence, not stored bytes' hashes or lengths. Content-mismatch fixtures exercise existing OCI read/write verification only; they do not add commit-time or S3 verification.
 - Duplicate JSON member-name policy remains outside portable corpus requirements. Unpaired-surrogate fixtures pin preservation behavior, but implementations must disclose parser limitations rather than substitute characters.
 

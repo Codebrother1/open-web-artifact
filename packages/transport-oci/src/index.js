@@ -5,6 +5,27 @@ import { artifactDigest, canonicalJson, OWA_MEDIA_TYPE, owaError, sha256, valida
 export const OCI_IMAGE_MANIFEST = 'application/vnd.oci.image.manifest.v1+json';
 export const OCI_IMAGE_INDEX = 'application/vnd.oci.image.index.v1+json';
 export const OCI_LAYOUT_VERSION = '1.0.0';
+export const OCI_FALLBACK_MEDIA_TYPE = 'application/octet-stream';
+// The OCI image-spec descriptor `mediaType` grammar (RFC 6838 type/subtype, the
+// pattern the image-spec JSON schema and registries such as Zot enforce).
+const OCI_DESCRIPTOR_MEDIA_TYPE = /^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}$/;
+
+/**
+ * Transport-local mapping from an OWA `file.mediaType` to the OCI layer
+ * DESCRIPTOR media type. An OWA mediaType is an arbitrary nonempty string that
+ * may carry parameters (`text/html; charset=utf-8`); an OCI descriptor mediaType
+ * must be a bare RFC 6838 type/subtype. So: take the part before the first `;`,
+ * trim ASCII SP/HTAB, and use it verbatim when it satisfies the descriptor
+ * grammar; otherwise use application/octet-stream. This is representation only:
+ * the canonical OWA manifest in the OCI config blob remains the sole source of
+ * the full, exact `file.mediaType`, and import reads it from there unchanged.
+ */
+export function ociLayerMediaType(fileMediaType) {
+  if (typeof fileMediaType !== 'string') return OCI_FALLBACK_MEDIA_TYPE;
+  const semicolon = fileMediaType.indexOf(';');
+  const candidate = (semicolon === -1 ? fileMediaType : fileMediaType.slice(0, semicolon)).replace(/^[ \t]+|[ \t]+$/g, '');
+  return OCI_DESCRIPTOR_MEDIA_TYPE.test(candidate) ? candidate : OCI_FALLBACK_MEDIA_TYPE;
+}
 
 function bytes(value) { return Buffer.isBuffer(value) ? value : Buffer.from(value); }
 function digestPath(root,digest){const [algorithm,hex]=digest.split(':');return join(root,'blobs',algorithm,hex);}
@@ -28,7 +49,8 @@ export async function writeOciLayout({manifest,blobs,output,ref='latest'}){
     if(body.byteLength!==file.size)throw owaError('OWA_CONTENT_SIZE_MISMATCH', `Source blob size mismatch for ${file.path}`);
     await writeBlob(root,file.digest,body);
     layers.push({
-      mediaType:file.mediaType,
+      // Descriptor media type only; the full OWA value lives in the config blob.
+      mediaType:ociLayerMediaType(file.mediaType),
       digest:file.digest,
       size:file.size,
       annotations:{
@@ -85,6 +107,9 @@ export async function readOciLayout({input,ref='latest'}){
   for(const file of manifest.files){
     const layer=layerByDigest.get(file.digest);if(!layer)throw new Error(`OCI layer missing for ${file.path}`);
     if(layer.size!==file.size)throw owaError('OWA_CONTENT_SIZE_MISMATCH', `OCI layer size mismatch for ${file.path}`);
+    // Representation integrity: the descriptor must carry exactly the mapped
+    // transport media type for this file (never compared to the full OWA value).
+    if(layer.mediaType!==ociLayerMediaType(file.mediaType))throw new Error(`OCI layer media type mismatch for ${file.path}`);
     if(layer.annotations?.['dev.openwebartifact.path']&&layer.annotations['dev.openwebartifact.path']!==file.path)throw new Error(`OCI layer path mismatch for ${file.path}`);
     blobMap.set(file.digest,new Uint8Array(await readVerifiedBlob(root,file.digest,file.size)));
   }

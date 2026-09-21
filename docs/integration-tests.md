@@ -238,6 +238,12 @@ in both trust modes — with no repository secrets, because the service and its
 credentials live only inside the job. Cloudflare R2 is **not** part of automatic
 CI: live credentials are never provided to pull-request code.
 
+The OCI registry transport has its own live suite, `npm run test:oci`
+(`packages/integration/oci/`), driven by `OWA_TEST_OCI_REGISTRY`,
+`OWA_TEST_ORAS_BIN` and `OWA_TEST_OCI_REQUIRED` rather than the storage
+variables above. It runs against a real loopback Zot with the real ORAS CLI in
+the `OCI` workflow and skips cleanly when unconfigured; see [oci.md](oci.md).
+
 ### Requiring a provider instead of skipping
 
 A configured-but-absent provider normally makes its cases skip, which is right

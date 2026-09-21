@@ -1,9 +1,9 @@
 # Continuous integration
 
-The repository runs three **independent** GitHub Actions workflows on every pull
+The repository runs four **independent** GitHub Actions workflows on every pull
 request, on every push to `main`, and on demand (`workflow_dispatch`). They are
-deliberately separate so that an offline failure never hides whether the MinIO or
-browser lanes are healthy, and vice versa.
+deliberately separate so that an offline failure never hides whether the MinIO,
+browser or OCI lanes are healthy, and vice versa.
 
 Automatic CI is **secretless**: it uses ordinary `pull_request` events (never
 `pull_request_target`), a read-only token (`permissions: contents: read`), no
@@ -15,11 +15,12 @@ repository secrets, and no hosted-storage credentials. Cloudflare R2 is
 | `CI` | `.github/workflows/ci.yml` | `offline (<os>, node <22\|24>)` — 6 cells | `ubuntu-latest`, `macos-latest`, `windows-latest` | 15 min |
 | `MinIO` | `.github/workflows/minio.yml` | `minio (mediated + enforced, node 24)` | `ubuntu-latest` | 25 min |
 | `Browsers` | `.github/workflows/browser.yml` | `browsers (chromium, firefox, webkit)` | `ubuntu-latest` | 25 min |
+| `OCI` | `.github/workflows/oci.yml` | `oci (oras + zot, node 24)` | `ubuntu-latest` | 15 min |
 
 Each workflow has its own concurrency group (`ci-offline-*`, `ci-minio-*`,
-`ci-browsers-*`, keyed by PR number or ref) with `cancel-in-progress: true`, so a
-newer push cancels only that workflow's stale run for the same PR — one workflow
-never cancels another.
+`ci-browsers-*`, `ci-oci-*`, keyed by PR number or ref) with
+`cancel-in-progress: true`, so a newer push cancels only that workflow's stale
+run for the same PR — one workflow never cancels another.
 
 ## Pinned actions and services
 
@@ -183,6 +184,41 @@ issue #19 development host could not (its glibc was too old to start WebKit).
 Traces, videos, screenshots, downloaded fixtures and browser caches are not
 uploaded; the tests' own egress guard keeps execution loopback-only.
 
+## Lane 4 — `OCI`: live registry interoperability with ORAS and Zot
+
+Proves `OWA directory → packDirectory → writeOciLayout → ORAS → Zot → ORAS →
+fresh layout → readOciLayout → import-oci → serve` against a **real** registry;
+see [oci.md](oci.md) for the representation, commands and claims.
+
+- **Tools, pinned and verified before execution** by `.github/scripts/oci-tools.mjs`
+  (plain Node; no `curl | sh`, no third-party action): ORAS **v1.3.4**
+  (`oras_1.3.4_linux_amd64.tar.gz`, SHA-256
+  `f27adb935022d94df8dc77719c322dda592c78a0d57a6f7dcdd8d900b248c454`, listed in
+  `oras_1.3.4_checksums.txt`, SHA-256
+  `19d479e497fb5e30c7de3c621e3ed337e3857de0d96542021a73e2d8016dbe5a`) and Zot
+  **v2.1.21** (`zot-linux-amd64`, SHA-256
+  `8751cc0daf739634835a3bd8206e3094c84d552e2c462e4a4baf80f40dd92685`, listed in
+  `checksums.sha256.txt`, SHA-256
+  `dc91ac8283cc04f778d642aa4b51d46e6a1e4b05205825256291d05159cf4755`), both from
+  their official GitHub releases. A hash mismatch fails the job; nothing is
+  extracted or made executable before its hash matched. `oras version` and
+  `zot --version` are printed and published as a `::notice`.
+- **Registry**: `.github/scripts/zot.mjs start` writes a minimal config under
+  `RUNNER_TEMP` (`distSpecVersion 1.1.1`, disposable storage, `gc: false`, no
+  UI/search/sync/auth/metrics/remote storage), starts Zot on **127.0.0.1** with an
+  **ephemeral port**, waits until `GET /v2/` answers 200 (bounded), and exports
+  `OWA_TEST_OCI_REGISTRY`. Plain HTTP, unauthenticated, loopback only — this is
+  an interoperability harness, not a deployment.
+- **Suite**: `OWA_TEST_OCI_REQUIRED=1 npm run test:oci` — with the required flag,
+  a missing ORAS binary, missing/unready registry or any failing ORAS command is
+  a **failure**, never a skip. A postflight fails the job if Zot exited before
+  shutdown; `if: always()` cleanup stops Zot and removes registry storage,
+  config and the downloaded tools. Nothing from the registry is uploaded.
+- Two preflights keep the lane secretless: `assert-no-live-config.mjs` rejects
+  any `OWA_TEST_*`/`OWA_S3_*` configuration before the tools are installed, and no
+  `secrets.*` reference exists. No hosted registry is contacted after the two
+  release downloads; no registry login happens anywhere.
+
 ## R2 is not in automatic CI
 
 The live Cloudflare R2 suites (`OWA_TEST_R2_*`) need real credentials. Giving
@@ -225,6 +261,14 @@ npm --prefix packages/browser-tests run install-browsers:deps
 npm --prefix packages/browser-tests run versions -- --require chromium,firefox,webkit
 OWA_BROWSERS=chromium,firefox,webkit OWA_BROWSER_EVIDENCE_JSON=/tmp/evidence.json npm run test:browser
 node .github/scripts/assert-browser-evidence.mjs /tmp/evidence.json chromium,firefox,webkit
+
+# Lane 4 — Linux x86-64 (the pinned release assets are linux/amd64)
+node .github/scripts/assert-no-live-config.mjs
+node .github/scripts/oci-tools.mjs /tmp/oci-tools            # downloads + SHA-256-verifies ORAS v1.3.4 and Zot v2.1.21
+node .github/scripts/zot.mjs start /tmp/oci-tools/zot-linux-amd64 /tmp/zot-state
+export OWA_TEST_OCI_REGISTRY=http://127.0.0.1:<port printed by zot.mjs> OWA_TEST_ORAS_BIN=/tmp/oci-tools/oras/oras
+OWA_TEST_OCI_REQUIRED=1 npm run test:oci
+node .github/scripts/zot.mjs alive && node .github/scripts/zot.mjs stop /tmp/zot-state
 ```
 
 ## What the first runs showed (2026-09-21)
@@ -255,7 +299,7 @@ their row tallies, and — on failure — each failing test with its error.
 ## Branch protection
 
 The job names above (`offline (<os>, node <n>)` × 6, `minio (mediated +
-enforced, node 24)`, `browsers (chromium, firefox, webkit)`) are stable and
-intended to become **required status checks**. Branch protection is a repository
+enforced, node 24)`, `browsers (chromium, firefox, webkit)`, `oci (oras + zot,
+node 24)`) are stable and intended to become **required status checks**. Branch protection is a repository
 setting configured by a maintainer outside these workflow files; this document
 does not change it.

@@ -1,0 +1,78 @@
+# Lane 4 — live OCI registry interoperability (issue #23).
+#
+# OWA directory -> packDirectory -> writeOciLayout -> REAL ORAS -> REAL Zot
+#               -> REAL ORAS -> fresh OCI layout -> readOciLayout -> CLI import -> serve
+#
+# ORAS and Zot are downloaded from their OFFICIAL GitHub releases at pinned
+# versions and every SHA-256 (asset and the release checksum file) is verified
+# before anything is extracted or executed. Zot runs on 127.0.0.1 with an
+# ephemeral port, plain HTTP, disposable storage under RUNNER_TEMP, no auth,
+# no UI/search/sync. No secret exists in this lane; no hosted registry is
+# contacted after the two release downloads. OWA_TEST_OCI_REQUIRED=1 makes any
+# missing prerequisite a FAILURE, so this job can never go green by skipping.
+name: OCI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-oci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  oci:
+    name: oci (oras + zot, node 24)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+
+      - name: Prove this lane carries no live-storage or registry configuration
+        run: node .github/scripts/assert-no-live-config.mjs
+
+      # Pinned ORAS v1.3.4 and Zot v2.1.21 from their official releases; SHA-256 of
+      # each asset and of each release checksum file verified before extraction or
+      # execution. Prints `oras version` / `zot --version` and exports
+      # OWA_TEST_ORAS_BIN and OWA_CI_ZOT_BIN through GITHUB_ENV.
+      - name: Download and verify pinned ORAS and Zot
+        run: node .github/scripts/oci-tools.mjs "$RUNNER_TEMP/oci-tools"
+
+      # Real Zot on 127.0.0.1 with an ephemeral port; readiness is GET /v2/ == 200;
+      # exports OWA_TEST_OCI_REGISTRY and OWA_CI_ZOT_PID through GITHUB_ENV.
+      - name: Start disposable loopback Zot
+        run: node .github/scripts/zot.mjs start "$OWA_CI_ZOT_BIN" "$RUNNER_TEMP/zot"
+
+      - name: Live OCI registry suite (REQUIRED — a skip is a failure)
+        env:
+          OWA_TEST_OCI_REQUIRED: '1'
+        run: npm run test:oci
+
+      - name: Zot stayed alive through the suite
+        run: node .github/scripts/zot.mjs alive
+
+      - name: Whitespace check
+        run: git diff --check
+
+      - name: Tests left the checkout clean
+        run: node .github/scripts/assert-clean-tree.mjs
+
+      - name: Stop Zot and remove registry storage, config, downloads
+        if: always()
+        run: |
+          node .github/scripts/zot.mjs stop "$RUNNER_TEMP/zot"
+          rm -rf "$RUNNER_TEMP/oci-tools"
