@@ -511,7 +511,7 @@ Directions that remain open after the independent Go conformance proof (the port
 integrity gate, MinIO/browser/ORAS+Zot lanes, Unicode pack ordering, cross-language conformance and the
 portable pack media-type rule are done):
 
-1. Resolve the remaining portability interpretations recorded by the independent implementation ([docs/independent-implementation.md](docs/independent-implementation.md): OCI index reference selection without `ref.name`, non-regular directory entries). Deterministic pack-time media-type assignment is now specified in the v0.2 draft and corpus-pinned for the full fixed table (issue #33).
+1. Resolve the remaining actionable portability interpretations recorded by the independent implementation, especially OCI index reference selection without `ref.name` and non-regular directory entries ([docs/independent-implementation.md](docs/independent-implementation.md)). Deterministic pack-time media-type assignment is now specified in the v0.2 draft and corpus-pinned for the full fixed table (issue #33).
 2. Broader operator-run live evidence where it adds information: additional S3-compatible providers, registries beyond the tested ORAS v1.3.4 / Zot v2.1.21 pair, authenticated/TLS registry transport (registry transport itself stays with ORAS).
 3. Production and multi-tenant hardening beyond the documented prototype boundaries: tenant-private storage, token revocation/key rings, release retention, quotas.
 4. Separately reviewed future interactive capabilities (data/forms/secret proxies) only after the static lifecycle is stable; `sandboxed-web-v1` stays script-disabled.
