@@ -22,7 +22,19 @@
 //     `method`/`path`/`statusCode` fields are the boundary evidence;
 //   - bounded subprocesses (kill-and-reap on timeout) and a `stop()` that ends
 //     the registry, proves the pid is gone and removes the state directory —
-//     keys, certificate, htpasswd file, storage and log alike.
+//     keys, certificate, htpasswd file, storage and log alike;
+//   - startup that OWNS its failures: from the moment the state directory
+//     exists (and from the moment the child is spawned) every rejection of
+//     `startTlsRegistry()` — setup failure, spawn failure, early exit, an
+//     unexpected authentication challenge, a registry that does not require
+//     authentication, or the readiness deadline — stops the child if it is
+//     running, awaits its close and verifies it was reaped, removes the state
+//     directory, aborts the in-flight probe and clears every timer, and then
+//     rejects with the ORIGINAL error (cleanup problems, if any, are appended to
+//     its message and recorded on `error.cleanup`). Readiness is an
+//     elapsed-time deadline (60 s by default): every HTTPS probe and every
+//     retry delay is bounded by the remaining budget, so a registry that
+//     accepts connections but never answers cannot outlive the deadline.
 //
 // Client isolation is the caller's job (an ORAS `--registry-config` file inside
 // the test's own temporary directory, a temporary HOME/DOCKER_CONFIG); this
@@ -48,8 +60,19 @@ export const syntheticPassword = () => randomBytes(18).toString('base64url');
 
 // ---------------------------------------------------------------- processes ---
 
+// Last-resort safety net ONLY: if the test process itself dies with a child
+// still registered here, the child is SIGKILLed on the way out. It is not the
+// cleanup mechanism — `runBounded`, `startTlsRegistry`'s failure path and
+// `stop()` each reap their own child and remove their own state.
 const liveChildren = new Set();
 process.once('exit', () => { for (const child of liveChildren) { try { child.kill('SIGKILL'); } catch {} } });
+
+/** A cancellable delay: resolves after `ms`, or at once when cancelled; never leaves a live timer behind. */
+function cancellableDelay(ms) {
+  let timer, settle;
+  const promise = new Promise(resolve => { settle = resolve; timer = setTimeout(resolve, ms); });
+  return { promise, cancel: () => { clearTimeout(timer); settle(); } };
+}
 
 /**
  * Run a command with ARRAY arguments (never a shell string) and an external
@@ -201,17 +224,23 @@ export const EMPTY_REGISTRY_CONFIG = JSON.stringify({ auths: {} });
 
 // ------------------------------------------------------------------ HTTPS I/O ---
 
-/** Test-only HTTPS request verified against `ca` (never the system store, never insecure); supplemental inspection, not the transport. */
-export function httpsGet(origin, path, { method = 'GET', headers = {}, ca, timeout = 15_000 } = {}) {
+/**
+ * Test-only HTTPS request verified against `ca` (never the system store, never
+ * insecure); supplemental inspection, not the transport. `timeout` destroys the
+ * request (socket included) when it elapses; an aborted `signal` destroys it at
+ * once — either way nothing pending outlives the caller's decision.
+ */
+export function httpsGet(origin, path, { method = 'GET', headers = {}, ca, timeout = 15_000, signal } = {}) {
   const url = new URL(path, origin);
   return new Promise((resolve, reject) => {
-    const req = httpsRequest({ hostname: url.hostname, port: url.port, path: `${url.pathname}${url.search}`, method, headers, ca, agent: false }, res => {
+    if (signal?.aborted) { reject(new Error(`${method} ${url.pathname} aborted before it was sent`)); return; }
+    const req = httpsRequest({ hostname: url.hostname, port: url.port, path: `${url.pathname}${url.search}`, method, headers, ca, agent: false, signal }, res => {
       const chunks = [];
       res.on('data', chunk => chunks.push(chunk));
       res.on('error', reject);
       res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
     });
-    req.setTimeout(timeout, () => req.destroy(new Error(`${method} ${url.pathname} timed out`)));
+    req.setTimeout(timeout, () => req.destroy(new Error(`${method} ${url.pathname} timed out after ${timeout} ms`)));
     req.on('error', reject);
     req.end();
   });
@@ -246,67 +275,161 @@ export async function accessLog(logPath) {
   return entries;
 }
 
+/** Readiness deadline for the real registry (elapsed time, not attempts) and the bound of one HTTPS probe. */
+export const READINESS_MS = 60_000;
+export const PROBE_TIMEOUT_MS = 2_000;
+const RETRY_DELAY_MS = 250;
+/** Grace between SIGTERM and SIGKILL when stopping the registry. */
+export const STOP_GRACE_MS = 10_000;
+
 /**
- * Start the disposable authenticated HTTPS registry. Resolves once GET /v2/
- * over TLS (verified against the test CA) is challenged with 401 Basic — the
- * registry is up AND requires authentication. Rejects promptly if the process
- * exits first; the readiness wait is bounded (60 s) and leaves no timer behind.
+ * Start the disposable authenticated HTTPS registry.
+ *
+ * Resolves once GET /v2/ over TLS (verified against the test CA only) is
+ * answered `401` with exactly the configured Basic challenge — the registry is
+ * up AND requires authentication. Rejects, after cleaning up after itself, when:
+ *
+ *   - setup fails after the state directory was created (PKI, htpasswd, config);
+ *   - the child cannot be spawned (its `error` event) or exits before readiness;
+ *   - the registry answers without requiring authentication, or with an
+ *     unexpected challenge;
+ *   - the elapsed-time deadline `readinessMs` (default 60 s) expires. Every
+ *     probe is bounded by `min(probeTimeoutMs, remaining budget)` and every
+ *     retry delay by the remaining budget, so a registry that accepts
+ *     connections but never answers is cut off at the deadline, not at some
+ *     later probe timeout.
+ *
+ * Cleanup on rejection: the in-flight probe is aborted, pending timers are
+ * cleared, the child (if any) is SIGTERMed then SIGKILLed after `graceMs` and
+ * awaited to `close`, its pid is verified gone, and the state directory (keys,
+ * certificate, htpasswd file, storage, log) is removed. The ORIGINAL error is
+ * rejected with; cleanup problems are appended to its message and recorded on
+ * `error.cleanup` — never swallowed, never allowed to mask the cause.
  */
-export async function startTlsRegistry({ zot, openssl, perl, stateDir, username = TLS_REGISTRY_USER, password }) {
+export async function startTlsRegistry({ zot, openssl, perl, stateDir, username = TLS_REGISTRY_USER, password, readinessMs = READINESS_MS, probeTimeoutMs = PROBE_TIMEOUT_MS, graceMs = STOP_GRACE_MS }) {
   assert.ok(password, 'a synthetic password is required');
-  await mkdir(join(stateDir, 'data'), { recursive: true });
-  const pki = join(stateDir, 'pki');
-  const ca = await createTestCA(openssl, pki);
-  const tls = await issueServerCertificate(openssl, pki, ca);
-  const htpasswdPath = join(stateDir, 'htpasswd');
-  await writeFile(htpasswdPath, `${await htpasswdEntry(perl, username, password)}\n`, { mode: 0o600 });
-  const port = await freePort();
-  const config = zotTlsConfig({ stateDir, port, tls, htpasswdPath, username });
-  const configPath = join(stateDir, 'config.json');
-  await writeFile(configPath, JSON.stringify(config, null, 2));
-
-  const child = spawn(zot, ['serve', configPath], { stdio: 'ignore' });
-  liveChildren.add(child);
-  const exit = new Promise(resolve => child.once('close', (code, signal) => { liveChildren.delete(child); resolve({ code, signal }); }));
-  let exited = null;
-  exit.then(result => { exited = result; });
-  const origin = `https://${REGISTRY_HOST}:${port}`;
+  assert.ok(Number.isFinite(readinessMs) && readinessMs > 0, 'readinessMs must be a positive number of milliseconds');
+  assert.ok(Number.isFinite(probeTimeoutMs) && probeTimeoutMs > 0, 'probeTimeoutMs must be a positive number of milliseconds');
+  const expectedChallenge = `Basic realm="${TLS_REGISTRY_REALM}"`;
   const started = Date.now();
-  let challenge = null;
-  for (let attempt = 0; attempt < 240 && !challenge; attempt++) {
-    if (exited) throw new Error(`zot exited before becoming ready (code ${exited.code}, signal ${exited.signal}); see ${join(stateDir, 'zot.log')}`);
-    try {
-      const res = await httpsGet(origin, '/v2/', { ca: ca.pem, timeout: 2_000 });
-      if (res.status === 401) challenge = res.headers['www-authenticate'] ?? '';
-      else throw new Error(`GET /v2/ answered ${res.status} without authentication: the registry does not require it`);
-    } catch (error) {
-      if (/without authentication/.test(error.message)) { try { child.kill('SIGKILL'); } catch {} await exit; throw error; }
-      await new Promise(resolve => setTimeout(resolve, 250));
-    }
-  }
-  if (!challenge) { try { child.kill('SIGKILL'); } catch {} await exit; throw new Error('zot did not challenge GET /v2/ with 401 over TLS within 60 s'); }
-  assert.match(challenge, /^Basic realm=/, 'the registry challenges with HTTP Basic');
+  const deadline = started + readinessMs;
 
-  return {
-    origin, host: `${REGISTRY_HOST}:${port}`, port, pid: child.pid, username, ca, tls, configPath, logPath: config.log.output, stateDir,
-    readyAfterMs: Date.now() - started, challenge,
-    exited: () => exited,
-    requests: () => accessLog(config.log.output),
-    /** SIGTERM, wait up to `graceMs`, SIGKILL if needed; prove the pid is gone; remove keys, certificate, htpasswd, storage and log. */
-    async stop({ graceMs = 10_000 } = {}) {
-      if (!exited) {
-        try { child.kill('SIGTERM'); } catch {}
-        let grace;
-        const term = await Promise.race([exit, new Promise(resolve => { grace = setTimeout(() => resolve(null), graceMs); })]);
-        clearTimeout(grace);
-        if (!term) { try { child.kill('SIGKILL'); } catch {} await exit; }
-      }
-      let gone = true;
-      try { process.kill(child.pid, 0); gone = false; } catch (probe) { gone = probe.code === 'ESRCH'; }
-      await rm(stateDir, { recursive: true, force: true });
-      let removed = true;
-      try { await access(stateDir); removed = false; } catch {}
-      return { ...exited, gone, removed };
+  // Lifecycle state shared by the failure path and the returned handle. `exit`
+  // settles on the child's `close` (exited AND stdio closed) or on its `error`
+  // event (spawn failure); whichever comes first, exactly once.
+  const lifecycle = { child: null, exit: null, exited: null, probe: null };
+
+  async function terminate(grace) {
+    const { child } = lifecycle;
+    if (!child) return { code: null, signal: null, gone: true };
+    if (!lifecycle.exited) {
+      try { child.kill('SIGTERM'); } catch {}
+      const delay = cancellableDelay(grace);
+      const term = await Promise.race([lifecycle.exit, delay.promise.then(() => null)]);
+      delay.cancel();
+      if (!term) { try { child.kill('SIGKILL'); } catch {} await lifecycle.exit; }
     }
+    let gone = true;
+    if (child.pid !== undefined) { try { process.kill(child.pid, 0); gone = false; } catch (probe) { gone = probe.code === 'ESRCH'; } }
+    return { code: lifecycle.exited?.code ?? null, signal: lifecycle.exited?.signal ?? null, gone };
+  }
+  async function removeState() {
+    await rm(stateDir, { recursive: true, force: true });
+    try { await access(stateDir); return false; } catch { return true; }
+  }
+  /** Own the failure: abort the probe, stop and reap the child, remove the state; return the ORIGINAL error annotated. */
+  async function failStart(cause) {
+    const error = cause instanceof Error ? cause : new Error(String(cause));
+    const cleanup = { probeAborted: false, code: null, signal: null, gone: null, removed: null, problems: [] };
+    try { if (lifecycle.probe) { lifecycle.probe.abort(); cleanup.probeAborted = true; lifecycle.probe = null; } } catch (problem) { cleanup.problems.push(`abort probe: ${problem.message}`); }
+    try {
+      const result = await terminate(graceMs);
+      Object.assign(cleanup, { code: result.code, signal: result.signal, gone: result.gone });
+      if (!result.gone) cleanup.problems.push(`child pid ${lifecycle.child?.pid} still exists after SIGKILL`);
+    } catch (problem) { cleanup.problems.push(`stop child: ${problem.message}`); }
+    try {
+      cleanup.removed = await removeState();
+      if (!cleanup.removed) cleanup.problems.push('state directory still exists after removal');
+    } catch (problem) { cleanup.problems.push(`remove state: ${problem.message}`); }
+    error.cleanup = cleanup;
+    if (cleanup.problems.length) error.message += ` (cleanup after the failed start also had problems: ${cleanup.problems.join('; ')})`;
+    return error;
+  }
+  const exitedEarly = () => {
+    const { code, signal, spawnError } = lifecycle.exited;
+    return spawnError
+      ? new Error(`zot could not be started: ${spawnError.code ?? spawnError.message}`)
+      : new Error(`zot exited before becoming ready (code ${code}, signal ${signal}); see ${join(stateDir, 'zot.log')}`);
   };
+
+  try {
+    await mkdir(join(stateDir, 'data'), { recursive: true });   // from here on, failure removes the state directory
+    const pki = join(stateDir, 'pki');
+    const ca = await createTestCA(openssl, pki);
+    const tls = await issueServerCertificate(openssl, pki, ca);
+    const htpasswdPath = join(stateDir, 'htpasswd');
+    await writeFile(htpasswdPath, `${await htpasswdEntry(perl, username, password)}\n`, { mode: 0o600 });
+    const port = await freePort();
+    const config = zotTlsConfig({ stateDir, port, tls, htpasswdPath, username });
+    const configPath = join(stateDir, 'config.json');
+    await writeFile(configPath, JSON.stringify(config, null, 2));
+
+    // Spawn: lifecycle ownership begins here, before anything can be awaited.
+    const child = spawn(zot, ['serve', configPath], { stdio: 'ignore' });
+    lifecycle.child = child;
+    liveChildren.add(child);
+    lifecycle.exit = new Promise(resolve => {
+      const settle = result => { if (lifecycle.exited) return; lifecycle.exited = result; liveChildren.delete(child); resolve(result); };
+      child.once('error', spawnError => settle({ code: null, signal: null, spawnError }));   // explicit: ENOENT, EACCES, …
+      child.once('close', (code, signal) => settle({ code, signal }));
+    });
+    const origin = `https://${REGISTRY_HOST}:${port}`;
+
+    let lastProbe = 'no probe sent yet';
+    for (;;) {
+      if (lifecycle.exited) throw exitedEarly();
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new Error(`zot did not answer GET /v2/ with the expected 401 challenge over TLS within ${readinessMs} ms (last probe: ${lastProbe})`);
+      // One probe, bounded by the remaining budget and aborted at once if the child exits meanwhile.
+      const probe = new AbortController();
+      lifecycle.probe = probe;
+      lifecycle.exit.then(() => { if (lifecycle.probe === probe) probe.abort(); });
+      let res = null;
+      try {
+        res = await httpsGet(origin, '/v2/', { ca: ca.pem, timeout: Math.min(probeTimeoutMs, remaining), signal: probe.signal });
+      } catch (error) {
+        lastProbe = lifecycle.exited ? 'aborted because the process exited' : (error.code ?? error.message);
+      } finally {
+        if (lifecycle.probe === probe) lifecycle.probe = null;
+      }
+      if (lifecycle.exited) throw exitedEarly();
+      if (res) {
+        if (res.status !== 401) throw new Error(`GET /v2/ answered ${res.status} without authentication: the registry does not require it`);
+        const challenge = res.headers['www-authenticate'] ?? '';
+        if (challenge !== expectedChallenge) throw new Error(`GET /v2/ answered 401 with an unexpected authentication challenge ${JSON.stringify(challenge)}; expected ${JSON.stringify(expectedChallenge)}`);
+        // Ready: up, over verified TLS, requiring exactly the configured authentication.
+        return {
+          origin, host: `${REGISTRY_HOST}:${port}`, port, pid: child.pid, username, ca, tls, configPath, logPath: config.log.output, stateDir,
+          readyAfterMs: Date.now() - started, challenge, readinessMs,
+          exited: () => lifecycle.exited,
+          requests: () => accessLog(config.log.output),
+          /** SIGTERM, wait up to `graceMs`, SIGKILL if needed; prove the pid is gone; remove keys, certificate, htpasswd, storage and log. */
+          async stop({ graceMs: grace = graceMs } = {}) {
+            const result = await terminate(grace);
+            const removed = await removeState();
+            return { ...result, removed };
+          }
+        };
+      }
+      // Retry after a delay bounded by the remaining budget; wake early if the child exits.
+      const wait = Math.min(RETRY_DELAY_MS, deadline - Date.now());
+      if (wait > 0) {
+        const delay = cancellableDelay(wait);
+        lifecycle.exit.then(delay.cancel);
+        await delay.promise;
+      }
+    }
+  } catch (cause) {
+    throw await failStart(cause);
+  }
 }

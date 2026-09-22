@@ -94,28 +94,40 @@ test('htpasswd entry: bcrypt through crypt(3), password on stdin, salted per cal
 });
 
 // A stub "zot": honours `serve <config>`, listens with the configured certificate
-// on the configured loopback port, and challenges every request with 401 Basic —
-// exactly the readiness signal startTlsRegistry waits for.
+// on the configured loopback port, and — in its default mode — challenges every
+// request with 401 Basic, exactly the readiness signal startTlsRegistry waits
+// for. Environment switches turn it into the failure shapes the harness must
+// survive:
+//   STUB_ZOT_EXIT=<n>           exit with <n> before listening (early exit)
+//   STUB_ZOT_MODE=bad-challenge 401 with a nonempty but unexpected challenge
+//   STUB_ZOT_MODE=hang          accept the TLS connection and never answer
+//   STUB_ZOT_IGNORE_SIGTERM=1   ignore SIGTERM (stop() must escalate to SIGKILL)
 const STUB_ZOT = `#!/usr/bin/env node
 const fs = require('node:fs'); const https = require('node:https');
 const cfg = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
 if (process.env.STUB_ZOT_EXIT) process.exit(Number(process.env.STUB_ZOT_EXIT));
+const mode = process.env.STUB_ZOT_MODE || 'challenge';
 const server = https.createServer({ cert: fs.readFileSync(cfg.http.tls.cert), key: fs.readFileSync(cfg.http.tls.key) }, (req, res) => {
+  if (mode === 'hang') return; // connection accepted, request read, response never written
   fs.appendFileSync(cfg.log.output, JSON.stringify({ level: 'info', message: 'HTTP API', method: req.method, path: req.url, statusCode: 401 }) + '\\n');
-  res.writeHead(401, { 'www-authenticate': 'Basic realm="' + cfg.http.realm + '"' }); res.end();
+  const challenge = mode === 'bad-challenge' ? 'Bearer realm="https://tokens.invalid/auth",service="not-this-registry"' : 'Basic realm="' + cfg.http.realm + '"';
+  res.writeHead(401, { 'www-authenticate': challenge }); res.end();
 });
 server.listen(Number(cfg.http.port), cfg.http.address);
-process.on('SIGTERM', () => { server.close(() => process.exit(0)); });
+process.on('SIGTERM', () => { if (process.env.STUB_ZOT_IGNORE_SIGTERM) return; server.close(); process.exit(0); });
 `;
+const stubZot = (dir, name) => executable(dir, name, STUB_ZOT.replace('#!/usr/bin/env node', `#!${process.execPath}`));
+const LINUX_TOOLS = { skip: process.platform === 'linux' && openssl && perl ? false : 'needs openssl and Linux bcrypt' };
 
-test('registry lifecycle against a stub zot: readiness is the 401 challenge over verified TLS, stop() reaps the process and removes every secret', { skip: process.platform === 'linux' && openssl && perl ? false : 'needs openssl and Linux bcrypt' }, async t => {
+test('registry lifecycle against a stub zot: readiness is the exact 401 challenge over verified TLS, stop() reaps the process and removes every secret', LINUX_TOOLS, async t => {
   const dir = await scratch(t);
-  const zot = await executable(dir, 'zot-stub', STUB_ZOT.replace('#!/usr/bin/env node', `#!${process.execPath}`));
+  const zot = await stubZot(dir, 'zot-stub');
   const stateDir = join(dir, 'state');
   const registry = await startTlsRegistry({ zot, openssl, perl, stateDir, password: syntheticPassword() });
   t.after(async () => { if (!registry.exited()) await registry.stop(); });
   assert.match(registry.origin, /^https:\/\/127\.0\.0\.1:\d+$/);
-  assert.match(registry.challenge, new RegExp(`^Basic realm="${TLS_REGISTRY_REALM}"`));
+  assert.equal(registry.challenge, `Basic realm="${TLS_REGISTRY_REALM}"`);
+  assert.equal(registry.readinessMs, 60_000, 'the production default deadline is 60 s');
   assert.equal(registry.exited(), null);
   for (const secret of [registry.ca.key, registry.tls.key, join(stateDir, 'htpasswd'), registry.configPath]) await access(secret);
   assert.deepEqual((await registry.requests()).map(r => `${r.method} ${r.path} ${r.statusCode}`), ['GET /v2/ 401'], 'the session log parser surfaces method, path and status only');
@@ -127,19 +139,125 @@ test('registry lifecycle against a stub zot: readiness is the 401 challenge over
   assert.throws(() => process.kill(registry.pid, 0), { code: 'ESRCH' }, 'pid no longer exists');
 });
 
-test('registry lifecycle: a zot that exits before becoming ready fails promptly and cleans up; a zot that ignores SIGTERM is SIGKILLed and reaped', { skip: process.platform === 'linux' && openssl && perl ? false : 'needs openssl and Linux bcrypt' }, async t => {
+test('registry lifecycle: a zot that ignores SIGTERM is SIGKILLed, reaped and its state removed', LINUX_TOOLS, async t => {
   const dir = await scratch(t);
-  const exiting = await executable(dir, 'zot-exits', STUB_ZOT.replace('#!/usr/bin/env node', `#!${process.execPath}`));
-  const started = Date.now();
-  process.env.STUB_ZOT_EXIT = '3';
-  try {
-    await assert.rejects(startTlsRegistry({ zot: exiting, openssl, perl, stateDir: join(dir, 'state-exits'), password: syntheticPassword() }), /zot exited before becoming ready \(code 3, signal null\)/);
-  } finally { delete process.env.STUB_ZOT_EXIT; }
-  assert.ok(Date.now() - started < 30_000, 'reported well before the 60 s readiness bound');
-  // Ignores SIGTERM: stop() must escalate to SIGKILL and still reap and clean up.
-  const stubborn = await executable(dir, 'zot-stubborn', STUB_ZOT.replace('#!/usr/bin/env node', `#!${process.execPath}`).replace("process.on('SIGTERM', () => { server.close(() => process.exit(0)); });", "process.on('SIGTERM', () => {});"));
-  const registry = await startTlsRegistry({ zot: stubborn, openssl, perl, stateDir: join(dir, 'state-stubborn'), password: syntheticPassword() });
+  const stubborn = await stubZot(dir, 'zot-stubborn');
+  process.env.STUB_ZOT_IGNORE_SIGTERM = '1';
+  let registry;
+  try { registry = await startTlsRegistry({ zot: stubborn, openssl, perl, stateDir: join(dir, 'state-stubborn'), password: syntheticPassword() }); }
+  finally { delete process.env.STUB_ZOT_IGNORE_SIGTERM; }
   const stopped = await registry.stop({ graceMs: 1_000 }); // the real registry gets 10 s; the stub proves the escalation path
   assert.equal(stopped.signal, 'SIGKILL', 'escalated to SIGKILL');
   assert.equal(stopped.gone, true); assert.equal(stopped.removed, true);
+  assert.throws(() => process.kill(registry.pid, 0), { code: 'ESRCH' });
+});
+
+// ------------------------------------------------ startup-failure ownership ---
+// Every failed start must clean up after itself BEFORE rejecting: the child (if
+// any) stopped and reaped, the state directory gone, no probe or timer left.
+// Each scenario runs in a CHILD test process under an external kill-and-reap
+// deadline, so a regression that hangs cannot hang CI, and the child's own
+// natural exit (not killed, exit 0) is the proof that no timer or request kept
+// its event loop alive. The child reports what it observed right after the
+// rejection — before this test's temporary directory is removed — and the
+// parent re-checks the state directory independently.
+const TLS_REGISTRY_URL = new URL('../oci/tls-registry.js', import.meta.url).href;
+const DRIVER = `import { access } from 'node:fs/promises';
+import { startTlsRegistry, syntheticPassword } from ${JSON.stringify(TLS_REGISTRY_URL)};
+const scenario = JSON.parse(process.argv[1]);
+const started = Date.now();
+let outcome;
+try {
+  const registry = await startTlsRegistry({ ...scenario.options, password: syntheticPassword() });
+  outcome = { rejected: false, origin: registry.origin };
+  await registry.stop({ graceMs: 1000 });
+} catch (error) {
+  let stateExists = true;
+  try { await access(scenario.options.stateDir); } catch { stateExists = false; }
+  outcome = { rejected: true, message: error.message, cleanup: error.cleanup ?? null, stateExists, elapsedMs: Date.now() - started };
+}
+outcome.resources = process.getActiveResourcesInfo().filter(r => r === 'Timeout' || /TCP|TLS/.test(r));
+process.stdout.write(JSON.stringify(outcome));`;
+
+async function failedStart(t, label, options, env, { deadlineMs = 30_000 } = {}) {
+  const started = Date.now();
+  const result = await runBounded(process.execPath, ['--input-type=module', '-e', DRIVER, JSON.stringify({ options })], { env: { ...process.env, ...env }, timeout: deadlineMs });
+  const wall = Date.now() - started;
+  assert.equal(result.timedOut, false, `${label}: the driver did not exit within ${deadlineMs} ms — something kept it alive (killed ${result.signal}, reaped=${result.gone}). stderr: ${result.stderr.slice(-400)}`);
+  assert.equal(result.code, 0, `${label}: the driver exited ${result.code} — an uncaught error escaped: ${result.stderr.slice(-600)}`);
+  assert.equal(result.gone, true, `${label}: the driver was reaped`);
+  assert.equal(result.stderr.trim(), '', `${label}: nothing on stderr (no unhandled rejection, no warning)`);
+  const outcome = JSON.parse(result.stdout);
+  assert.equal(outcome.rejected, true, `${label}: startTlsRegistry rejected`);
+  assert.equal(outcome.stateExists, false, `${label}: the state directory was already gone when the rejection was observed`);
+  assert.deepEqual(outcome.cleanup?.problems, [], `${label}: cleanup reported no problems`);
+  assert.equal(outcome.cleanup.gone, true, `${label}: no child process survives`);
+  assert.equal(outcome.cleanup.removed, true, `${label}: state removal confirmed`);
+  assert.deepEqual(outcome.resources, [], `${label}: no timer or socket remained active in the driver after the rejection`);
+  await assert.rejects(access(options.stateDir), `${label}: the parent confirms the state directory is gone`);
+  t.diagnostic(`${label}: rejected in ${outcome.elapsedMs} ms (driver wall ${wall} ms): ${outcome.message.slice(0, 160)}`);
+  return { ...outcome, wall };
+}
+
+test('startup failure: a 401 with an unexpected, nonempty challenge is rejected and leaves no process or state directory', LINUX_TOOLS, async t => {
+  const dir = await scratch(t);
+  const zot = await stubZot(dir, 'zot-bad-challenge');
+  const outcome = await failedStart(t, 'unexpected challenge', { zot, openssl, perl, stateDir: join(dir, 'state') }, { STUB_ZOT_MODE: 'bad-challenge' });
+  assert.match(outcome.message, /answered 401 with an unexpected authentication challenge "Bearer realm=.*expected "Basic realm=\\"owa-test-registry\\""/);
+  assert.equal(outcome.cleanup.code, 0, 'the stub was stopped with SIGTERM and exited 0');
+  assert.ok(outcome.elapsedMs < 10_000, 'rejected long before the 60 s deadline');
+});
+
+test('startup failure: a registry that accepts connections but never answers is cut off at the elapsed-time deadline, not at a longer probe timeout', LINUX_TOOLS, async t => {
+  const dir = await scratch(t);
+  const zot = await stubZot(dir, 'zot-hang');
+  const readinessMs = 1_500;
+  const outcome = await failedStart(t, 'never answers', { zot, openssl, perl, stateDir: join(dir, 'state'), readinessMs, probeTimeoutMs: 20_000 }, { STUB_ZOT_MODE: 'hang' });
+  assert.match(outcome.message, new RegExp(`did not answer GET /v2/ with the expected 401 challenge over TLS within ${readinessMs} ms \\(last probe: GET /v2/ timed out after \\d+ ms\\)`));
+  assert.ok(outcome.elapsedMs >= readinessMs, `rejected no earlier than the deadline (${outcome.elapsedMs} ms)`);
+  assert.ok(outcome.elapsedMs < readinessMs + 3_000, `rejected close to the deadline, not at the 20 s probe timeout (${outcome.elapsedMs} ms)`);
+  assert.equal(outcome.cleanup.probeAborted, false, 'the deadline-bounded probe had already been destroyed by its own timeout');
+  assert.equal(outcome.cleanup.code, 0, 'the hanging stub was stopped and exited 0');
+});
+
+test('startup failure: a zot that exits before becoming ready is rejected promptly with its exit code and leaves no state', LINUX_TOOLS, async t => {
+  const dir = await scratch(t);
+  const zot = await stubZot(dir, 'zot-exits');
+  const outcome = await failedStart(t, 'early exit', { zot, openssl, perl, stateDir: join(dir, 'state') }, { STUB_ZOT_EXIT: '3' });
+  assert.match(outcome.message, /^zot exited before becoming ready \(code 3, signal null\)/);
+  assert.equal(outcome.cleanup.code, 3);
+  assert.ok(outcome.elapsedMs < 10_000, 'reported well before the 60 s deadline');
+});
+
+test('startup failure: a zot executable that cannot be spawned is rejected through the child error event and leaves no state', LINUX_TOOLS, async t => {
+  const dir = await scratch(t);
+  const outcome = await failedStart(t, 'spawn failure', { zot: join(dir, 'no-such-zot'), openssl, perl, stateDir: join(dir, 'state') }, {});
+  assert.match(outcome.message, /^zot could not be started: ENOENT/);
+  assert.equal(outcome.cleanup.code, null);
+  assert.ok(outcome.elapsedMs < 10_000);
+});
+
+test('startup failure: a setup step failing after the state directory exists removes it before rejecting', LINUX_TOOLS, async t => {
+  const dir = await scratch(t);
+  const zot = await stubZot(dir, 'zot-unused');
+  const brokenPerl = await executable(dir, 'perl-broken', '#!/bin/sh\nexit 7\n');
+  const outcome = await failedStart(t, 'setup failure', { zot, openssl, perl: brokenPerl, stateDir: join(dir, 'state') }, {});
+  assert.match(outcome.message, /^perl crypt exited 7/);
+  assert.equal(outcome.cleanup.gone, true, 'no child was ever spawned');
+  assert.equal(outcome.cleanup.code, null);
+});
+
+test('startup failure in-process: the rejection carries the original error and the cleanup record, and adds no live timer', LINUX_TOOLS, async t => {
+  const dir = await scratch(t);
+  const zot = await stubZot(dir, 'zot-bad-challenge-inproc');
+  const timersBefore = process.getActiveResourcesInfo().filter(r => r === 'Timeout').length;
+  process.env.STUB_ZOT_MODE = 'bad-challenge';
+  let error;
+  try { await startTlsRegistry({ zot, openssl, perl, stateDir: join(dir, 'state'), password: syntheticPassword() }); assert.fail('must reject'); }
+  catch (caught) { error = caught; }
+  finally { delete process.env.STUB_ZOT_MODE; }
+  assert.match(error.message, /unexpected authentication challenge/);
+  assert.equal(error.cleanup.gone, true); assert.equal(error.cleanup.removed, true); assert.deepEqual(error.cleanup.problems, []);
+  await assert.rejects(access(join(dir, 'state')), 'state directory gone before this test\'s own cleanup runs');
+  assert.equal(process.getActiveResourcesInfo().filter(r => r === 'Timeout').length, timersBefore, 'no timer left behind by the failed start');
 });

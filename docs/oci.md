@@ -338,8 +338,23 @@ binary, on 127.0.0.1 with an ephemeral port, temporary storage, and:
 - an **access-control policy** granting that user `read`/`create`/`update`/
   `delete` on every repository, an empty default policy and **no anonymous
   policy**, so every unauthenticated request is challenged with
-  `401 WWW-Authenticate: Basic realm="…"`. Readiness *is* that challenge over
-  TLS verified against the test CA;
+  `401 WWW-Authenticate: Basic realm="…"`. Readiness *is* that exact challenge
+  over TLS verified against the test CA — a `200`, or a `401` carrying any other
+  challenge, fails the start rather than being accepted;
+- a **readiness deadline measured in elapsed time** (60 s by default): every
+  HTTPS probe is bounded by the smaller of its own 2 s timeout and the
+  remaining budget, every retry delay by the remaining budget, so a registry
+  that accepts connections but never answers is cut off at the deadline itself;
+- **startup that cleans up its own failures.** From the moment the state
+  directory exists — and from the moment the Zot child is spawned — every
+  rejection of the start (setup failure, spawn failure reported through the
+  child's `error` event, exit before readiness, unexpected challenge, no
+  authentication required, deadline) aborts the in-flight probe, clears its
+  timers, stops the child (SIGTERM, then SIGKILL) and awaits its close, verifies
+  the pid is gone, removes the state directory, and rejects with the *original*
+  error (any cleanup problem is appended to its message, never allowed to hide
+  the cause). The caller only registers `stop()` once the start has succeeded,
+  so nothing depends on the caller for a failed start;
 - an info-level session log whose `method`/`path`/`statusCode` fields are the
   boundary evidence (Zot masks the `Authorization` header in that log; the log
   is deleted with the state directory and never printed).
@@ -425,8 +440,14 @@ on Linux — the OCI lane's platform. With `OWA_TEST_OCI_REQUIRED=1` a missing
 binary or tool, a missing or unready registry, or any failing ORAS command fails
 the run instead of skipping — the offline harness checks
 (`npm run test:integration:harness`) pin that behaviour, including the
-authenticated registry's setup, readiness, early-exit and stop/reap/cleanup
-paths against a stub.
+authenticated registry's setup, exact-challenge readiness and stop/reap/cleanup
+paths against a stub, and — each in a child test process under an external
+kill-and-reap deadline, so a regression cannot hang CI — its startup-failure
+ownership: an unexpected challenge, a registry that never answers (cut off at
+a short elapsed-time deadline despite a longer probe timeout), an early exit,
+a spawn failure and a setup failure after the state directory exists must all
+reject with the state directory already gone, the child reaped and no timer or
+socket left alive.
 
 ## Scope and limitations
 

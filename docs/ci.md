@@ -220,8 +220,11 @@ see [oci.md](oci.md) for the representation, commands and claims.
   `openssl` — and htpasswd authentication required for every repository, using
   one synthetic user whose random password exists only for that run inside the
   test's temporary directory (bcrypt entry via the runner's `perl` and
-  `crypt(3)`). The test stops the process and removes keys, certificate,
-  htpasswd file, storage and log itself, on failure too.
+  `crypt(3)`). Readiness is the exact `401 Basic` challenge over verified TLS
+  under a 60 s elapsed-time deadline that bounds every probe and retry; a start
+  that fails for any reason stops and reaps its own child and removes keys,
+  certificate, htpasswd file, storage and log before rejecting, and the test
+  does the same after a successful start, on failure too.
 - **Suite**: `OWA_TEST_OCI_REQUIRED=1 npm run test:oci` — with the required flag,
   a missing ORAS or Zot binary, a missing `openssl` or `perl`, a missing/unready
   registry or any failing ORAS command is a **failure**, never a skip. A

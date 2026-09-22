@@ -88,9 +88,12 @@ digest algorithm); no package version, tag or release.
   bytes, ordered entries, per-path media types, blob set and bytes and the OCI
   manifest digest survive, while missing credentials, wrong credentials and an
   untrusted CA each fail at their boundary (401s in the registry log; no request
-  at all for the untrusted CA). Test-only code; ORAS remains the transport. No
-  production code, dependency, tool version, corpus file, protocol identity or
-  package version changed.
+  at all for the untrusted CA). The disposable registry's start waits for the
+  exact challenge under a 60 s elapsed-time deadline that bounds every probe
+  and retry, and cleans up its own failures — child stopped and reaped, state
+  removed, probe and timers cleared — before rejecting with the original error.
+  Test-only code; ORAS remains the transport. No production code, dependency,
+  tool version, corpus file, protocol identity or package version changed.
 - fix a test-harness hang in `auth-startup-listeners.test.js` (issue #44):
   the readiness wait for the spawned server polled with a self-rescheduling
   timer that was never stopped when its deadline won, so a failed readiness
