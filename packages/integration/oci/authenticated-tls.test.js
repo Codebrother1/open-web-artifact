@@ -9,7 +9,7 @@ import { OCI_IMAGE_MANIFEST, PATH_ANNOTATION, readOciLayout, writeOciLayout } fr
 import { FilesystemMetadataStore } from '../../storage-filesystem/src/index.js';
 import { tlsEnvironment } from './environment.js';
 import { CLI, notice, record, run, tail, temp } from './helpers.js';
-import { EMPTY_REGISTRY_CONFIG, TLS_REGISTRY_USER, basicAuthorization, httpsGet, registryConfigWith, runBounded, startTlsRegistry, syntheticPassword } from './tls-registry.js';
+import { EMPTY_REGISTRY_CONFIG, TLS_REGISTRY_USER, basicAuthorization, httpsGet, mentionsHttpUnauthorized, registryConfigWith, runBounded, startTlsRegistry, syntheticPassword } from './tls-registry.js';
 
 // Authenticated HTTPS transport proof (issue #46), alongside — not replacing —
 // the plain-HTTP proofs in registry.test.js (#23) and duplicate-content.test.js
@@ -250,7 +250,7 @@ test('ORAS v1.3.4 + Zot v2.1.21: an OWA artifact round-trips through a disposabl
     const during = after.slice(before.length);
     const touched = [...requestsTo(during, repo), ...requestsTo(during, deniedRepo)];
     if (expected.registryStatus === null) {
-      assert.ok(!/401|Unauthorized/.test(pull.output + pushAttempt.output), `${label}: the failure is TLS verification, not an HTTP status`);
+      assert.equal(mentionsHttpUnauthorized(pull.output + pushAttempt.output), false, `${label}: the failure is TLS verification, not an HTTP status`);
       assert.equal(during.length, 0, `${label}: no request reached the registry (TLS verification failed before HTTP)`);
     } else {
       assert.ok(touched.length > 0, `${label}: the registry saw the attempts`);
