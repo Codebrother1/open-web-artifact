@@ -1,17 +1,10 @@
-# Open Web Artifact v0.5.0 — UNRELEASED DRAFT
-
-> **Status: UNRELEASED.** This is a draft prepared by the release-readiness
-> review (issue #48). No `v0.5.0` tag or GitHub Release exists, package
-> versions are still `0.4.0`, and no release date has been set. The text is
-> kept consistent with the `Unreleased` section of [`CHANGELOG.md`](../CHANGELOG.md)
-> and must be re-read against the final changelog section before publication.
+# Open Web Artifact v0.5.0
 
 Open Web Artifact (OWA) is an **experimental** open specification and reference
-implementation for portable, immutable web artifacts. v0.5.0 would be the second
-tagged release of the **reference implementation**. The three version domains
+implementation for portable, immutable web artifacts. v0.5.0 is the next software release of the **reference implementation**. The three version domains
 stay distinct:
 
-- **software / reference implementation:** v0.5.0 (this draft);
+- **software / reference implementation:** v0.5.0;
 - **protocol / specification:** still the **v0.2 draft** ([`docs/spec-v0.2.md`](spec-v0.2.md)),
   which gained two normative producer subsections (below) without any change to
   canonical JSON, the artifact digest algorithm or the manifest grammar;
@@ -110,6 +103,13 @@ post-merge lane); it is now event-driven with cleanup on every path. The
 authenticated-registry harness owns cleanup for every failed start and bounds
 readiness in elapsed time. Test code only.
 
+Release-cut CI also exposed a diagnostic-only false positive when an ephemeral
+registry port contained the digits `401`: the untrusted-CA control had already
+matched the expected x509 error and proved that no HTTP request reached the
+registry, but a bare-substring check mistook the port for an HTTP status. The
+check now recognizes explicit HTTP status wording, with the exact `:40187`
+failure shape pinned offline. Test code only; no runtime behavior changed.
+
 ## Compatibility and migration
 
 - **OCI layouts imported with `import-oci` / `readOciLayout`.** Layouts pulled
@@ -180,7 +180,7 @@ Playwright 1.63.0, MinIO `RELEASE.2025-10-15T17-29-55Z`, Go 1.27.
   occurrence.
 - `sandboxed-web-v1` remains a script-disabled static-preview profile.
 
-## Distribution (proposal)
+## Distribution
 
 Source / reference-implementation release only, exactly as v0.4.0: every
 repository package stays `"private": true`; nothing is published to npm; no

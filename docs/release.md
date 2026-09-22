@@ -5,7 +5,7 @@ the Open Web Artifact reference implementation. It is a checklist, not an
 automation: no workflow creates tags or releases, and this document does not
 authorize one. It has two parts — the **reusable process** (version domains,
 evidence, pre-tag gates, tag and release policy) and a **per-version record**:
-the v0.5.0 readiness review (UNRELEASED, under review) and the v0.4.0 release
+the v0.5.0 readiness review (historical preparation baseline) and the v0.4.0 release
 record (released 2026-09-21, preserved with its dated evidence).
 
 ## Version domains
@@ -14,7 +14,7 @@ Three version numbers live in this repository and they do **not** move together:
 
 | Domain | Current value | Where it lives | What moves it |
 | --- | --- | --- | --- |
-| **Software / reference implementation** | **v0.4.0** released (annotated tag `v0.4.0`, tag object `8a63b39a`, peeled commit `v0.4.0^{commit}` = `5e792cc9`); **v0.5.0 proposed, UNRELEASED** | every `package.json` `version`, the MCP server-info string, `CHANGELOG.md`, the Git tag, the GitHub Release title | a software release |
+| **Software / reference implementation** | **v0.4.0** released (annotated tag `v0.4.0`, tag object `8a63b39a`, peeled commit `v0.4.0^{commit}` = `5e792cc9`); **v0.5.0 software metadata prepared; tag and publication pending** | every `package.json` `version`, the MCP server-info string, `CHANGELOG.md`, the Git tag, the GitHub Release title | a software release |
 | **Protocol / specification draft** | **v0.2 (Draft)** | [`docs/spec-v0.2.md`](spec-v0.2.md), the conformance corpus under `docs/conformance/v0.2/` | a new spec draft, decided separately |
 | **Manifest `specVersion`** | **`owa.dev/v1`** with media type `application/vnd.openwebartifact.site.v1+json` | `packages/spec/src/index.js`, every manifest | an incompatible manifest change, decided separately |
 
@@ -74,7 +74,21 @@ with `^{commit}`; the tag object SHA is never a commit SHA.
 
 ---
 
-## Release-readiness review — v0.5.0 (UNRELEASED)
+## Release-readiness review — v0.5.0 (preparation baseline)
+
+The table and scope inventory below preserve the pre-bump review at `2e5f743a`.
+PR #49 merged as `0d38d2bc6010472467c498b11fd0c12f9ab6585a` with all ten
+post-merge checks green. The maintainer approved preparing the 0.5.0 release
+cut and acknowledged the stricter OCI reference-selection behavior on
+2026-09-22. Release-cut CI then exposed a diagnostic-only false positive when
+an ephemeral registry port contained `401`; #52 fixed the test-only check and
+added an exact regression without changing runtime behavior. This checkout
+updates software metadata and release notes; no
+0.5.0 tag or GitHub Release has been created. Tagging and publication still
+require approval after the release-cut PR is reviewed, merged, and its exact
+merge commit passes all ten checks. The proposed changelog date is 2026-09-22;
+reconfirm it if publication occurs on a later date. Other policy decisions
+below remain deferred and are not release blockers.
 
 Prepared under issue #48 at `main` `2e5f743a9d066da028ea8c0a5164c3566d27c9b4`
 (tree `77a40eda0e94c838fb873e728d9636633c3b9c4a`; 10/10 post-merge checks green
@@ -146,7 +160,7 @@ not presume).
 | Independent Go implementation | READY | `go-conformance (go 1.27, ubuntu)`: 435 passing tests/subtests at `main`, `gofmt`/`vet` clean, `go.mod` without `require`, `go list -deps` stdlib-only. |
 | Cross-platform CI | READY | 10 checks green on the exact merge commit `2e5f743a` (see the run links in the #48 PR). |
 | OCI registry interoperability | READY (ORAS v1.3.4 + Zot v2.1.21) / DOCUMENTED LIMITATION (scope) | Three live tests incl. authenticated HTTPS; limits: basic auth over verified TLS on loopback with one user; no token exchange, credential helpers, mTLS, authz semantics, other registries or production readiness. |
-| Test-harness reliability | READY / DOCUMENTED LIMITATION | The demonstrated hang after a failed readiness wait (#44/#45) is fixed with regression tests; the **original** readiness miss (a spawned server not printing readiness within 15 s on one `ubuntu-latest` runner, once) remains **unexplained**. The job's step logs were not readable anonymously when the fix was authored; the maintainer later retrieved them with authenticated access during review, and the root cause is still undetermined. Not a blocker: it has not recurred across the 8 subsequent full CI rounds, and the failure message now records the child's state for a recurrence. |
+| Test-harness reliability | READY / DOCUMENTED LIMITATION | The demonstrated hang after a failed readiness wait (#44/#45) is fixed with regression tests; #52 fixes the release-cut false positive that mistook `401` digits in an ephemeral port for an HTTP response while preserving the x509 and zero-request proofs. The **original** readiness miss (a spawned server not printing readiness within 15 s on one `ubuntu-latest` runner, once) remains **unexplained**. The job's step logs were not readable anonymously when the fix was authored; the maintainer later retrieved them with authenticated access during review, and the root cause is still undetermined. Not a blocker: it has not recurred across subsequent full CI rounds, and the failure message now records the child's state for a recurrence. |
 | Pack-root / ancestor symbolic links | MAINTAINER DECISION (policy) · DOCUMENTED LIMITATION (behaviour) | Both implementations follow a link supplied as the root; characterized by tests in both (#43), recorded as current behaviour, not normative. The #43 recommendation (keep outside the portable contract; do not adopt rejection) awaits the maintainer; no release blocker. |
 | Duplicate JSON member names | MAINTAINER DECISION (whether to specify) · DOCUMENTED LIMITATION | Outside the corpus by design; each implementation discloses its parser policy ([independent-implementation.md](independent-implementation.md), [conformance/README.md](conformance/README.md#explicitly-deferred-not-fixed-by-issue-5)). |
 | Filesystem names that are not valid Unicode | DOCUMENTED LIMITATION | Out of scope by the spec's own statement; rejected rather than guessed. |
@@ -167,7 +181,9 @@ not presume).
 2. Duplicate JSON member names: keep outside the corpus with per-implementation disclosure, or specify a policy.
 3. Branch protection / required checks for `main`; community/governance files.
 4. Whether to investigate the unexplained readiness miss further (the narrow next step is documented in #45) or accept the diagnostic message as sufficient.
-5. Approve `v0.5.0` as the version and authorize a release-cut PR.
+5. **Approved 2026-09-22:** prepare the `v0.5.0` release-cut PR, with the
+   disclosed OCI compatibility change acknowledged. Tagging and publication
+   are separate subsequent approvals.
 
 ### From approval to publication (exact steps)
 
@@ -243,7 +259,7 @@ Package metadata check (no helper is committed; run inline with the version
 being verified):
 
 ```sh
-VERSION=0.4.0   # current released version; use 0.5.0 in the release-cut PR
+VERSION=0.5.0   # software metadata in the release-cut checkout
 for f in package.json packages/*/package.json; do
   node -e 'const [file,v]=process.argv.slice(1); const p=require(file); if (p.version!==v||p.private!==true) { console.error("FAIL", file, p.version, p.private); process.exit(1);} console.log("ok", file, p.version)' "./$f" "$VERSION"
 done
