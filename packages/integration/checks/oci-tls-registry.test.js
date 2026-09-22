@@ -55,8 +55,9 @@ test('zotTlsConfig requires authentication everywhere: htpasswd auth, one user p
   assert.deepEqual(everything.defaultPolicy, [], 'other authenticated identities get nothing');
   assert.ok(!('anonymousPolicy' in everything), 'no anonymous access');
   assert.ok(!('adminPolicy' in config.http.accessControl), 'no admin policy');
-  assert.equal(config.storage.rootDirectory, '/s/data'); assert.equal(config.storage.gc, false);
-  assert.equal(config.log.level, 'info'); assert.equal(config.log.output, '/s/zot.log');
+  // Paths are built with path.join, so compare against join() too (Windows uses backslashes).
+  assert.equal(config.storage.rootDirectory, join('/s', 'data')); assert.equal(config.storage.gc, false);
+  assert.equal(config.log.level, 'info'); assert.equal(config.log.output, join('/s', 'zot.log'));
   assert.ok(!('extensions' in config), 'no UI/search/sync/metrics');
   // Client-side configuration files used by the negative controls.
   assert.deepEqual(JSON.parse(EMPTY_REGISTRY_CONFIG), { auths: {} });
