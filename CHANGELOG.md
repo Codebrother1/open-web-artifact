@@ -111,6 +111,14 @@ digest algorithm); no package version, tag or release.
   listener on every path; regression tests pin the bounded failure, the
   absence of leaked timers and the kill-and-reap of the child. Test code
   only; no timeout, gate, production code, corpus file or version changed.
+- fix the authenticated-HTTPS OCI negative control's HTTP-status diagnostic
+  check (issue #51): a bare `401` substring no longer counts as an HTTP
+  authentication response, because an ephemeral registry port or repository
+  path may contain those digits. The test now recognizes explicit
+  `Unauthorized`, HTTP status-line and status-code wording, while the registry
+  request log remains the primary proof that an untrusted-CA failure sends no
+  HTTP request. Test-only code; no production behaviour, timeout, dependency,
+  protocol identity or package version changed.
 
 ## 0.4.0 - 2026-09-21
 

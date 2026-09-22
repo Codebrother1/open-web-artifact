@@ -62,6 +62,18 @@ const OUTPUT_LIMIT = 4 * 1024 * 1024;
 /** A fresh synthetic password for one run: random, never committed, never printed. */
 export const syntheticPassword = () => randomBytes(18).toString('base64url');
 
+/**
+ * Whether command output reports an HTTP authentication failure. Bare `401`
+ * digits are intentionally insufficient: an ephemeral port or repository path
+ * may contain that sequence without any HTTP response having been received.
+ */
+export function mentionsHttpUnauthorized(output) {
+  const text = String(output);
+  return /\bUnauthorized\b/i.test(text)
+    || /\bHTTP(?:\/[0-9.]+)?\s+401\b/i.test(text)
+    || /\b(?:response\s+)?status(?:\s+code)?\s*(?::|=)?\s*401\b/i.test(text);
+}
+
 // ---------------------------------------------------------------- processes ---
 
 // Last-resort safety net ONLY: if the test process itself dies with a child

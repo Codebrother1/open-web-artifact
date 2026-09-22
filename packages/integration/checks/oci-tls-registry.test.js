@@ -5,7 +5,7 @@ import { access, chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promise
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { tlsEnvironment } from '../oci/environment.js';
-import { EMPTY_REGISTRY_CONFIG, TLS_REGISTRY_REALM, TLS_REGISTRY_USER, createTestCA, htpasswdEntry, issueServerCertificate, registryConfigWith, runBounded, startTlsRegistry, syntheticPassword, whichOnPath, zotTlsConfig } from '../oci/tls-registry.js';
+import { EMPTY_REGISTRY_CONFIG, TLS_REGISTRY_REALM, TLS_REGISTRY_USER, createTestCA, htpasswdEntry, issueServerCertificate, mentionsHttpUnauthorized, registryConfigWith, runBounded, startTlsRegistry, syntheticPassword, whichOnPath, zotTlsConfig } from '../oci/tls-registry.js';
 
 // Offline checks for the authenticated HTTPS registry harness (issue #46): the
 // environment contract and required mode, the Zot configuration shape, the test
@@ -22,6 +22,23 @@ const openssl = POSIX ? await whichOnPath('openssl') : null;
 const perl = POSIX ? await whichOnPath('perl') : null;
 const scratch = async t => { const dir = await mkdtemp(join(tmpdir(), 'owa-oci-tls-check-')); t.after(() => rm(dir, { recursive: true, force: true })); return dir; };
 const executable = async (dir, name, source) => { const path = join(dir, name); await writeFile(path, source); await chmod(path, 0o755); return path; };
+
+test('HTTP 401 diagnostics are distinguished from unrelated 401 digits', () => {
+  for (const diagnostic of [
+    'response status code 401',
+    'unexpected status: 401',
+    'HTTP/1.1 401',
+    '401 Unauthorized',
+    'unauthorized: authentication required'
+  ]) assert.equal(mentionsHttpUnauthorized(diagnostic), true, diagnostic);
+
+  for (const diagnostic of [
+    'GET "https://127.0.0.1:40187/v2/site/manifests/v1": tls: failed to verify certificate: x509: certificate signed by unknown authority',
+    'GET https://registry.example/v2/project-401/site/manifests/v1',
+    'certificate serial number 40187',
+    ''
+  ]) assert.equal(mentionsHttpUnauthorized(diagnostic), false, diagnostic || 'empty output');
+});
 
 test('tlsEnvironment: unconfigured → skip naming both executables; required → fail; tools on PATH are prerequisites', async t => {
   assert.deepEqual(await tlsEnvironment({}), { skip: 'set OWA_TEST_ORAS_BIN, OWA_TEST_ZOT_BIN' });
