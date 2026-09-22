@@ -52,6 +52,19 @@ name all ten and read them **on the exact commit** being tagged:
 | `oci (oras + zot, node 24)` | **three live OCI tests** with the pinned ORAS v1.3.4 and Zot v2.1.21, skips turned into failures: (1) layout → registry → fresh layout → import → serve, by tag and by digest, over plain HTTP; (2) duplicate-content file entries over one shared blob; (3) the same identity round trip through a second, disposable Zot requiring **TLS with certificate verification and htpasswd authentication**, with missing-credential, wrong-credential and untrusted-CA controls. Scope of (3): basic auth over verified TLS on a loopback registry with one allowed user — not token exchange, credential helpers, mutual TLS, authorization semantics beyond that user, other registries or production readiness ([oci.md](oci.md#authenticated-https-transport-issue-46)) |
 | `go-conformance (go 1.27, ubuntu)` | the independent, standard-library-only Go implementation derives the same results from the published corpus, basic vectors and static anchors; `gofmt` and `go vet` clean; module proven stdlib-only |
 
+**Current branch rule (configured 2026-09-22).** The [active repository
+ruleset](https://github.com/Codebrother1/open-web-artifact/settings/rules/23845605)
+targets the default branch (`main`) and requires a pull request and all ten
+checks above from GitHub Actions. It requires the PR branch to be current with
+`main`, blocks deletion and force pushes, and has no bypass actors. The
+required approval count is zero; the maintainer can merge a passing PR without
+another person's review. The ruleset API reports `enforcement: active` and
+`main` reports `protected: true` (read back on 2026-09-22 at
+`abd0806ceee1c832b0e05c0e52d48c1312877401`). The dated readiness and
+v0.4.0 tables below preserve what was observed **before** this setting changed.
+Workflow names are part of this external configuration; keep the [CI guide's
+branch protection section](ci.md#branch-protection) aligned if a job is renamed.
+
 **Exact-commit verification.** Pull-request checks prove the PR head; a squash
 merge produces a *new* commit, whose `push` workflows must be read separately.
 Before tagging, resolve the merge commit (`git rev-parse origin/main`) and

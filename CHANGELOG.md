@@ -8,6 +8,12 @@ There was no tagged 0.3.0 release; everything below was merged between 0.2.0 and
 
 ## Unreleased
 
+- protect the default branch with an active repository ruleset requiring pull
+  requests, all ten GitHub Actions checks on an up-to-date branch, and blocking
+  force pushes and deletion. Document the external setting and its no-bypass,
+  zero-approval policy in the CI and release guides. No workflow or runtime code
+  changed.
+
 - reject duplicate decoded JSON member names in raw JSON at every object depth
   (issue #54) before assigning artifact identity, including escape-equivalent
   keys and discarded overflowing values. Both the JavaScript reference and the

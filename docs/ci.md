@@ -349,9 +349,15 @@ their row tallies, and — on failure — each failing test with its error.
 
 ## Branch protection
 
-The job names above (`offline (<os>, node <n>)` × 6, `minio (mediated +
-enforced, node 24)`, `browsers (chromium, firefox, webkit)`, `oci (oras + zot,
-node 24)`, `go-conformance (go 1.27, ubuntu)`) are stable and intended to become
-**required status checks**. Branch protection is a repository
-setting configured by a maintainer outside these workflow files; this document
-does not change it.
+Since 2026-09-22 the default branch (`main`) is covered by an [active
+repository ruleset](https://github.com/Codebrother1/open-web-artifact/settings/rules/23845605).
+It requires pull requests and all ten job names above as status checks from
+**GitHub Actions** (six `offline` matrix cells plus `minio`, `browsers`,
+`oci` and `go-conformance`). Pull requests must be up to date with the
+base branch before merging. Deletion and force pushes are blocked; the bypass
+list is empty, including for the maintainer. The required approval count is
+zero, so this ruleset does not assert independent human review.
+
+The ruleset is a GitHub repository setting, not a workflow file. If job names
+or the default branch change, verify the ruleset and its required checks before
+merging; a missing or renamed required check can block the merge.
