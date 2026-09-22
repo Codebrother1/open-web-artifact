@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { artifactDigest, canonicalJson, validateArtifactPath, validateManifest } from '../../spec/src/index.js';
+import { artifactDigest, canonicalJson, parseJsonText, validateArtifactPath, validateManifest } from '../../spec/src/index.js';
 import { packDirectory, resolveRequestPath } from '../../core/src/index.js';
 import { readOciLayout, writeOciLayout } from '../../transport-oci/src/index.js';
 
@@ -97,7 +97,7 @@ function assertBlobs(actual, expected) {
 
 async function runVector(operation, vector) {
   const expected = vector.expected;
-  const input = Object.hasOwn(vector, 'inputJson') ? JSON.parse(vector.inputJson) : vector.input;
+  const input = Object.hasOwn(vector, 'inputJson') ? parseJsonText(vector.inputJson) : vector.input;
   switch (operation) {
     case 'canonical':
     case 'parse': {

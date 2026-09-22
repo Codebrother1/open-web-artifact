@@ -6,6 +6,16 @@ remains the v0.2 specification draft and every manifest keeps `specVersion`
 There was no tagged 0.3.0 release; everything below was merged between 0.2.0 and
 0.4.0.
 
+## Unreleased
+
+- reject duplicate decoded JSON member names in raw JSON at every object depth
+  (issue #54) before assigning artifact identity, including escape-equivalent
+  keys and discarded overflowing values. Both the JavaScript reference and the
+  Go conformance parser now report `OWA_INVALID_JSON_VALUE`; eleven new static
+  parse/manifest vectors pin the rule. This intentionally changes acceptance
+  for callers relying on last-wins duplicates; duplicate-free canonical bytes,
+  digests and the `owa.dev/v1` manifest shape are unchanged.
+
 ## 0.5.0 - 2026-09-22
 
 Protocol identity is unchanged (spec v0.2 draft, `owa.dev/v1`,

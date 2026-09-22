@@ -123,9 +123,7 @@ func NewNull() *Value                 { return &Value{Kind: KindNull} }
 // (OWA_INVALID_JSON). Numbers are interpreted as IEEE 754 binary64 with
 // round-to-nearest-even; a syntactically valid number that overflows binary64
 // is an invalid JSON value (OWA_INVALID_JSON_VALUE), not a syntax error.
-// Duplicate member names are outside the portable corpus; this parser keeps the
-// last value at the first position and documents that policy rather than
-// claiming it is portable.
+// Duplicate decoded member names are invalid JSON values, at every depth.
 func Parse(text string) (*Value, error) {
 	p := &parser{s: text}
 	p.ws()
@@ -375,17 +373,12 @@ func (p *parser) object() (*Value, error) {
 		if err != nil {
 			return nil, err
 		}
-		replaced := false
 		for _, m := range obj.Members {
-			if m.Key.Equal(key) { // duplicate member name: last value wins (disclosed, non-portable)
-				m.Value = val
-				replaced = true
-				break
+			if m.Key.Equal(key) {
+				return nil, fail(CatInvalidJSONValue, "duplicate JSON member name")
 			}
 		}
-		if !replaced {
-			obj.Members = append(obj.Members, &Member{Key: key, Value: val})
-		}
+		obj.Members = append(obj.Members, &Member{Key: key, Value: val})
 		p.ws()
 		if p.i >= len(p.s) {
 			return nil, syntax("unterminated object")

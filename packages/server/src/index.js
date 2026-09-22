@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { FilesystemBlobStore, FilesystemLeaseStore, FilesystemMetadataStore } from '../../storage-filesystem/src/index.js';
 import { S3BlobStore } from '../../storage-s3/src/index.js';
 import { IntegrityError, activateRelease, commitManifest, planManifest, resolveRequestPath } from '../../core/src/index.js';
-import { sha256 } from '../../spec/src/index.js';
+import { parseJsonText, sha256 } from '../../spec/src/index.js';
 import { AuthError, createAuthorizer, isSiteScope } from './auth.js';
 import { artifactHeaders, securityHeaders } from './security-profile.js';
 import { ContentHostError, canonicalContentUrl, createHostBinding } from './content-host.js';
@@ -17,7 +17,7 @@ import { ContentHostError, canonicalContentUrl, createHostBinding } from './cont
 const CONTROL_RESERVED_PATH = /^\/(?:v1(?:\/|(?![\s\S]))|health(?![\s\S]))/;
 
 function json(res,status,body){res.writeHead(status,{'content-type':'application/json; charset=utf-8'});res.end(JSON.stringify(body,null,2));}
-async function readJson(req){let raw='';for await(const c of req)raw+=c;return JSON.parse(raw||'{}');}
+async function readJson(req){let raw='';for await(const c of req)raw+=c;return parseJsonText(raw||'{}');}
 async function readBytes(req){const chunks=[];for await(const c of req)chunks.push(c);return Buffer.concat(chunks);}
 function validUploadSignature(actual, expected) {
   return typeof actual === 'string' && /^[0-9a-f]{64}(?![\s\S])/.test(actual)

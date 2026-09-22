@@ -1232,6 +1232,30 @@
         "canonicalJson": "{\"annotations\":{\"aboveLargeExponent\":1.0000000000000001e+21,\"aboveSmallFixed\":0.0000010000000000000002,\"belowLargeExponent\":999999999999999900000,\"belowSmallFixed\":9.999999999999997e-7,\"belowSmallFixedAlternateToken\":9.999999999999997e-7,\"flag\":false,\"halfEvenUp\":9007199254740996,\"label\":\"binary64 boundaries\",\"largestSubnormal\":2.225073858507201e-308,\"maxFinite\":1.7976931348623157e+308,\"maxFiniteRoundedToken\":1.7976931348623157e+308,\"minSubnormal\":5e-324,\"negativeZeroExponent\":0,\"nothing\":null,\"oneThird\":0.3333333333333333,\"parseTieMidpoint\":1,\"pointOnePlusPointTwo\":0.30000000000000004,\"shortestTieEven\":1125899906842624.2,\"shortestTieEvenUp\":1125899906842624.8,\"smallestNormal\":2.2250738585072014e-308,\"tenPow23\":1e+23,\"twoPow63\":9223372036854776000,\"underflow\":0},\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mediaType\":\"text/html; charset=utf-8\",\"path\":\"/index.html\",\"size\":0}],\"specVersion\":\"owa.dev/v1\"}",
         "artifactDigest": "sha256:9259e4b5805526fa9d613537b237568f112e89261fbe0ddcb1fa3d0a2bea955d"
       }
+    },
+    {
+      "id": "manifest-duplicate-root",
+      "description": "Reject repeated decoded JSON object member names before identity or manifest validation.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html\"}],\"specVersion\":\"owa.dev/v1\"}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_JSON_VALUE"
+      }
+    },
+    {
+      "id": "manifest-duplicate-file-entry",
+      "description": "Reject repeated decoded JSON object member names before identity or manifest validation.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"path\":\"/index.html\",\"size\":0,\"mediaType\":\"text/html\"}]}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_JSON_VALUE"
+      }
+    },
+    {
+      "id": "manifest-duplicate-annotation",
+      "description": "Reject repeated decoded JSON object member names before identity or manifest validation.",
+      "inputJson": "{\"specVersion\":\"owa.dev/v1\",\"artifactType\":\"application/vnd.openwebartifact.site.v1+json\",\"entrypoint\":\"/index.html\",\"files\":[{\"path\":\"/index.html\",\"digest\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":0,\"mediaType\":\"text/html\"}],\"annotations\":{\"role\":\"one\",\"\\u0072ole\":\"two\"}}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_JSON_VALUE"
+      }
     }
   ]
 }

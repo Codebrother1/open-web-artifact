@@ -228,3 +228,12 @@ test('everything after selection is unchanged: the uniquely selected descriptor 
   await setManifests(layout, [decoyDescriptor, targetDescriptor]);
   assertTarget(await readOciLayout({ input: layout, ref: 'latest' }), fixture);
 });
+
+test('OCI layout rejects duplicate decoded JSON keys before ref selection', async t => {
+  const { layout, targetDescriptor } = await twoArtifacts(t);
+  const index = JSON.stringify({ schemaVersion: 2, manifests: [targetDescriptor] });
+  const duplicate = index.replace('"schemaVersion":2', '"schemaVersion":2,"\\u0073chemaVersion":2');
+  assert.notEqual(index, duplicate);
+  await writeFile(join(layout, 'index.json'), duplicate);
+  await assert.rejects(readOciLayout({ input: layout, ref: 'latest' }), { code: 'OWA_INVALID_JSON_VALUE' });
+});

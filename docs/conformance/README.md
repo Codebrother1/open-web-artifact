@@ -14,7 +14,7 @@ Each file contains:
 - `notes`: operation-specific setup and scope;
 - `vectors`: independent cases, each with a globally unique `id`, `description`, exactly one of `input` or `inputJson`, and `expected`.
 
-`input` is a JSON value. `inputJson` is a string containing a **second JSON document**: parse that text once before performing the operation. Do not trim it, remove a BOM, interpret it as a URL, apply hidden defaults, or merge it with another fixture. Normal JSON whitespace is allowed by the parser. Use strict JSON syntax and the specification's binary64 number semantics; a valid numeric token that overflows binary64 is an invalid JSON *value*, not a syntax error.
+`input` is a JSON value. `inputJson` is a string containing a **second JSON document**: parse that text once before performing the operation. Do not trim it, remove a BOM, interpret it as a URL, apply hidden defaults, or merge it with another fixture. Normal JSON whitespace is allowed by the parser. Use strict JSON syntax and the specification's binary64 number semantics; a valid numeric token that overflows binary64 is an invalid JSON *value*, not a syntax error. Reject duplicate decoded member names at any object depth as `OWA_INVALID_JSON_VALUE`, including keys spelled with escapes and invalid values that would otherwise be overwritten.
 
 On failure, `expected` contains only `errorCategory`. Success must compare all fields listed below. An unrelated exception, a setup error, or an unexpected success MUST NOT pass a negative case. Request rejection is different: `resolvedPath: null` is a successful resolver result, not an exception.
 
@@ -149,7 +149,7 @@ The contract has 18 categories. The reference attaches codes to local errors; ot
 | Category | Meaning in this corpus |
 | --- | --- |
 | `OWA_INVALID_JSON` | Invalid JSON syntax, including a leading BOM. |
-| `OWA_INVALID_JSON_VALUE` | Non-finite or otherwise unsupported canonical value; includes binary64 overflow. |
+| `OWA_INVALID_JSON_VALUE` | Non-finite or otherwise unsupported JSON value; includes binary64 overflow and duplicate decoded member names in raw JSON. |
 | `OWA_INVALID_MANIFEST` | Wrong object/container shape, missing required field, unknown property, or invalid/empty `files` array. |
 | `OWA_UNSUPPORTED_SPEC_VERSION` | Present `specVersion` is not the supported constant. |
 | `OWA_UNSUPPORTED_ARTIFACT_TYPE` | Present `artifactType` is not the supported constant. |
@@ -232,7 +232,7 @@ New expectations are checked in as static data. The runner independently hashes 
 ## Explicitly deferred, not fixed by issue 5
 
 - **Commit-time content verification:** not covered by this corpus. The content-mismatch vectors exercise only the OCI read/write boundaries; the reference host's commit-boundary digest and size verification (issue #10, [integrity.md](../integrity.md)) is host behaviour tested by its own suites (`npm run test:integrity`), not a portable corpus requirement.
-- **Duplicate JSON member names:** not included in portable corpus requirements. No first-wins or last-wins policy is silently selected; a port must disclose its parser policy rather than infer one from these tests.
+- **Duplicate JSON member names (issue #54):** now rejected as `OWA_INVALID_JSON_VALUE` at every object depth when parsing raw `inputJson`, including escaped spellings of an existing decoded key. No first-wins or last-wins rule is permitted; already-parsed objects cannot disclose discarded members. The `parse.json` and `manifest.json` vectors pin the boundary; a discarded overflowing token remains invalid.
 - **Unpaired-surrogate parser limitations:** the canonical cases pin exact preservation as escaped data. A port whose parser rejects those escapes must report the limitation, not replace characters or claim those cases passed.
 
 Passing a finite corpus is regression evidence, not proof of every possible input, transport behavior, HTTP parsing path, or security policy. No unrelated host or protocol redesign is included.
