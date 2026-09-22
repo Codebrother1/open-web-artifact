@@ -5,7 +5,9 @@
   "notes": [
     "inputJson is parsed as JSON using IEEE-754 binary64 numbers, then canonicalized. This pins reference behavior, not RFC 8785/JCS.",
     "canonicalJson is the exact Unicode string whose UTF-8 bytes are hashed, with no added newline. digest is an independent static SHA-256 golden.",
-    "Unpaired surrogate escape vectors pin the existing reference behavior; implementations whose JSON parser forbids them should report that interoperability limitation rather than silently replace characters."
+    "Unpaired surrogate escape vectors pin the existing reference behavior; implementations whose JSON parser forbids them should report that interoperability limitation rather than silently replace characters.",
+    "Hard binary64 boundaries (issue #38): the canonical-b64-* vectors pin rule 5 at the edges \u2014 the smallest subnormal and the tokens on either side of its half-way point, the largest subnormal, the smallest normal and its neighbour, the largest finite value and the overflow midpoint (2^53 - 1/2) x 2^971 on both signs, the binary64 neighbours of the 1e-6 and 1e21 layout thresholds, 2^53/2^54/2^60/2^63/2^64, parse ties resolved to the even mantissa, shortest-digit ties resolved to the even final digit (2^50 + 1/4 and 2^50 + 3/4), several decimal tokens for one binary64 value, and the exponent/zero grammar. Expectations were authored with an independent standard-library exact-arithmetic verifier (rational parsing, ties-to-even rounding to binary64, exact rounding-interval shortest-digit search, rule-5 layout, SHA-256), not by either implementation, after it reproduced every pre-existing numeric vector byte for byte.",
+    "The fixed/scientific threshold is applied to the shortest decimal being emitted, as the specification's own example 1e-6 -> 0.000001 requires: the binary64 nearest 1e-6 (0x3eb0c6f7a0b5ed8d) is exactly 9.99999999999999954748...e-7, below 10^-6 as a real number, yet its shortest decimal is 1e-6 and it is written in fixed notation. Its lower neighbour (0x3eb0c6f7a0b5ed8c) has shortest decimal 9.999999999999997e-7 and is scientific; 10^21 is exactly representable, so the upper threshold has no such case. Underflow to zero (including negative zero) is finite and canonicalizes as 0; only non-finite results are rejected."
   ],
   "vectors": [
     {
@@ -255,6 +257,714 @@
       "inputJson": "{\"value\":1e400}",
       "expected": {
         "errorCategory": "OWA_INVALID_JSON_VALUE"
+      }
+    },
+    {
+      "id": "canonical-b64-min-subnormal",
+      "description": "Smallest positive subnormal 2^-1074 (bits 0x0000000000000001): the shortest round-tripping decimal is the single digit 5e-324.",
+      "inputJson": "5e-324",
+      "expected": {
+        "canonicalJson": "5e-324",
+        "digest": "sha256:c46e7ca1be4c8734f373a56530787288fa2058d73d07855e9247e949f811a42a"
+      }
+    },
+    {
+      "id": "canonical-b64-min-subnormal-long-token",
+      "description": "A 17-digit spelling of 2^-1074 parses to the same bits and canonicalizes to the same one-digit form.",
+      "inputJson": "4.9406564584124654e-324",
+      "expected": {
+        "canonicalJson": "5e-324",
+        "digest": "sha256:c46e7ca1be4c8734f373a56530787288fa2058d73d07855e9247e949f811a42a"
+      }
+    },
+    {
+      "id": "canonical-b64-min-subnormal-negative",
+      "description": "Negative smallest subnormal keeps its sign and one-digit shortest form.",
+      "inputJson": "-5e-324",
+      "expected": {
+        "canonicalJson": "-5e-324",
+        "digest": "sha256:046f4049d09944fcb2efbf2ddb0ea8f05e0204591d6d02c9106efc88190fa7f9"
+      }
+    },
+    {
+      "id": "canonical-b64-below-half-min-subnormal",
+      "description": "A token just below the midpoint 2^-1075 between zero and the smallest subnormal rounds to zero, which is finite and canonicalizes as 0 (not rejected).",
+      "inputJson": "2.4703282292062327e-324",
+      "expected": {
+        "canonicalJson": "0",
+        "digest": "sha256:5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+      }
+    },
+    {
+      "id": "canonical-b64-above-half-min-subnormal",
+      "description": "A token just above the midpoint 2^-1075 rounds up to the smallest subnormal.",
+      "inputJson": "2.4703282292062328e-324",
+      "expected": {
+        "canonicalJson": "5e-324",
+        "digest": "sha256:c46e7ca1be4c8734f373a56530787288fa2058d73d07855e9247e949f811a42a"
+      }
+    },
+    {
+      "id": "canonical-b64-second-subnormal",
+      "description": "2^-1073 (bits 0x0000000000000002): its shortest decimal 1e-323 is shorter than and different from the input token.",
+      "inputJson": "9.88131291682493e-324",
+      "expected": {
+        "canonicalJson": "1e-323",
+        "digest": "sha256:5aab72c34bfe5b10611193bfa45a17e1d1e2c3a3666f5958649bbadd03bd227b"
+      }
+    },
+    {
+      "id": "canonical-b64-underflow-to-zero",
+      "description": "A finite token far below the subnormal range underflows to zero, which is finite: canonical 0.",
+      "inputJson": "1e-400",
+      "expected": {
+        "canonicalJson": "0",
+        "digest": "sha256:5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+      }
+    },
+    {
+      "id": "canonical-b64-underflow-to-negative-zero",
+      "description": "Negative underflow yields negative zero, which rule 5 serializes as 0 without a sign.",
+      "inputJson": "-1e-400",
+      "expected": {
+        "canonicalJson": "0",
+        "digest": "sha256:5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+      }
+    },
+    {
+      "id": "canonical-b64-max-subnormal",
+      "description": "Largest subnormal 2^-1022 - 2^-1074 (bits 0x000fffffffffffff): a 16-digit shortest form.",
+      "inputJson": "2.225073858507201e-308",
+      "expected": {
+        "canonicalJson": "2.225073858507201e-308",
+        "digest": "sha256:e702bc3dff32cd2ddd22840752621268554b94aecfdb6f6234a0138bb59447d4"
+      }
+    },
+    {
+      "id": "canonical-b64-min-normal",
+      "description": "Smallest normal 2^-1022 (bits 0x0010000000000000) needs 17 digits; the binade boundary halves the spacing below it.",
+      "inputJson": "2.2250738585072014e-308",
+      "expected": {
+        "canonicalJson": "2.2250738585072014e-308",
+        "digest": "sha256:8d51a73768cb59d15302f6b0a4c7147a04b0cce9df743b5bf50e31ab87b2d807"
+      }
+    },
+    {
+      "id": "canonical-b64-above-min-normal",
+      "description": "The value immediately above the smallest normal (bits 0x0010000000000001).",
+      "inputJson": "2.225073858507202e-308",
+      "expected": {
+        "canonicalJson": "2.225073858507202e-308",
+        "digest": "sha256:d196cad015c972ce5617be1118002306e2d8c617f6b6b25629df8a3d0e4fddb7"
+      }
+    },
+    {
+      "id": "canonical-b64-max-finite",
+      "description": "Largest finite binary64 (2^53-1) x 2^971 (bits 0x7fefffffffffffff).",
+      "inputJson": "1.7976931348623157e308",
+      "expected": {
+        "canonicalJson": "1.7976931348623157e+308",
+        "digest": "sha256:c2784e1abd6317452708f3fbf9641c16b959561bc621a1d408c23a20aa2cb585"
+      }
+    },
+    {
+      "id": "canonical-b64-max-finite-negative",
+      "description": "Negative largest finite binary64 (bits 0xffefffffffffffff).",
+      "inputJson": "-1.7976931348623157e308",
+      "expected": {
+        "canonicalJson": "-1.7976931348623157e+308",
+        "digest": "sha256:f0347276b171ff0c36491c912285a2833de7313d1a103a4b1be0274bfe7c021f"
+      }
+    },
+    {
+      "id": "canonical-b64-max-finite-rounded-token",
+      "description": "A token above the largest finite value but below the overflow midpoint (2^53 - 1/2) x 2^971 rounds DOWN to the largest finite value; the canonical digits differ from the token.",
+      "inputJson": "1.7976931348623158e308",
+      "expected": {
+        "canonicalJson": "1.7976931348623157e+308",
+        "digest": "sha256:c2784e1abd6317452708f3fbf9641c16b959561bc621a1d408c23a20aa2cb585"
+      }
+    },
+    {
+      "id": "canonical-b64-overflow-just-above-midpoint",
+      "description": "A token just above the overflow midpoint (2^53 - 1/2) x 2^971 rounds to infinity and is rejected with the existing category.",
+      "inputJson": "1.7976931348623159e308",
+      "expected": {
+        "errorCategory": "OWA_INVALID_JSON_VALUE"
+      }
+    },
+    {
+      "id": "canonical-b64-overflow-just-above-midpoint-negative",
+      "description": "Negative overflow at the same boundary is rejected with the existing category.",
+      "inputJson": "-1.7976931348623159e308",
+      "expected": {
+        "errorCategory": "OWA_INVALID_JSON_VALUE"
+      }
+    },
+    {
+      "id": "canonical-b64-overflow-two-pow-1024",
+      "description": "2^1024 spelled exactly in decimal is the first power of two beyond binary64 and is rejected.",
+      "inputJson": "179769313486231590772930519078902473361797697894230657273430081157732675805500963132708477322407536021120113879871393357658789768814416622492847430639474124377767893424865485276302219601246094119453082952085005768838150682342462881473913110540827237163350510684586298239947245938479716304835356329624224137216",
+      "expected": {
+        "errorCategory": "OWA_INVALID_JSON_VALUE"
+      }
+    },
+    {
+      "id": "canonical-b64-threshold-small-fixed-token",
+      "description": "0.000001 is another spelling of the 1e-6 binary64 value; it canonicalizes to the fixed form the specification example requires.",
+      "inputJson": "0.000001",
+      "expected": {
+        "canonicalJson": "0.000001",
+        "digest": "sha256:159fb29a827ad04b260aa6c8ab6d8637f8f2b38af5c4f3cb49d6a21205e040f8"
+      }
+    },
+    {
+      "id": "canonical-b64-threshold-small-fixed-uppercase",
+      "description": "1E-6 (uppercase exponent marker) parses to the same value and canonicalizes to the same fixed form.",
+      "inputJson": "1E-6",
+      "expected": {
+        "canonicalJson": "0.000001",
+        "digest": "sha256:159fb29a827ad04b260aa6c8ab6d8637f8f2b38af5c4f3cb49d6a21205e040f8"
+      }
+    },
+    {
+      "id": "canonical-b64-threshold-small-fixed-negative",
+      "description": "Negative 1e-6 keeps fixed notation with the sign.",
+      "inputJson": "-1e-6",
+      "expected": {
+        "canonicalJson": "-0.000001",
+        "digest": "sha256:49ff0983cc219e6ecc913f851c68a92a585ed553098b80c7f7e8e35b726a5960"
+      }
+    },
+    {
+      "id": "canonical-b64-below-small-fixed",
+      "description": "The binary64 immediately below the 1e-6 value (bits 0x3eb0c6f7a0b5ed8c, exactly 9.99999999999999742989875...e-7) is below the threshold: scientific with a negative exponent. Two 16-digit candidates round-trip (9.999999999999997e-7 and 9.999999999999998e-7); the closer one is chosen.",
+      "inputJson": "9.999999999999997e-7",
+      "expected": {
+        "canonicalJson": "9.999999999999997e-7",
+        "digest": "sha256:2ace34b29d30d300aeacd4f2bb83367fa186f11a3f02ed461f35f00fd741a242"
+      }
+    },
+    {
+      "id": "canonical-b64-below-small-fixed-alternate-token",
+      "description": "9.999999999999998e-7 parses to the same binary64 (0x3eb0c6f7a0b5ed8c) as 9.999999999999997e-7 and must canonicalize to the closer shortest candidate 9.999999999999997e-7, not echo the token.",
+      "inputJson": "9.999999999999998e-7",
+      "expected": {
+        "canonicalJson": "9.999999999999997e-7",
+        "digest": "sha256:2ace34b29d30d300aeacd4f2bb83367fa186f11a3f02ed461f35f00fd741a242"
+      }
+    },
+    {
+      "id": "canonical-b64-below-small-fixed-negative",
+      "description": "Negative counterpart of the value immediately below the 1e-6 threshold (bits 0xbeb0c6f7a0b5ed8c).",
+      "inputJson": "-9.999999999999997e-7",
+      "expected": {
+        "canonicalJson": "-9.999999999999997e-7",
+        "digest": "sha256:35ade12f0054c287413799548ccf8792d4ce63ad62bc8711ca92fccc43025739"
+      }
+    },
+    {
+      "id": "canonical-b64-above-small-fixed",
+      "description": "The binary64 immediately above the 1e-6 value (bits 0x3eb0c6f7a0b5ed8e) is at or above the threshold: fixed notation with 17 digits and five leading zeros.",
+      "inputJson": "1.0000000000000002e-6",
+      "expected": {
+        "canonicalJson": "0.0000010000000000000002",
+        "digest": "sha256:1e50936073755327eade67e6e2f63fbc584f58fb5117e4c3d748ebe554e1ebd1"
+      }
+    },
+    {
+      "id": "canonical-b64-threshold-large-exponent-integer-token",
+      "description": "10^21 written as a 22-digit integer token is exactly representable and canonicalizes to scientific notation with an explicit + and no padding.",
+      "inputJson": "1000000000000000000000",
+      "expected": {
+        "canonicalJson": "1e+21",
+        "digest": "sha256:241c4643fa70b1dcde1205b71be4e3bebb17e9f880c8e1a33d0ead6c27271d3c"
+      }
+    },
+    {
+      "id": "canonical-b64-threshold-large-exponent-uppercase",
+      "description": "1E+21 parses to 10^21 and canonicalizes to lowercase e.",
+      "inputJson": "1E+21",
+      "expected": {
+        "canonicalJson": "1e+21",
+        "digest": "sha256:241c4643fa70b1dcde1205b71be4e3bebb17e9f880c8e1a33d0ead6c27271d3c"
+      }
+    },
+    {
+      "id": "canonical-b64-threshold-large-exponent-negative",
+      "description": "Negative 10^21 is scientific with the sign.",
+      "inputJson": "-1e21",
+      "expected": {
+        "canonicalJson": "-1e+21",
+        "digest": "sha256:d1b781c586a6becc3c6bba876b259268cbead2c6085737f4799c2fd0607f55a4"
+      }
+    },
+    {
+      "id": "canonical-b64-below-large-exponent",
+      "description": "The binary64 immediately below 10^21 is 999999999999999868928 (bits 0x444b1ae4d6e2ef4f); its 16 shortest digits are laid out in fixed notation with five place-value zeros.",
+      "inputJson": "999999999999999868928",
+      "expected": {
+        "canonicalJson": "999999999999999900000",
+        "digest": "sha256:914b4f8b4bbe2f6e7c36ad7791fc842a7516d149e694b3a71b78cee465ff6d7a"
+      }
+    },
+    {
+      "id": "canonical-b64-below-large-exponent-negative",
+      "description": "Negative counterpart of the value immediately below 10^21.",
+      "inputJson": "-999999999999999868928",
+      "expected": {
+        "canonicalJson": "-999999999999999900000",
+        "digest": "sha256:b223a46351153019faed3c39900712d2f07116c3ffbe49fa600452697d6565e7"
+      }
+    },
+    {
+      "id": "canonical-b64-above-large-exponent",
+      "description": "The binary64 immediately above 10^21 is 1000000000000000131072 (bits 0x444b1ae4d6e2ef51); its 17 shortest digits are scientific.",
+      "inputJson": "1000000000000000131072",
+      "expected": {
+        "canonicalJson": "1.0000000000000001e+21",
+        "digest": "sha256:35ae94098aa48040d7d4f7464d61ebdc3420ad78a99f0fecf910db0209e53495"
+      }
+    },
+    {
+      "id": "canonical-b64-below-large-fixed-token-rounds-up",
+      "description": "9.9999999999999999e20 (17 nines) rounds to 10^21 on parsing and is therefore scientific, unlike the 16-nine value below the threshold.",
+      "inputJson": "9.9999999999999999e20",
+      "expected": {
+        "canonicalJson": "1e+21",
+        "digest": "sha256:241c4643fa70b1dcde1205b71be4e3bebb17e9f880c8e1a33d0ead6c27271d3c"
+      }
+    },
+    {
+      "id": "canonical-b64-max-safe-integer",
+      "description": "2^53 - 1, the largest odd integer exactly representable.",
+      "inputJson": "9007199254740991",
+      "expected": {
+        "canonicalJson": "9007199254740991",
+        "digest": "sha256:f40b423c2dd95ff2b2f027e22208f438cf7242862e5e746860e697308c9add26"
+      }
+    },
+    {
+      "id": "canonical-b64-two-pow-53",
+      "description": "2^53 itself.",
+      "inputJson": "9007199254740992",
+      "expected": {
+        "canonicalJson": "9007199254740992",
+        "digest": "sha256:c681da39d7273a6a24c15c9cac3a75526ff2ecf8ba4ee60346a0c70c8163bdb2"
+      }
+    },
+    {
+      "id": "canonical-b64-two-pow-53-plus-three-tie-up",
+      "description": "2^53 + 3 is midway between 2^53 + 2 and 2^53 + 4 and rounds to the even mantissa, upward.",
+      "inputJson": "9007199254740995",
+      "expected": {
+        "canonicalJson": "9007199254740996",
+        "digest": "sha256:0237fbe64f6079a91f31d83895c4c17bd35048f038d3f9681b0d5671d7d64ee8"
+      }
+    },
+    {
+      "id": "canonical-b64-two-pow-54-plus-one-rounds-down",
+      "description": "2^54 + 1 is within half a spacing (4) of 2^54 and rounds down.",
+      "inputJson": "18014398509481985",
+      "expected": {
+        "canonicalJson": "18014398509481984",
+        "digest": "sha256:f461866ab34644574b28a09ac2cf29f04acacca9ee9c7212662c93da5b25d290"
+      }
+    },
+    {
+      "id": "canonical-b64-two-pow-60",
+      "description": "2^60 = 1152921504606846976: the shortest round-tripping digits drop the exact tail and fixed notation restores the magnitude with zeros.",
+      "inputJson": "1152921504606846976",
+      "expected": {
+        "canonicalJson": "1152921504606847000",
+        "digest": "sha256:fb2c76e2bae2715eba806c59577ddd5c0845a17edb83d31b0420ab960918fe1e"
+      }
+    },
+    {
+      "id": "canonical-b64-two-pow-63",
+      "description": "2^63 = 9223372036854775808 canonicalizes as 9223372036854776000: 16 significant digits, fixed notation, place-value zeros.",
+      "inputJson": "9223372036854775808",
+      "expected": {
+        "canonicalJson": "9223372036854776000",
+        "digest": "sha256:81f4af99eb4386a96b14a16ab44fbb5d4fdbea1a9f78154307ba83b6b6139a35"
+      }
+    },
+    {
+      "id": "canonical-b64-two-pow-64",
+      "description": "2^64 = 18446744073709551616 canonicalizes with 17 significant digits and three place-value zeros.",
+      "inputJson": "18446744073709551616",
+      "expected": {
+        "canonicalJson": "18446744073709552000",
+        "digest": "sha256:edacbbb2252b28815fa8983aad4682ab7718badd58a7e92c6b65b4292f308225"
+      }
+    },
+    {
+      "id": "canonical-b64-twenty-digit-integer-rounds",
+      "description": "A 20-digit integer token rounds to binary64; the canonical form keeps only the shortest round-tripping digits.",
+      "inputJson": "12345678901234567890",
+      "expected": {
+        "canonicalJson": "12345678901234567000",
+        "digest": "sha256:afdcd3321a2fcdb3414cb69a0c92c6bb8d74c06066d721083cc01fec664ab97f"
+      }
+    },
+    {
+      "id": "canonical-b64-seventeen-nines-carry-to-power-of-ten",
+      "description": "10^17 - 1 is not representable (spacing 16) and rounds to 10^17, so the canonical form is a power of ten in fixed notation.",
+      "inputJson": "99999999999999999",
+      "expected": {
+        "canonicalJson": "100000000000000000",
+        "digest": "sha256:31b33fffe351c9c8d742bcadf10e94f196e1f0622b6fb4e894c70df848d4d835"
+      }
+    },
+    {
+      "id": "canonical-b64-half-integer-tie-to-even-down",
+      "description": "4503599627370496.5 (2^52 + 1/2) is midway between two integers at spacing 1 and rounds to the even one, 2^52.",
+      "inputJson": "4503599627370496.5",
+      "expected": {
+        "canonicalJson": "4503599627370496",
+        "digest": "sha256:28a035611476b0c52ecb3ac806f479c7dd02bf8b4cab56f80d75a93ea9326031"
+      }
+    },
+    {
+      "id": "canonical-b64-half-integer-tie-to-even-up",
+      "description": "4503599627370497.5 is midway between 2^52+1 and 2^52+2 and rounds to the even one, upward.",
+      "inputJson": "4503599627370497.5",
+      "expected": {
+        "canonicalJson": "4503599627370498",
+        "digest": "sha256:fdd40e3bb15f16be61af22f5c109a6943611be17ac1e305c8b93fd92f86db471"
+      }
+    },
+    {
+      "id": "canonical-b64-large-fixed-with-fraction",
+      "description": "10^15 + 1/2 is exact (spacing 1/8) and needs 17 digits in fixed notation.",
+      "inputJson": "1000000000000000.5",
+      "expected": {
+        "canonicalJson": "1000000000000000.5",
+        "digest": "sha256:6e0e40f86360d43323bb004ec39c881a2cfb16671005df57276c1c9c390b4316"
+      }
+    },
+    {
+      "id": "canonical-b64-parse-tie-exact-midpoint-even",
+      "description": "The exact decimal expansion of 1 + 2^-53, midway between 1 and 1 + 2^-52, rounds to the even mantissa: 1.",
+      "inputJson": "1.00000000000000011102230246251565404236316680908203125",
+      "expected": {
+        "canonicalJson": "1",
+        "digest": "sha256:6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
+      }
+    },
+    {
+      "id": "canonical-b64-parse-just-above-midpoint",
+      "description": "One unit beyond that midpoint in the last decimal place rounds up to 1 + 2^-52.",
+      "inputJson": "1.00000000000000011102230246251565404236316680908203126",
+      "expected": {
+        "canonicalJson": "1.0000000000000002",
+        "digest": "sha256:19119a03721db7fc2a2f06afad179bdd384cc44b54e1d4f4f57e374c5b44fbd0"
+      }
+    },
+    {
+      "id": "canonical-b64-one-plus-ulp",
+      "description": "1 + 2^-52 needs 17 significant digits.",
+      "inputJson": "1.0000000000000002",
+      "expected": {
+        "canonicalJson": "1.0000000000000002",
+        "digest": "sha256:19119a03721db7fc2a2f06afad179bdd384cc44b54e1d4f4f57e374c5b44fbd0"
+      }
+    },
+    {
+      "id": "canonical-b64-shortest-tie-even-down",
+      "description": "2^50 + 1/4 (bits 0x4330000000000001): the 17-digit candidates ...624.2 and ...624.3 are equally close, so the even final digit wins.",
+      "inputJson": "1125899906842624.25",
+      "expected": {
+        "canonicalJson": "1125899906842624.2",
+        "digest": "sha256:e8a098272eda1d002cca154271311f45612c56d879cc04a3955029b7eaba52e7"
+      }
+    },
+    {
+      "id": "canonical-b64-shortest-tie-even-up",
+      "description": "2^50 + 3/4: the equally close candidates ...624.7 and ...624.8 resolve to the even final digit, upward.",
+      "inputJson": "1125899906842624.75",
+      "expected": {
+        "canonicalJson": "1125899906842624.8",
+        "digest": "sha256:159aa71211c16b9e3a893a5b8b07ffcb0056c349cd2397926a340a8677cf7bb2"
+      }
+    },
+    {
+      "id": "canonical-b64-shortest-tie-even-negative",
+      "description": "The shortest-digit tie rule applies to the magnitude; the sign is prefixed.",
+      "inputJson": "-1125899906842624.25",
+      "expected": {
+        "canonicalJson": "-1125899906842624.2",
+        "digest": "sha256:218306b150d7078eeb0fec97d4401c115007e15c76e7bff980f555161f9f62b0"
+      }
+    },
+    {
+      "id": "canonical-b64-not-a-tie-closest-wins",
+      "description": "2^49 + 1/8 (spacing 1/8): only the candidate ...312.1 is within half a spacing, so closest-candidate selection, not a tie, decides.",
+      "inputJson": "562949953421312.125",
+      "expected": {
+        "canonicalJson": "562949953421312.1",
+        "digest": "sha256:a069db7f7b2534a238440971583cdc40a87e7b238637b985e3706637f47e1749"
+      }
+    },
+    {
+      "id": "canonical-b64-point-one-plus-point-two",
+      "description": "0.1 + 0.2 in binary64 is 0.3000000000000000444...; 17 digits are needed.",
+      "inputJson": "0.30000000000000004",
+      "expected": {
+        "canonicalJson": "0.30000000000000004",
+        "digest": "sha256:06bad31060c1212ae832de4c031f7b31e3b48aed57858294478cb19450cf34ca"
+      }
+    },
+    {
+      "id": "canonical-b64-point-three-neighbour-token",
+      "description": "0.30000000000000003 rounds to the same binary64 as 0.30000000000000004 and must canonicalize identically.",
+      "inputJson": "0.30000000000000003",
+      "expected": {
+        "canonicalJson": "0.30000000000000004",
+        "digest": "sha256:06bad31060c1212ae832de4c031f7b31e3b48aed57858294478cb19450cf34ca"
+      }
+    },
+    {
+      "id": "canonical-b64-one-third-seventeen-digit-token",
+      "description": "A 17-digit token for the same binary64 canonicalizes to the 16-digit shortest form.",
+      "inputJson": "0.33333333333333331",
+      "expected": {
+        "canonicalJson": "0.3333333333333333",
+        "digest": "sha256:e965f1b975608cb0d1dad8c30d17e0fe1bdea42df938c0bdc29d75c97b45c44b"
+      }
+    },
+    {
+      "id": "canonical-b64-two-thirds",
+      "description": "The binary64 nearest 2/3 has a 16-digit shortest form.",
+      "inputJson": "0.6666666666666666",
+      "expected": {
+        "canonicalJson": "0.6666666666666666",
+        "digest": "sha256:7b4391e97f7baf4edf9f0815ce8cfae721e245946239e1db53479ee70d5b6cd5"
+      }
+    },
+    {
+      "id": "canonical-b64-one-minus-ulp",
+      "description": "1 - 2^-53 has the 16-digit shortest form 0.9999999999999999.",
+      "inputJson": "0.9999999999999999",
+      "expected": {
+        "canonicalJson": "0.9999999999999999",
+        "digest": "sha256:12d5191c859deac9fee6fecae738d2458bd085951ec1486febd820c1f618f172"
+      }
+    },
+    {
+      "id": "canonical-b64-below-one-rounds-to-one-minus-ulp",
+      "description": "0.99999999999999994 is closer to 1 - 2^-53 than to 1 and canonicalizes to the 16 nines.",
+      "inputJson": "0.99999999999999994",
+      "expected": {
+        "canonicalJson": "0.9999999999999999",
+        "digest": "sha256:12d5191c859deac9fee6fecae738d2458bd085951ec1486febd820c1f618f172"
+      }
+    },
+    {
+      "id": "canonical-b64-below-one-rounds-to-one",
+      "description": "0.99999999999999995 is closer to 1 and canonicalizes to 1: rounding on parse carries through every digit.",
+      "inputJson": "0.99999999999999995",
+      "expected": {
+        "canonicalJson": "1",
+        "digest": "sha256:6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
+      }
+    },
+    {
+      "id": "canonical-b64-point-one-exact-expansion",
+      "description": "The exact 55-digit decimal expansion of the binary64 nearest 0.1 canonicalizes to 0.1.",
+      "inputJson": "0.1000000000000000055511151231257827021181583404541015625",
+      "expected": {
+        "canonicalJson": "0.1",
+        "digest": "sha256:14be4b45f18e0d8c67b4f719b5144eee88497e413709d11d85b096d8e2346310"
+      }
+    },
+    {
+      "id": "canonical-b64-below-point-one",
+      "description": "The binary64 immediately below 0.1 (bits 0x3fb9999999999999).",
+      "inputJson": "0.09999999999999999",
+      "expected": {
+        "canonicalJson": "0.09999999999999999",
+        "digest": "sha256:8f1d1852fb713ff4968b09851001fcaa41e98055ee88337d52f9ef808ce6b0c2"
+      }
+    },
+    {
+      "id": "canonical-b64-above-point-one",
+      "description": "The binary64 immediately above 0.1 (bits 0x3fb999999999999b).",
+      "inputJson": "0.10000000000000002",
+      "expected": {
+        "canonicalJson": "0.10000000000000002",
+        "digest": "sha256:83b2eb6b3590ccf4bc503c75aabc510850a73df5ee9837f60d2ce14ecdc78149"
+      }
+    },
+    {
+      "id": "canonical-b64-ten-pow-22-exact",
+      "description": "10^22 is the largest power of ten exactly representable in binary64; it is scientific.",
+      "inputJson": "1e22",
+      "expected": {
+        "canonicalJson": "1e+22",
+        "digest": "sha256:814a97daeb45416e24befc0ae9a6414ac2f41f269a9f2f019fc65a0d03725f34"
+      }
+    },
+    {
+      "id": "canonical-b64-ten-pow-23-inexact",
+      "description": "10^23 is not representable; the nearest binary64 (99999999999999991611392) still has the one-digit shortest form 1e+23.",
+      "inputJson": "1e23",
+      "expected": {
+        "canonicalJson": "1e+23",
+        "digest": "sha256:0b1af6b73e932475817f8eb620deecf21ad7570df3400a23db5c79a9001597f7"
+      }
+    },
+    {
+      "id": "canonical-b64-ten-pow-23-neighbour-token",
+      "description": "The exact integer value of that binary64 canonicalizes to the same 1e+23.",
+      "inputJson": "99999999999999991611392",
+      "expected": {
+        "canonicalJson": "1e+23",
+        "digest": "sha256:0b1af6b73e932475817f8eb620deecf21ad7570df3400a23db5c79a9001597f7"
+      }
+    },
+    {
+      "id": "canonical-b64-fifteen-nines-point-nine",
+      "description": "999999999999999.9 rounds to ...999.875 (spacing 1/8) and the 16-digit shortest form restores the token.",
+      "inputJson": "999999999999999.9",
+      "expected": {
+        "canonicalJson": "999999999999999.9",
+        "digest": "sha256:c24dbe9f4f70ca038fd039610a4f025eaee1a1dea48929bc9e30ebe0e4d6edb9"
+      }
+    },
+    {
+      "id": "canonical-b64-exponent-three-digits-positive",
+      "description": "A three-digit positive exponent has an explicit + and no padding.",
+      "inputJson": "1e300",
+      "expected": {
+        "canonicalJson": "1e+300",
+        "digest": "sha256:2b0de494c41db4c1bf0b41b0a3483db71f2b53a5e37caf5a61abee2d4169a935"
+      }
+    },
+    {
+      "id": "canonical-b64-exponent-three-digits-negative",
+      "description": "A three-digit negative exponent has no padding.",
+      "inputJson": "1e-300",
+      "expected": {
+        "canonicalJson": "1e-300",
+        "digest": "sha256:e4d4c3c52e45077e307b6aea260f9138b998da7a1743065d83a2e78f7df8cdd6"
+      }
+    },
+    {
+      "id": "canonical-b64-one-digit-before-point-positive",
+      "description": "12345e20 is renormalized to one digit before the point: 1.2345e+24.",
+      "inputJson": "12345e20",
+      "expected": {
+        "canonicalJson": "1.2345e+24",
+        "digest": "sha256:fbb39323a5ea9d2954d83a4bc765698f6f6e9d8f70e5d1f24fdc023f2e320d81"
+      }
+    },
+    {
+      "id": "canonical-b64-one-digit-before-point-negative",
+      "description": "123456789e-20 is renormalized to 1.23456789e-12.",
+      "inputJson": "123456789e-20",
+      "expected": {
+        "canonicalJson": "1.23456789e-12",
+        "digest": "sha256:91b2d9c52c1cdf3abb68889deed065691b9206b71629389caa92e793c79e46df"
+      }
+    },
+    {
+      "id": "canonical-b64-scientific-many-digits",
+      "description": "A 17-digit token whose last digit changes on parsing: 1.2345678901234567e-25 rounds to the binary64 whose shortest form is 1.2345678901234566e-25 (17 digits, two-digit negative exponent, explicit minus, no padding).",
+      "inputJson": "1.2345678901234567e-25",
+      "expected": {
+        "canonicalJson": "1.2345678901234566e-25",
+        "digest": "sha256:fe14603d0e18a34e58d4e7028517714ce2033e4a9693b4d8d5a025668a9cf5c2"
+      }
+    },
+    {
+      "id": "canonical-b64-fixed-place-value-zeros",
+      "description": "1.5e20 is below 10^21: fixed notation with 19 place-value zeros.",
+      "inputJson": "1.5e20",
+      "expected": {
+        "canonicalJson": "150000000000000000000",
+        "digest": "sha256:9f24ad37cbaba5c19e1244da95cb2fbb5503203df423b04ca34a3280fcfab3a1"
+      }
+    },
+    {
+      "id": "canonical-b64-fixed-seventeen-digits-place-value",
+      "description": "1.2345678901234568e20 keeps 17 significant digits and four place-value zeros in fixed notation.",
+      "inputJson": "123456789012345678901",
+      "expected": {
+        "canonicalJson": "123456789012345680000",
+        "digest": "sha256:725abf175290195635e55a971cf88e02a46d6d56e964ec2d8bc47614b9559062"
+      }
+    },
+    {
+      "id": "canonical-b64-trailing-zeros-fraction",
+      "description": "1.500 -> 1.5.",
+      "inputJson": "1.500",
+      "expected": {
+        "canonicalJson": "1.5",
+        "digest": "sha256:9f29a130438b81170b92a42650f9a94291ecad60bd47af2a3886e75f7f728725"
+      }
+    },
+    {
+      "id": "canonical-b64-trailing-zeros-exponent",
+      "description": "1.0e2 -> 100.",
+      "inputJson": "1.0e2",
+      "expected": {
+        "canonicalJson": "100",
+        "digest": "sha256:ad57366865126e55649ecb23ae1d48887544976efea46a48eb5d85a6eeb4d306"
+      }
+    },
+    {
+      "id": "canonical-b64-positive-zero-exponent",
+      "description": "0e0 -> 0.",
+      "inputJson": "0e0",
+      "expected": {
+        "canonicalJson": "0",
+        "digest": "sha256:5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+      }
+    },
+    {
+      "id": "canonical-b64-negative-zero-exponent",
+      "description": "-0e0 -> 0.",
+      "inputJson": "-0e0",
+      "expected": {
+        "canonicalJson": "0",
+        "digest": "sha256:5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+      }
+    },
+    {
+      "id": "canonical-b64-negative-zero-fraction-exponent",
+      "description": "-0.0e+100 -> 0.",
+      "inputJson": "-0.0e+100",
+      "expected": {
+        "canonicalJson": "0",
+        "digest": "sha256:5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+      }
+    },
+    {
+      "id": "canonical-b64-nested-extremes",
+      "description": "Hard values nested in an object and an array; keys sorted by code point, array order preserved, every number rendered by rule 5.",
+      "inputJson": "{\"z\":[5e-324,1e21,-0.0,1.7976931348623157e308,9007199254740993],\"a\":{\"tie\":1125899906842624.25,\"belowFixed\":9.999999999999999e-7,\"aboveFixed\":1.0000000000000002e-6}}",
+      "expected": {
+        "canonicalJson": "{\"a\":{\"aboveFixed\":0.0000010000000000000002,\"belowFixed\":0.000001,\"tie\":1125899906842624.2},\"z\":[5e-324,1e+21,0,1.7976931348623157e+308,9007199254740992]}",
+        "digest": "sha256:7f8c9c7e11374c15c95ff7688aecbc1c00171e1ce16c8ad479c65cbb49ce6405"
+      }
+    },
+    {
+      "id": "canonical-b64-array-thresholds",
+      "description": "A root array of threshold values in scrambled order keeps its order and applies each layout rule.",
+      "inputJson": "[1e21,1e-7,999999999999999868928,0.000001,1000000000000000131072,9.999999999999999e-7,1e20]",
+      "expected": {
+        "canonicalJson": "[1e+21,1e-7,999999999999999900000,0.000001,1.0000000000000001e+21,0.000001,100000000000000000000]",
+        "digest": "sha256:c6b372d4bffe8298a592fc10260d910e6765e26ad7eda87aeb20cd923f560d15"
+      }
+    },
+    {
+      "id": "canonical-b64-nested-negative-zero",
+      "description": "Negative zero nested in an object normalizes to 0.",
+      "inputJson": "{\"z\":-0,\"y\":-0.0,\"x\":-0e0}",
+      "expected": {
+        "canonicalJson": "{\"x\":0,\"y\":0,\"z\":0}",
+        "digest": "sha256:35461afe4a2d42dcc8948534195c5e79c22332615508a7a0627de91e52c3b5c8"
       }
     }
   ]

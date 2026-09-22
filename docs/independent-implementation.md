@@ -75,9 +75,9 @@ Every file under `docs/conformance/v0.2/` and every vector in it is executed —
 
 | Corpus file | Operation | Vectors | Harness |
 | --- | --- | ---: | --- |
-| `canonical.json` | canonical | 28 | parse → canonicalize; category check |
+| `canonical.json` | canonical | 107 | parse → canonicalize; category check (79 hard-boundary binary64 vectors, issue #38) |
 | `parse.json` | parse | 18 | parse → canonicalize; syntax → `OWA_INVALID_JSON` |
-| `manifest.json` | manifest | 149 | parse → validate → canonicalize + artifact digest |
+| `manifest.json` | manifest | 150 | parse → validate → canonicalize + artifact digest |
 | `path.json` | path | 25 | validate; exact original string returned |
 | `request.json` | request | 44 | validate manifest → resolve; exact file entry or null |
 | `pack.json` | pack | 17 | materialize files/symlinks in a temp dir → pack (media types from the fixed table) → manifest, canonical, digest, sorted unique blob digests, blob bytes |
@@ -139,9 +139,24 @@ decide whether to pin it. Items the specification has since pinned move to
 3. **Shortest-digit selection.** The specification's "shortest round-tripping
    digits, closest, ties to even" is realised with `strconv.FormatFloat(v, 'e',
    -1, 64)` for the digits and an explicit implementation of the layout rules.
-   Every corpus number agrees; equivalence for all binary64 values is a property
-   of Go's shortest-formatting algorithm that the corpus exercises but does not
-   prove exhaustively.
+   Since issue #38 the corpus stress-pins this rule at the hard binary64
+   boundaries (the 79 `canonical-b64-*` vectors and
+   `manifest-binary64-boundary-annotations`): the smallest and largest
+   subnormals, the smallest normal and its neighbours, the largest finite
+   value and the overflow midpoint, the binary64 neighbours of the `1e-6` and
+   `1e21` layout thresholds, `2^53`…`2^64` integer edges, parse ties at exact
+   midpoints, shortest-digit ties between equally close candidates
+   (`2^50 + 1/4` → `…624.2`, `2^50 + 3/4` → `…624.8`), several tokens for one
+   value, and the exponent/zero grammar — with expectations authored by an
+   independent exact-arithmetic verifier and frozen before either
+   implementation ran. This implementation and the JavaScript reference agree
+   with every one of them, and `canonical_number_test.go` additionally checks
+   re-parse identity, grammar, the threshold and negation symmetry over hand-
+   picked bit patterns and a deterministic 4096-value stream. What is proved is
+   agreement at those edges from the written rule alone; a finite corpus is not
+   an exhaustive proof over all 2^64 bit patterns, so equivalence of Go's
+   shortest-formatting algorithm with the rule for every binary64 value remains
+   a strongly tested property rather than a demonstrated theorem.
 4. **Filesystem names that are not valid Unicode** are out of scope by the
    specification's own statement; the packer rejects them rather than guessing.
 

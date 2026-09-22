@@ -36,6 +36,20 @@ digest algorithm); no package version, tag or release.
   categories are unchanged). Writer output, config/manifest/layer/blob
   verification, duplicate-content handling, media-type mapping and all
   published artifact identities are unchanged.
+- strengthen canonical binary64 conformance evidence at hard boundaries
+  (issue #38): 79 new static `canonical-b64-*` vectors and one manifest
+  vector (`manifest-binary64-boundary-annotations`) pin rule 5 — binary64
+  parsing with ties to even, shortest round-tripping digits with closest-
+  candidate and even-final-digit selection, the `1e-6`/`1e21` layout
+  thresholds and their binary64 neighbours, the exponent and signed-zero
+  grammar — at the smallest and largest subnormals, the smallest normal, the
+  largest finite value and the overflow midpoint, `2^53`…`2^64`, exact parse
+  midpoints and genuine shortest-digit ties. Expectations were authored by an
+  independent standard-library exact-arithmetic verifier and frozen before
+  either implementation ran; the JavaScript reference and the Go conformance
+  implementation pass all of them unchanged, and each gains a local
+  round-trip/grammar property suite. No canonicalization code, protocol
+  identity, error category, package version or pre-existing vector changed.
 
 ## 0.4.0 - 2026-09-21
 
