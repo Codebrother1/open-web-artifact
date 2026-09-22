@@ -178,13 +178,22 @@ decide whether to pin it. Items the specification has since pinned move to
   checks that the manifest, canonical bytes, artifact digest, file order, blob
   digest set and every blob's bytes are unchanged and still equal the anchor's
   static expectations, that the skipped names are absent, that no connection
-  reached the socket, that a writer-less FIFO does not hang packing (the test
-  binary re-executes itself under a 30-second `exec.CommandContext` deadline
-  that kills and reaps the child; a self-check proves a child that really opens
-  the FIFO is killed), that a FIFO or socket named `index.html` yields
-  `OWA_MISSING_ENTRYPOINT`, that a tree of only special entries yields
-  `OWA_INVALID_MANIFEST`, and that symlinks to a regular file, a directory, a
-  missing target, an external file, a FIFO and a socket all fail `OWA_SYMLINK`.
+  reached the socket, that a writer-less FIFO does not hang packing, that the
+  two error cases are disjoint and ordered — a tree with regular files whose
+  `index.html` exists only as a FIFO or socket yields `OWA_MISSING_ENTRYPOINT`,
+  while a tree with zero regular-file entries (even one whose only entry is a
+  FIFO named `index.html`) yields `OWA_INVALID_MANIFEST` — and that symlinks to
+  a regular file, a directory, a missing target, an external file, a FIFO and a
+  socket all fail `OWA_SYMLINK`. Every pack operation that could meet a FIFO —
+  directly, or through a symbolic link should the link rule ever regress to
+  following links — runs in a child process: the test binary re-executes itself
+  under a 30-second `exec.CommandContext` deadline that kills (`SIGKILL`) and
+  reaps the child, and the child returns the complete packed identity or its
+  error category as one JSON document for the parent to assert on; only trees
+  of nothing but regular files are packed in-process. Negative controls prove
+  that a child which really opens the FIFO, and a simulated regressed packer
+  that reads every entry, are killed and reaped at a 2-second deadline. Each
+  socket listener registers its cleanup the moment it is bound.
   The JavaScript reference has the same cases in `pack-nonregular.test.js`;
   neither suite invokes the other. In CI the Go cases run on the Ubuntu Go
   lane; the JavaScript cases run on the Ubuntu and macOS cells and skip on

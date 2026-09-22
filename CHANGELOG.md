@@ -55,14 +55,17 @@ digest algorithm); no package version, tag or release.
   fail `OWA_SYMLINK`, directories recurse, regular files pack, and FIFOs,
   sockets, devices and any other entry type are skipped without being opened,
   read or connected to, contributing no entry or blob and leaving the identity
-  of the regular files unchanged; a skipped entry never satisfies the
-  entrypoint (`OWA_MISSING_ENTRYPOINT`) and a tree of only special entries is
-  `OWA_INVALID_MANIFEST`. This states existing JavaScript and Go behaviour;
-  no production code changed. Both implementations gain implementation-local
-  tests with real FIFOs and bound Unix-domain sockets (Linux/macOS; skipped
-  on Windows) including a separate-process, external-deadline proof that a
-  writer-less FIFO does not hang packing. No corpus file, error category,
-  protocol identity or package version changed.
+  of the regular files unchanged. The two failure cases are disjoint and
+  ordered: zero regular-file entries → `OWA_INVALID_MANIFEST`; otherwise a
+  requested entrypoint that is not among the regular-file entries →
+  `OWA_MISSING_ENTRYPOINT`, which a skipped special entry never satisfies.
+  This states existing JavaScript and Go behaviour; no production code
+  changed. Both implementations gain implementation-local tests with real
+  FIFOs and bound Unix-domain sockets (Linux/macOS; skipped on Windows) in
+  which every pack operation that could meet a FIFO runs in a separate
+  process under an external deadline with kill-and-reap, so a writer-less
+  FIFO can never hang the suite. No corpus file, error category, protocol
+  identity or package version changed.
 
 ## 0.4.0 - 2026-09-21
 
