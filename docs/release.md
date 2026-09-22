@@ -14,7 +14,7 @@ Three version numbers live in this repository and they do **not** move together:
 
 | Domain | Current value | Where it lives | What moves it |
 | --- | --- | --- | --- |
-| **Software / reference implementation** | **v0.4.0** released (tag `v0.4.0` → `8a63b39a`); **v0.5.0 proposed, UNRELEASED** | every `package.json` `version`, the MCP server-info string, `CHANGELOG.md`, the Git tag, the GitHub Release title | a software release |
+| **Software / reference implementation** | **v0.4.0** released (annotated tag `v0.4.0`, tag object `8a63b39a`, peeled commit `v0.4.0^{commit}` = `5e792cc9`); **v0.5.0 proposed, UNRELEASED** | every `package.json` `version`, the MCP server-info string, `CHANGELOG.md`, the Git tag, the GitHub Release title | a software release |
 | **Protocol / specification draft** | **v0.2 (Draft)** | [`docs/spec-v0.2.md`](spec-v0.2.md), the conformance corpus under `docs/conformance/v0.2/` | a new spec draft, decided separately |
 | **Manifest `specVersion`** | **`owa.dev/v1`** with media type `application/vnd.openwebartifact.site.v1+json` | `packages/spec/src/index.js`, every manifest | an incompatible manifest change, decided separately |
 
@@ -59,8 +59,18 @@ confirm, from the public check-runs API for **that** SHA
 (`GET /repos/Codebrother1/open-web-artifact/commits/<sha>/check-runs`), that
 `total_count` is 10, every run reports that single `head_sha`, and every
 `conclusion` is `success`. Record the SHA and the ten run links in the release
-PR. Job logs are login-gated; conclusions and the public `::notice` annotations
-(runtime, tool versions, OCI digests) are readable without a login.
+PR. Check conclusions and the public `::notice` annotations (runtime, tool
+versions, OCI digests) are readable anonymously; the step logs require an
+authenticated GitHub session with access to the repository — a maintainer can
+read them, an anonymous reader cannot.
+
+**Tag identity.** `v0.4.0` is an *annotated* tag, so the tag name resolves to a
+tag object, not to the release commit: `git rev-parse v0.4.0` prints the tag
+object (`8a63b39ad10cebd1906209a9dae39f8bfcf488cb`), while
+`git rev-parse v0.4.0^{commit}` prints the commit it points at
+(`5e792cc959f29ecc93663077fb9b679e752ce5b8`). Every commit-identity comparison in
+this process — baselines, diff ranges, post-tag verification — must peel the tag
+with `^{commit}`; the tag object SHA is never a commit SHA.
 
 ---
 
@@ -68,9 +78,10 @@ PR. Job logs are login-gated; conclusions and the public `::notice` annotations
 
 Prepared under issue #48 at `main` `2e5f743a9d066da028ea8c0a5164c3566d27c9b4`
 (tree `77a40eda0e94c838fb873e728d9636633c3b9c4a`; 10/10 post-merge checks green
-on that exact commit). Nine pull requests were merged after `v0.4.0`
-(`8a63b39a`): #32, #34, #35, #37, #39, #41, #43, #45, #47 — 48 files,
-+9311/−91. Companion draft: [`release-notes-v0.5.0.md`](release-notes-v0.5.0.md).
+on that exact commit). Nine pull requests were merged after the `v0.4.0`
+release commit `v0.4.0^{commit}` = `5e792cc959f29ecc93663077fb9b679e752ce5b8`
+(the annotated tag object itself is `8a63b39a`): #32, #34, #35, #37, #39, #41,
+#43, #45, #47 — `git diff --stat v0.4.0^{commit}..main`: 48 files, +9311/−91. Companion draft: [`release-notes-v0.5.0.md`](release-notes-v0.5.0.md).
 
 ### Scope inventory (from the diff, not from titles)
 
@@ -135,7 +146,7 @@ not presume).
 | Independent Go implementation | READY | `go-conformance (go 1.27, ubuntu)`: 435 passing tests/subtests at `main`, `gofmt`/`vet` clean, `go.mod` without `require`, `go list -deps` stdlib-only. |
 | Cross-platform CI | READY | 10 checks green on the exact merge commit `2e5f743a` (see the run links in the #48 PR). |
 | OCI registry interoperability | READY (ORAS v1.3.4 + Zot v2.1.21) / DOCUMENTED LIMITATION (scope) | Three live tests incl. authenticated HTTPS; limits: basic auth over verified TLS on loopback with one user; no token exchange, credential helpers, mTLS, authz semantics, other registries or production readiness. |
-| Test-harness reliability | READY / DOCUMENTED LIMITATION | The demonstrated hang after a failed readiness wait (#44/#45) is fixed with regression tests; the **original** readiness miss (a spawned server not printing readiness within 15 s on one `ubuntu-latest` runner, once) is **unexplained** — logs were login-gated. Not a blocker: it has not recurred across the 8 subsequent full CI rounds, and the failure message now records the child's state for a recurrence. |
+| Test-harness reliability | READY / DOCUMENTED LIMITATION | The demonstrated hang after a failed readiness wait (#44/#45) is fixed with regression tests; the **original** readiness miss (a spawned server not printing readiness within 15 s on one `ubuntu-latest` runner, once) remains **unexplained**. The job's step logs were not readable anonymously when the fix was authored; the maintainer later retrieved them with authenticated access during review, and the root cause is still undetermined. Not a blocker: it has not recurred across the 8 subsequent full CI rounds, and the failure message now records the child's state for a recurrence. |
 | Pack-root / ancestor symbolic links | MAINTAINER DECISION (policy) · DOCUMENTED LIMITATION (behaviour) | Both implementations follow a link supplied as the root; characterized by tests in both (#43), recorded as current behaviour, not normative. The #43 recommendation (keep outside the portable contract; do not adopt rejection) awaits the maintainer; no release blocker. |
 | Duplicate JSON member names | MAINTAINER DECISION (whether to specify) · DOCUMENTED LIMITATION | Outside the corpus by design; each implementation discloses its parser policy ([independent-implementation.md](independent-implementation.md), [conformance/README.md](conformance/README.md#explicitly-deferred-not-fixed-by-issue-5)). |
 | Filesystem names that are not valid Unicode | DOCUMENTED LIMITATION | Out of scope by the spec's own statement; rejected rather than guessed. |
@@ -280,7 +291,7 @@ It must not touch runtime behaviour, dependencies, workflows, corpus files,
 
 ## Post-tag verification
 
-- [ ] `git rev-parse v<version>^{commit}` equals the selected final reviewed `main` release commit.
+- [ ] `git rev-parse v<version>^{commit}` (the **peeled** commit — an annotated tag's own object SHA is not the commit) equals the selected final reviewed `main` release commit.
 - [ ] The GitHub Release points at that tag and therefore at that commit.
 - [ ] The release title is exactly `Open Web Artifact v<version>`.
 - [ ] The source `.zip` and `.tar.gz` archives are available; no unexpected uploaded assets.
@@ -293,9 +304,12 @@ It must not touch runtime behaviour, dependencies, workflows, corpus files,
 
 ## Release record — v0.4.0 (released 2026-09-21)
 
-Tag `v0.4.0` (annotated) → commit `8a63b39ad10cebd1906209a9dae39f8bfcf488cb`;
-GitHub Release "Open Web Artifact v0.4.0" published 2026-09-21T19:58:33Z, source
-archives only; notes: [`release-notes-v0.4.0.md`](release-notes-v0.4.0.md). At
+Annotated tag `v0.4.0` — tag object `8a63b39ad10cebd1906209a9dae39f8bfcf488cb`,
+pointing at release commit `v0.4.0^{commit}` =
+`5e792cc959f29ecc93663077fb9b679e752ce5b8` ("release: cut v0.4.0 (#30)",
+2026-09-21); GitHub Release "Open Web Artifact v0.4.0" published
+2026-09-21T19:58:33Z, source archives only; notes:
+[`release-notes-v0.4.0.md`](release-notes-v0.4.0.md). At
 that time the CI architecture had **nine** checks (the Go conformance lane was
 added afterwards by #32) and `npm run test:oci` had **two** live cases. The
 readiness table below is preserved exactly as reviewed on 2026-09-21; its
