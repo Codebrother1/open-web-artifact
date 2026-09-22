@@ -9,7 +9,9 @@ semantics — those belong to ORAS and the operator.
 
 Interoperability is enforced continuously against a real registry: the `OCI`
 GitHub Actions workflow (check `oci (oras + zot, node 24)`) runs the flow below
-on every pull request with **ORAS v1.3.4** and **Zot v2.1.21**. That is the
+on every pull request with **ORAS v1.3.4** and **Zot v2.1.21** — over plain
+HTTP without authentication, and (issue #46) through a second, disposable
+**authenticated HTTPS** Zot with certificate verification enabled. That is the
 scope of the claim — *observed with ORAS v1.3.4 and Zot v2.1.21* — not "works
 with every OCI registry".
 
@@ -218,9 +220,14 @@ as written; nothing rewrites it):
 oras cp --from-oci-layout ./site.oci:v1 <registry-host>/<repository>:v1
 ```
 
-The loopback test registry is plain HTTP, so the suite adds `--to-plain-http`;
-a production registry uses TLS and whatever authentication ORAS is configured
-with (`oras login`, credential helpers) — none of that is OWA's concern.
+The plain-HTTP loopback test registry needs `--to-plain-http`; a production
+registry uses TLS and whatever authentication ORAS is configured with
+(`oras login`, credential helpers) — none of that is OWA's concern. The
+authenticated HTTPS suite ([below](#authenticated-https-transport-issue-46))
+uses exactly the ORAS features an operator would: `oras login --username <user>
+--password-stdin --registry-config <file> --ca-file <ca>` followed by
+`oras cp … --to-registry-config <file> --to-ca-file <ca>` (and the `--from-`
+variants for pulls), with no `--insecure` and no plain-HTTP fallback.
 
 Read the registry descriptor (its `digest` is the OCI manifest digest and must
 equal what `export-oci` printed):
@@ -308,6 +315,91 @@ next to a unique `/index.html`:
   annotations swapped are all **rejected** by `readOciLayout`, while an
   untouched copy still imports.
 
+### Authenticated HTTPS transport (issue #46)
+
+`packages/integration/oci/authenticated-tls.test.js` (same `npm run test:oci`
+run) proves the same identity preservation through a registry that looks like a
+production one from the client's side: **TLS with certificate verification
+enabled and authentication required**. Registry transport is still ORAS's; OWA
+gained no transport code, credential handling or TLS logic.
+
+**The disposable registry** (`packages/integration/oci/tls-registry.js`,
+test-only) is a second Zot v2.1.21 started from the same checksum-verified
+binary, on 127.0.0.1 with an ephemeral port, temporary storage, and:
+
+- a **temporary test CA** and a server certificate with SAN `IP:127.0.0.1,
+  DNS:localhost` (EC P-256, valid two days), generated with the host `openssl`
+  into the registry's state directory — never committed, removed with it;
+- **htpasswd authentication** with one synthetic user and a fresh random
+  password per run. Zot verifies htpasswd entries with bcrypt only; the entry is
+  produced through the platform `crypt(3)` (libxcrypt) via Perl's built-in
+  `crypt`, password on stdin, format-checked before use — Zot accepting the
+  valid password and rejecting a wrong one is the live check of the hash;
+- an **access-control policy** granting that user `read`/`create`/`update`/
+  `delete` on every repository, an empty default policy and **no anonymous
+  policy**, so every unauthenticated request is challenged with
+  `401 WWW-Authenticate: Basic realm="…"`. Readiness *is* that challenge over
+  TLS verified against the test CA;
+- an info-level session log whose `method`/`path`/`statusCode` fields are the
+  boundary evidence (Zot masks the `Authorization` header in that log; the log
+  is deleted with the state directory and never printed).
+
+**The client** is isolated: ORAS runs with a temporary `HOME`/`DOCKER_CONFIG`
+and an explicit `--registry-config` file inside the test's temporary directory,
+so the user's Docker/ORAS login state and the system trust store are neither
+read nor written (the test snapshots the user's Docker config before and checks
+it afterwards). The password reaches `oras login` on **stdin**; it never appears
+on a command line, in a diagnostic or in a GitHub annotation.
+
+**Positive round-trip** — fixture: the corpus anchor `pack-cross-language-anchor`
+(seven entries, four of which share one blob across `text/javascript` and
+`text/plain`), checked against its **unchanged static expectations**, not the
+implementation's own output:
+
+- push over HTTPS with valid credentials; the registry descriptor, `oras
+  resolve` and `Docker-Content-Digest` equal `writeOciLayout`'s OCI manifest
+  digest, the stored manifest bytes are identical, the config blob is the static
+  canonical manifest, the shared blob answers `HEAD` once by digest, and the
+  pushed manifest is **not** readable anonymously (`401`);
+- pulls by **tag** and by **immutable digest** into fresh layouts both equal the
+  anchor's canonical bytes, artifact digest, ordered entries, per-path full
+  media types, blob digest set and blob bytes; the OCI manifest digest is
+  preserved; four descriptors still share one digest with distinct path
+  annotations and per-entry descriptor media types; the returned `blobs` map
+  has one entry per distinct digest;
+- `import-oci` through the real CLI stores one blob per distinct digest and the
+  release carries the anchor's artifact digest and manifest.
+
+No static OCI manifest digest exists for the anchor: that digest is compared
+across the writer, the registry and both pulls, not against a published value.
+
+**Negative controls** — each with a **fresh** client directory and
+registry-config file (no cached credential or trust can carry over), run after
+the artifact is confirmed present through the valid configuration, and each
+required to fail **without** `--insecure`, plain HTTP or disabled verification:
+
+| Configuration | Pull of the protected artifact | Push to a new repository | Registry session log |
+| --- | --- | --- | --- |
+| no credentials (`{"auths":{}}`) | denied (`basic credential not found`) | denied | every request for those repositories answered **401** |
+| wrong password | denied (`response status code 401`) | denied | every request answered **401** |
+| valid credentials, test CA **not** trusted | denied (`tls: failed to verify certificate: x509: certificate signed by unknown authority`) | denied | **no request received** — the TLS handshake fails before HTTP |
+
+The denied pulls leave no manifest and nothing `readOciLayout` accepts; the
+denied pushes create nothing (the new repository does not resolve even with
+valid credentials); ORAS output never contains the password or the encoded
+credential. Afterwards the valid configuration pulls the artifact by digest
+again and it still equals the anchor; the registry is stopped, its pid is
+proven gone, and keys, certificate, htpasswd file, storage and log are removed
+— on failure as well, through cleanup registered when they were created.
+
+**Boundary of this claim.** It shows that ORAS-mediated transport through an
+authenticated, certificate-verified HTTPS registry preserves OWA identity and
+bytes with ORAS v1.3.4 and Zot v2.1.21, and that the three misconfigurations
+fail where they should. It does **not** claim tenant isolation, coverage of
+Zot's authorization-policy semantics beyond "this user may, nobody else may",
+token/bearer exchange, credential helpers, mutual TLS, compatibility with other
+registries or providers, or production readiness of any deployment.
+
 ## Running it locally
 
 ```sh
@@ -315,20 +407,26 @@ next to a unique `/index.html`:
 node .github/scripts/oci-tools.mjs /tmp/oci-tools      # writes /tmp/oci-tools/oras/oras and /tmp/oci-tools/zot-linux-amd64
 # 2. a disposable loopback Zot (ephemeral port, plain HTTP, storage under the state dir)
 node .github/scripts/zot.mjs start /tmp/oci-tools/zot-linux-amd64 /tmp/zot-state
-# 3. point the suite at them
+# 3. point the suites at them
 export OWA_TEST_OCI_REGISTRY=http://127.0.0.1:<port printed above>
 export OWA_TEST_ORAS_BIN=/tmp/oci-tools/oras/oras
-npm run test:oci                                       # skips cleanly if either variable is unset
+export OWA_TEST_ZOT_BIN=/tmp/oci-tools/zot-linux-amd64   # the authenticated HTTPS suite starts its own Zot from it
+npm run test:oci                                       # skips cleanly when variables are unset
 OWA_TEST_OCI_REQUIRED=1 npm run test:oci               # CI mode: any missing prerequisite FAILS
 # 4. clean up
 node .github/scripts/zot.mjs stop /tmp/zot-state
 ```
 
 `OWA_TEST_OCI_REGISTRY` must be a bare `http://` loopback origin;
-`OWA_TEST_ORAS_BIN` an absolute path to an executable. With
-`OWA_TEST_OCI_REQUIRED=1` a missing ORAS binary, missing or unready registry, or
-any failing ORAS command fails the run instead of skipping — the offline harness
-checks (`npm run test:integration:harness`) pin that behaviour.
+`OWA_TEST_ORAS_BIN` and `OWA_TEST_ZOT_BIN` absolute paths to executables. The
+authenticated HTTPS suite additionally needs `openssl` and `perl` on `PATH` (test
+CA; bcrypt htpasswd entry through the platform `crypt(3)`) and therefore runs
+on Linux — the OCI lane's platform. With `OWA_TEST_OCI_REQUIRED=1` a missing
+binary or tool, a missing or unready registry, or any failing ORAS command fails
+the run instead of skipping — the offline harness checks
+(`npm run test:integration:harness`) pin that behaviour, including the
+authenticated registry's setup, readiness, early-exit and stop/reap/cleanup
+paths against a stub.
 
 ## Scope and limitations
 
@@ -336,11 +434,17 @@ checks (`npm run test:integration:harness`) pin that behaviour.
   Other registries are not claimed; the representation follows the OCI image
   spec, so a spec-conformant registry should accept it, but that is inference
   until tested.
-- The test registry is **loopback, plain HTTP, unauthenticated, disposable**.
-  This proves content-addressed transport interoperability — not TLS, registry
-  authentication or authorization, credential storage, token exchange,
-  multi-tenant isolation, remote availability, or resistance to a malicious
-  registry. OWA's reader digest checks are the local integrity boundary.
+- The primary test registry is **loopback, plain HTTP, unauthenticated,
+  disposable**; it proves content-addressed transport interoperability. The
+  **authenticated HTTPS** suite (issue #46) adds, for the same pinned tools:
+  certificate verification against a temporary test CA, htpasswd basic
+  authentication required for push and pull, and the three failure boundaries
+  (no credentials, wrong credentials, untrusted CA). Still **not** shown: token
+  or bearer exchange, credential helpers, mutual TLS, authorization semantics
+  beyond one allowed user, multi-tenant isolation, remote availability,
+  compatibility with other registries or providers, or resistance to a
+  malicious registry. OWA's reader digest checks are the local integrity
+  boundary.
 - **Signatures, provenance, cosign/Notary, referrers and SBOMs** are outside the
   OWA transport contract.
 - **Duplicate content round-trips (issue #9, fixed):** distinct paths with

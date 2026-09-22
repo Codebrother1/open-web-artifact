@@ -1,7 +1,9 @@
-// Test-only environment contract for the live OCI registry suite (issue #23).
+// Test-only environment contract for the live OCI registry suites (issues #23, #9, #46).
 //
 //   OWA_TEST_OCI_REGISTRY   plain-HTTP loopback registry origin, e.g. http://127.0.0.1:5000
 //   OWA_TEST_ORAS_BIN       absolute path to the pinned ORAS CLI executable
+//   OWA_TEST_ZOT_BIN        absolute path to the pinned Zot executable (the authenticated
+//                           HTTPS proof starts its own disposable registry from it)
 //   OWA_TEST_OCI_REQUIRED   "1" → every missing prerequisite is a FAILURE, never a skip
 //
 // Unconfigured local runs skip cleanly. CI sets OWA_TEST_OCI_REQUIRED=1 so a
@@ -12,6 +14,7 @@
 // readiness probe) are different in kind.
 import { access, constants } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
+import { whichOnPath } from './tls-registry.js';
 
 export const REQUIRED_ENV = 'OWA_TEST_OCI_REQUIRED';
 
@@ -53,4 +56,36 @@ export async function ociEnvironment(env = process.env) {
     return required ? { fail: `${REQUIRED_ENV}=1 but ${message}` } : { skip: message };
   }
   return { required, registry: registry.origin, registryHost: registry.host, oras };
+}
+
+/**
+ * Prerequisites of the authenticated HTTPS proof (issue #46), which starts its
+ * OWN disposable Zot: the pinned ORAS and Zot executables, plus `openssl` (test
+ * CA and server certificate) and `perl` (bcrypt htpasswd entry through the
+ * platform crypt(3)) on PATH. Same contract: skip when unconfigured, FAIL when
+ * required. Messages carry variable/tool NAMES and safe facts only.
+ */
+export async function tlsEnvironment(env = process.env) {
+  const required = isRequired(env);
+  const missing = ['OWA_TEST_ORAS_BIN', 'OWA_TEST_ZOT_BIN'].filter(name => !env[name]);
+  if (missing.length) {
+    const message = `set ${missing.join(', ')}`;
+    return required ? { fail: `${REQUIRED_ENV}=1 but ${message}: the authenticated HTTPS OCI suite must run, not skip` } : { skip: message };
+  }
+  const problems = [];
+  for (const name of ['OWA_TEST_ORAS_BIN', 'OWA_TEST_ZOT_BIN']) {
+    const path = env[name];
+    if (!isAbsolute(path)) { problems.push(`${name} must be an absolute path`); continue; }
+    try { await access(path, constants.X_OK); } catch { problems.push(`${name} is not an executable file`); }
+  }
+  const tools = {};
+  for (const tool of ['openssl', 'perl']) {
+    tools[tool] = await whichOnPath(tool, env);
+    if (!tools[tool]) problems.push(`${tool} must be on PATH (${tool === 'openssl' ? 'test CA and server certificate' : 'bcrypt htpasswd entry through crypt(3)'})`);
+  }
+  if (problems.length) {
+    const message = problems.join('; ');
+    return required ? { fail: `${REQUIRED_ENV}=1 but ${message}` } : { skip: message };
+  }
+  return { required, oras: env.OWA_TEST_ORAS_BIN, zot: env.OWA_TEST_ZOT_BIN, openssl: tools.openssl, perl: tools.perl };
 }

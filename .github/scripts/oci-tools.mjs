@@ -87,7 +87,8 @@ async function main() {
   console.log(`oras: ${orasLine}`);
   console.log(`zot: commit ${zotCommit} (${zotBin})`);
   if (process.env.GITHUB_ENV) {
-    await writeFile(process.env.GITHUB_ENV, `OWA_TEST_ORAS_BIN=${orasBin}\nOWA_CI_ZOT_BIN=${zotBin}\n`, { flag: 'a' });
+    // OWA_TEST_ZOT_BIN lets the authenticated HTTPS proof start its own disposable Zot (issue #46).
+    await writeFile(process.env.GITHUB_ENV, `OWA_TEST_ORAS_BIN=${orasBin}\nOWA_CI_ZOT_BIN=${zotBin}\nOWA_TEST_ZOT_BIN=${zotBin}\n`, { flag: 'a' });
   }
   if (process.env.GITHUB_ACTIONS === 'true') {
     const escape = value => String(value).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
