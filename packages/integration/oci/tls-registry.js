@@ -32,9 +32,13 @@
 //     directory, aborts the in-flight probe and clears every timer, and then
 //     rejects with the ORIGINAL error (cleanup problems, if any, are appended to
 //     its message and recorded on `error.cleanup`). Readiness is an
-//     elapsed-time deadline (60 s by default): every HTTPS probe and every
-//     retry delay is bounded by the remaining budget, so a registry that
-//     accepts connections but never answers cannot outlive the deadline.
+//     elapsed-time deadline (60 s by default): every HTTPS probe carries an
+//     independent elapsed-time timer bounded by the remaining budget that
+//     destroys the request regardless of incoming bytes, every retry delay is
+//     bounded by the remaining budget, and a completed response is re-checked
+//     against the deadline — so a registry that never answers, one that keeps
+//     trickling response bytes, or one whose answer completes late cannot be
+//     accepted as ready.
 //
 // Client isolation is the caller's job (an ORAS `--registry-config` file inside
 // the test's own temporary directory, a temporary HOME/DOCKER_CONFIG); this
@@ -226,22 +230,46 @@ export const EMPTY_REGISTRY_CONFIG = JSON.stringify({ auths: {} });
 
 /**
  * Test-only HTTPS request verified against `ca` (never the system store, never
- * insecure); supplemental inspection, not the transport. `timeout` destroys the
- * request (socket included) when it elapses; an aborted `signal` destroys it at
- * once — either way nothing pending outlives the caller's decision.
+ * insecure); supplemental inspection, not the transport. Three independent ways
+ * to end it early, none of which leaves anything pending:
+ *   - `timeout`: an INACTIVITY bound (`req.setTimeout`) — destroys the request
+ *     when the socket has been idle that long;
+ *   - `deadlineMs`: an ELAPSED-TIME bound — a timer that destroys the request
+ *     when that much time has passed since it was sent, regardless of incoming
+ *     traffic, so a response that keeps sending bytes cannot outlive it;
+ *   - `signal`: an aborted AbortSignal destroys it at once.
+ * The deadline timer is cleared on every settle path (response complete,
+ * request or response error, abort, premature close).
  */
-export function httpsGet(origin, path, { method = 'GET', headers = {}, ca, timeout = 15_000, signal } = {}) {
+export function httpsGet(origin, path, { method = 'GET', headers = {}, ca, timeout = 15_000, deadlineMs, signal } = {}) {
   const url = new URL(path, origin);
+  const label = `${method} ${url.pathname}`;
   return new Promise((resolve, reject) => {
-    if (signal?.aborted) { reject(new Error(`${method} ${url.pathname} aborted before it was sent`)); return; }
+    if (signal?.aborted) { reject(new Error(`${label} aborted before it was sent`)); return; }
+    let settled = false, deadlineTimer = null, deadlineError = null;
+    const settle = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadlineTimer);
+      fn(fn === reject && deadlineError ? deadlineError : value);
+    };
     const req = httpsRequest({ hostname: url.hostname, port: url.port, path: `${url.pathname}${url.search}`, method, headers, ca, agent: false, signal }, res => {
       const chunks = [];
       res.on('data', chunk => chunks.push(chunk));
-      res.on('error', reject);
-      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
+      res.on('error', error => settle(reject, error));
+      res.on('aborted', () => settle(reject, new Error(`${label} response aborted before it completed`)));
+      res.on('close', () => { if (!settled) settle(reject, new Error(`${label} response closed before it completed`)); });
+      res.on('end', () => settle(resolve, { status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
     });
-    req.setTimeout(timeout, () => req.destroy(new Error(`${method} ${url.pathname} timed out after ${timeout} ms`)));
-    req.on('error', reject);
+    req.setTimeout(timeout, () => req.destroy(new Error(`${label} idle for ${timeout} ms`)));
+    if (deadlineMs !== undefined) {
+      deadlineTimer = setTimeout(() => {
+        deadlineError = new Error(`${label} exceeded its ${deadlineMs} ms elapsed deadline while the response was still arriving`);
+        req.destroy(deadlineError);
+      }, deadlineMs);
+    }
+    req.on('error', error => settle(reject, error));
+    req.on('close', () => { if (!settled) settle(reject, new Error(`${label} closed before a complete response`)); });
     req.end();
   });
 }
@@ -294,10 +322,14 @@ export const STOP_GRACE_MS = 10_000;
  *   - the registry answers without requiring authentication, or with an
  *     unexpected challenge;
  *   - the elapsed-time deadline `readinessMs` (default 60 s) expires. Every
- *     probe is bounded by `min(probeTimeoutMs, remaining budget)` and every
- *     retry delay by the remaining budget, so a registry that accepts
- *     connections but never answers is cut off at the deadline, not at some
- *     later probe timeout.
+ *     probe carries an independent ELAPSED-TIME timer of
+ *     `min(probeTimeoutMs, remaining budget)` that destroys the request
+ *     regardless of incoming traffic (plus an inactivity bound of the same
+ *     length), every retry delay is bounded by the remaining budget, and a
+ *     response that does complete is re-checked against the deadline before it
+ *     counts as ready — so neither a registry that accepts connections and
+ *     never answers, nor one that keeps trickling response bytes, nor one whose
+ *     answer completes after the budget can be accepted.
  *
  * Cleanup on rejection: the in-flight probe is aborted, pending timers are
  * cleared, the child (if any) is SIGTERMed then SIGKILLed after `graceMs` and
@@ -305,13 +337,18 @@ export const STOP_GRACE_MS = 10_000;
  * certificate, htpasswd file, storage, log) is removed. The ORIGINAL error is
  * rejected with; cleanup problems are appended to its message and recorded on
  * `error.cleanup` — never swallowed, never allowed to mask the cause.
+ * `readinessMs` is the READINESS budget; `graceMs` is the separate SIGTERM →
+ * SIGKILL grace used when stopping. `clock(phase)` (default: `Date.now`, phase
+ * ignored) exists only so harness tests can prove the late-response check; it
+ * is read with phase `start`, `budget` (before each probe and retry delay),
+ * `response` (the recheck after a completed response) and `ready`.
  */
-export async function startTlsRegistry({ zot, openssl, perl, stateDir, username = TLS_REGISTRY_USER, password, readinessMs = READINESS_MS, probeTimeoutMs = PROBE_TIMEOUT_MS, graceMs = STOP_GRACE_MS }) {
+export async function startTlsRegistry({ zot, openssl, perl, stateDir, username = TLS_REGISTRY_USER, password, readinessMs = READINESS_MS, probeTimeoutMs = PROBE_TIMEOUT_MS, graceMs = STOP_GRACE_MS, clock = () => Date.now() }) {
   assert.ok(password, 'a synthetic password is required');
   assert.ok(Number.isFinite(readinessMs) && readinessMs > 0, 'readinessMs must be a positive number of milliseconds');
   assert.ok(Number.isFinite(probeTimeoutMs) && probeTimeoutMs > 0, 'probeTimeoutMs must be a positive number of milliseconds');
   const expectedChallenge = `Basic realm="${TLS_REGISTRY_REALM}"`;
-  const started = Date.now();
+  const started = clock('start');
   const deadline = started + readinessMs;
 
   // Lifecycle state shared by the failure path and the returned handle. `exit`
@@ -388,15 +425,17 @@ export async function startTlsRegistry({ zot, openssl, perl, stateDir, username 
     let lastProbe = 'no probe sent yet';
     for (;;) {
       if (lifecycle.exited) throw exitedEarly();
-      const remaining = deadline - Date.now();
+      const remaining = deadline - clock('budget');
       if (remaining <= 0) throw new Error(`zot did not answer GET /v2/ with the expected 401 challenge over TLS within ${readinessMs} ms (last probe: ${lastProbe})`);
-      // One probe, bounded by the remaining budget and aborted at once if the child exits meanwhile.
+      // One probe, bounded in ELAPSED time by the remaining budget (a response that keeps
+      // sending bytes is destroyed all the same) and aborted at once if the child exits.
+      const budget = Math.min(probeTimeoutMs, remaining);
       const probe = new AbortController();
       lifecycle.probe = probe;
       lifecycle.exit.then(() => { if (lifecycle.probe === probe) probe.abort(); });
       let res = null;
       try {
-        res = await httpsGet(origin, '/v2/', { ca: ca.pem, timeout: Math.min(probeTimeoutMs, remaining), signal: probe.signal });
+        res = await httpsGet(origin, '/v2/', { ca: ca.pem, timeout: budget, deadlineMs: budget, signal: probe.signal });
       } catch (error) {
         lastProbe = lifecycle.exited ? 'aborted because the process exited' : (error.code ?? error.message);
       } finally {
@@ -404,13 +443,16 @@ export async function startTlsRegistry({ zot, openssl, perl, stateDir, username 
       }
       if (lifecycle.exited) throw exitedEarly();
       if (res) {
+        // A completed response counts only if it completed WITHIN the budget.
+        const now = clock('response');
+        if (now > deadline) throw new Error(`zot answered GET /v2/ only after the ${readinessMs} ms readiness deadline had passed (${now - started} ms elapsed): a response completed after the budget is not accepted as readiness`);
         if (res.status !== 401) throw new Error(`GET /v2/ answered ${res.status} without authentication: the registry does not require it`);
         const challenge = res.headers['www-authenticate'] ?? '';
         if (challenge !== expectedChallenge) throw new Error(`GET /v2/ answered 401 with an unexpected authentication challenge ${JSON.stringify(challenge)}; expected ${JSON.stringify(expectedChallenge)}`);
-        // Ready: up, over verified TLS, requiring exactly the configured authentication.
+        // Ready: up, over verified TLS, requiring exactly the configured authentication, within the budget.
         return {
           origin, host: `${REGISTRY_HOST}:${port}`, port, pid: child.pid, username, ca, tls, configPath, logPath: config.log.output, stateDir,
-          readyAfterMs: Date.now() - started, challenge, readinessMs,
+          readyAfterMs: clock('ready') - started, challenge, readinessMs,
           exited: () => lifecycle.exited,
           requests: () => accessLog(config.log.output),
           /** SIGTERM, wait up to `graceMs`, SIGKILL if needed; prove the pid is gone; remove keys, certificate, htpasswd, storage and log. */
@@ -422,7 +464,7 @@ export async function startTlsRegistry({ zot, openssl, perl, stateDir, username 
         };
       }
       // Retry after a delay bounded by the remaining budget; wake early if the child exits.
-      const wait = Math.min(RETRY_DELAY_MS, deadline - Date.now());
+      const wait = Math.min(RETRY_DELAY_MS, deadline - clock('budget'));
       if (wait > 0) {
         const delay = cancellableDelay(wait);
         lifecycle.exit.then(delay.cancel);

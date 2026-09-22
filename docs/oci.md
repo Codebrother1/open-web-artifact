@@ -342,9 +342,14 @@ binary, on 127.0.0.1 with an ephemeral port, temporary storage, and:
   over TLS verified against the test CA — a `200`, or a `401` carrying any other
   challenge, fails the start rather than being accepted;
 - a **readiness deadline measured in elapsed time** (60 s by default): every
-  HTTPS probe is bounded by the smaller of its own 2 s timeout and the
-  remaining budget, every retry delay by the remaining budget, so a registry
-  that accepts connections but never answers is cut off at the deadline itself;
+  HTTPS probe carries an independent elapsed-time timer — the smaller of its
+  own 2 s bound and the remaining budget — that destroys the request
+  regardless of incoming bytes (plus an inactivity timeout of the same
+  length), every retry delay is bounded by the remaining budget, and a
+  response that does complete is re-checked against the deadline before it
+  counts as ready. A registry that accepts connections and never answers, one
+  that keeps trickling response bytes, or one whose answer completes after the
+  budget is therefore cut off at the deadline itself;
 - **startup that cleans up its own failures.** From the moment the state
   directory exists — and from the moment the Zot child is spawned — every
   rejection of the start (setup failure, spawn failure reported through the
@@ -443,11 +448,12 @@ the run instead of skipping — the offline harness checks
 authenticated registry's setup, exact-challenge readiness and stop/reap/cleanup
 paths against a stub, and — each in a child test process under an external
 kill-and-reap deadline, so a regression cannot hang CI — its startup-failure
-ownership: an unexpected challenge, a registry that never answers (cut off at
-a short elapsed-time deadline despite a longer probe timeout), an early exit,
-a spawn failure and a setup failure after the state directory exists must all
-reject with the state directory already gone, the child reaped and no timer or
-socket left alive.
+ownership: an unexpected challenge, a registry that never answers, one that
+keeps sending response bytes past the budget (both cut off at a short
+elapsed-time deadline despite a longer probe bound), a response that completes
+only after the budget, an early exit, a spawn failure and a setup failure after
+the state directory exists must all reject with the state directory already
+gone, the child reaped and no timer or socket left alive.
 
 ## Scope and limitations
 

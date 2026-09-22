@@ -89,8 +89,9 @@ digest algorithm); no package version, tag or release.
   manifest digest survive, while missing credentials, wrong credentials and an
   untrusted CA each fail at their boundary (401s in the registry log; no request
   at all for the untrusted CA). The disposable registry's start waits for the
-  exact challenge under a 60 s elapsed-time deadline that bounds every probe
-  and retry, and cleans up its own failures — child stopped and reaped, state
+  exact challenge under a 60 s elapsed-time deadline that destroys in-flight
+  probes regardless of incoming bytes and rejects a response completed after
+  the budget, and cleans up its own failures — child stopped and reaped, state
   removed, probe and timers cleared — before rejecting with the original error.
   Test-only code; ORAS remains the transport. No production code, dependency,
   tool version, corpus file, protocol identity or package version changed.

@@ -101,6 +101,9 @@ test('htpasswd entry: bcrypt through crypt(3), password on stdin, salted per cal
 //   STUB_ZOT_EXIT=<n>           exit with <n> before listening (early exit)
 //   STUB_ZOT_MODE=bad-challenge 401 with a nonempty but unexpected challenge
 //   STUB_ZOT_MODE=hang          accept the TLS connection and never answer
+//   STUB_ZOT_MODE=trickle       401 with the EXPECTED challenge, then a body byte
+//                               at once and every 100 ms; the response ends only
+//                               after STUB_ZOT_TRICKLE_END_MS (default 2500)
 //   STUB_ZOT_IGNORE_SIGTERM=1   ignore SIGTERM (stop() must escalate to SIGKILL)
 const STUB_ZOT = `#!/usr/bin/env node
 const fs = require('node:fs'); const https = require('node:https');
@@ -111,7 +114,11 @@ const server = https.createServer({ cert: fs.readFileSync(cfg.http.tls.cert), ke
   if (mode === 'hang') return; // connection accepted, request read, response never written
   fs.appendFileSync(cfg.log.output, JSON.stringify({ level: 'info', message: 'HTTP API', method: req.method, path: req.url, statusCode: 401 }) + '\\n');
   const challenge = mode === 'bad-challenge' ? 'Bearer realm="https://tokens.invalid/auth",service="not-this-registry"' : 'Basic realm="' + cfg.http.realm + '"';
-  res.writeHead(401, { 'www-authenticate': challenge }); res.end();
+  res.writeHead(401, { 'www-authenticate': challenge });
+  if (mode !== 'trickle') { res.end(); return; }
+  res.write('.'); // headers and a first byte at once, then a byte every 100 ms: never idle, never complete until END_MS
+  const tick = setInterval(() => res.write('.'), 100);
+  setTimeout(() => { clearInterval(tick); res.end(); }, Number(process.env.STUB_ZOT_TRICKLE_END_MS || 2500));
 });
 server.listen(Number(cfg.http.port), cfg.http.address);
 process.on('SIGTERM', () => { if (process.env.STUB_ZOT_IGNORE_SIGTERM) return; server.close(); process.exit(0); });
@@ -166,22 +173,28 @@ const DRIVER = `import { access } from 'node:fs/promises';
 import { startTlsRegistry, syntheticPassword } from ${JSON.stringify(TLS_REGISTRY_URL)};
 const scenario = JSON.parse(process.argv[1]);
 const started = Date.now();
+let clockCalls = 0;
+// Optional skewed clock: real time for every read except those with the named phase, which read
+// real time + skewMs — so a probe that completed promptly is SEEN, at the recheck, as having
+// completed after the budget, however many connection-refused retries preceded it.
+const clock = scenario.skewClock ? phase => { clockCalls++; return Date.now() + (phase === scenario.skewClock.phase ? scenario.skewClock.skewMs : 0); } : undefined;
 let outcome;
 try {
-  const registry = await startTlsRegistry({ ...scenario.options, password: syntheticPassword() });
-  outcome = { rejected: false, origin: registry.origin };
+  const registry = await startTlsRegistry({ ...scenario.options, password: syntheticPassword(), ...(clock ? { clock } : {}) });
+  outcome = { rejected: false, origin: registry.origin, readyAfterMs: registry.readyAfterMs, elapsedMs: Date.now() - started };
   await registry.stop({ graceMs: 1000 });
 } catch (error) {
   let stateExists = true;
   try { await access(scenario.options.stateDir); } catch { stateExists = false; }
   outcome = { rejected: true, message: error.message, cleanup: error.cleanup ?? null, stateExists, elapsedMs: Date.now() - started };
 }
+outcome.clockCalls = clockCalls;
 outcome.resources = process.getActiveResourcesInfo().filter(r => r === 'Timeout' || /TCP|TLS/.test(r));
 process.stdout.write(JSON.stringify(outcome));`;
 
-async function failedStart(t, label, options, env, { deadlineMs = 30_000 } = {}) {
+async function failedStart(t, label, options, env, { deadlineMs = 30_000, skewClock } = {}) {
   const started = Date.now();
-  const result = await runBounded(process.execPath, ['--input-type=module', '-e', DRIVER, JSON.stringify({ options })], { env: { ...process.env, ...env }, timeout: deadlineMs });
+  const result = await runBounded(process.execPath, ['--input-type=module', '-e', DRIVER, JSON.stringify({ options, skewClock })], { env: { ...process.env, ...env }, timeout: deadlineMs });
   const wall = Date.now() - started;
   assert.equal(result.timedOut, false, `${label}: the driver did not exit within ${deadlineMs} ms — something kept it alive (killed ${result.signal}, reaped=${result.gone}). stderr: ${result.stderr.slice(-400)}`);
   assert.equal(result.code, 0, `${label}: the driver exited ${result.code} — an uncaught error escaped: ${result.stderr.slice(-600)}`);
@@ -213,11 +226,42 @@ test('startup failure: a registry that accepts connections but never answers is 
   const zot = await stubZot(dir, 'zot-hang');
   const readinessMs = 1_500;
   const outcome = await failedStart(t, 'never answers', { zot, openssl, perl, stateDir: join(dir, 'state'), readinessMs, probeTimeoutMs: 20_000 }, { STUB_ZOT_MODE: 'hang' });
-  assert.match(outcome.message, new RegExp(`did not answer GET /v2/ with the expected 401 challenge over TLS within ${readinessMs} ms \\(last probe: GET /v2/ timed out after \\d+ ms\\)`));
+  // The silent probe is destroyed by whichever budget-bounded timer fires first: the elapsed-time
+  // deadline or the equal-length inactivity timeout. Either way it ended within the budget.
+  assert.match(outcome.message, new RegExp(`did not answer GET /v2/ with the expected 401 challenge over TLS within ${readinessMs} ms \\(last probe: GET /v2/ (exceeded its \\d+ ms elapsed deadline while the response was still arriving|idle for \\d+ ms)\\)`));
   assert.ok(outcome.elapsedMs >= readinessMs, `rejected no earlier than the deadline (${outcome.elapsedMs} ms)`);
   assert.ok(outcome.elapsedMs < readinessMs + 3_000, `rejected close to the deadline, not at the 20 s probe timeout (${outcome.elapsedMs} ms)`);
-  assert.equal(outcome.cleanup.probeAborted, false, 'the deadline-bounded probe had already been destroyed by its own timeout');
+  assert.equal(outcome.cleanup.probeAborted, false, 'the deadline-bounded probe had already been destroyed by its own timer');
   assert.equal(outcome.cleanup.code, 0, 'the hanging stub was stopped and exited 0');
+});
+
+test('startup failure: a response that keeps sending bytes cannot outlive the elapsed-time deadline — the in-flight request is destroyed at the budget, not when the socket goes idle', LINUX_TOOLS, async t => {
+  // Maintainer reproduction: expected 401 challenge, a body byte at once and every 100 ms, response
+  // ends only after 2500 ms; readiness budget 1000 ms, probe bound 2000 ms. Before the fix this
+  // RESOLVED after ~2.8 s because req.setTimeout() measures inactivity, and the late, complete
+  // response was accepted as readiness.
+  const dir = await scratch(t);
+  const zot = await stubZot(dir, 'zot-trickle');
+  const readinessMs = 1_000;
+  const outcome = await failedStart(t, 'trickling response', { zot, openssl, perl, stateDir: join(dir, 'state'), readinessMs, probeTimeoutMs: 2_000 }, { STUB_ZOT_MODE: 'trickle', STUB_ZOT_TRICKLE_END_MS: '2500' });
+  assert.match(outcome.message, new RegExp(`did not answer GET /v2/ with the expected 401 challenge over TLS within ${readinessMs} ms \\(last probe: GET /v2/ exceeded its \\d+ ms elapsed deadline while the response was still arriving\\)`),
+    'the probe was destroyed by its elapsed-time deadline while bytes were still arriving');
+  assert.ok(outcome.elapsedMs >= readinessMs, `rejected no earlier than the deadline (${outcome.elapsedMs} ms)`);
+  assert.ok(outcome.elapsedMs < 2_000, `rejected near the 1000 ms deadline, before the 2000 ms probe bound and long before the response would have ended at 2500 ms (${outcome.elapsedMs} ms)`);
+  assert.equal(outcome.cleanup.code, 0, 'the trickling stub was stopped and exited 0');
+});
+
+test('startup failure: a response that completes only after the readiness budget is not accepted, even though it arrived complete and well-formed', LINUX_TOOLS, async t => {
+  // The stub answers the expected 401 promptly; a skewed clock makes ONLY the recheck after the completed
+  // response (phase 'response') see the deadline as already passed (+10 s), while start, budget and retry
+  // reads see real time. Without the recheck this would resolve with a well-formed, complete answer.
+  const dir = await scratch(t);
+  const zot = await stubZot(dir, 'zot-late-accept');
+  const outcome = await failedStart(t, 'response completed after the budget', { zot, openssl, perl, stateDir: join(dir, 'state'), readinessMs: 5_000 }, {}, { skewClock: { phase: 'response', skewMs: 10_000 } });
+  assert.match(outcome.message, /^zot answered GET \/v2\/ only after the 5000 ms readiness deadline had passed \(\d+ ms elapsed\): a response completed after the budget is not accepted as readiness/);
+  assert.ok(outcome.clockCalls >= 3, `the recheck read the clock (${outcome.clockCalls} reads)`);
+  assert.equal(outcome.cleanup.code, 0, 'the stub was stopped and exited 0');
+  assert.ok(outcome.elapsedMs < 5_000, 'rejected immediately on the recheck, not at the deadline');
 });
 
 test('startup failure: a zot that exits before becoming ready is rejected promptly with its exit code and leaves no state', LINUX_TOOLS, async t => {

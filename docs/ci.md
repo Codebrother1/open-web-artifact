@@ -221,8 +221,9 @@ see [oci.md](oci.md) for the representation, commands and claims.
   one synthetic user whose random password exists only for that run inside the
   test's temporary directory (bcrypt entry via the runner's `perl` and
   `crypt(3)`). Readiness is the exact `401 Basic` challenge over verified TLS
-  under a 60 s elapsed-time deadline that bounds every probe and retry; a start
-  that fails for any reason stops and reaps its own child and removes keys,
+  under a 60 s elapsed-time deadline that destroys any probe still in flight —
+  even one still receiving bytes — and rejects a response that completes after
+  the budget; a start that fails for any reason stops and reaps its own child and removes keys,
   certificate, htpasswd file, storage and log before rejecting, and the test
   does the same after a successful start, on failure too.
 - **Suite**: `OWA_TEST_OCI_REQUIRED=1 npm run test:oci` — with the required flag,
