@@ -4,9 +4,9 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { request } from 'node:http';
 import { createServer } from 'node:net';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createToken } from '../../server/src/auth.js';
 import { SHARED_ORIGIN_WARNING, STARTUP_ABORTED } from '../../server/src/index.js';
@@ -44,6 +44,46 @@ function bounded(promise, message) {
   ]);
 }
 
+/** The child's lifecycle state for a failure message — never its output. */
+function describeChild(state) {
+  const { exitCode, signalCode } = state.child;
+  return exitCode === null && signalCode === null ? 'child still running' : `child exited (code ${exitCode}, signal ${signalCode})`;
+}
+
+/**
+ * Resolve with `ready(state.stdout)`'s value as soon as it is not undefined,
+ * re-checking on every stdout chunk; reject if the child exits first, or when
+ * `waitMs` elapses. Every settle path removes the stdout listener and clears
+ * the timer, so a wait that fails leaves nothing behind that could keep the
+ * test process alive. (A self-rescheduling poll raced against a deadline did
+ * not stop when the deadline won, and its live timer kept `npm run test:auth`
+ * from ever exiting after test 4 failed — the job then ran into the
+ * workflow's 15-minute limit.)
+ */
+function awaitReadiness(state, ready, message, waitMs = WAIT_MS) {
+  return new Promise((resolve, reject) => {
+    let timer, settled = false;
+    const settle = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      state.child.stdout.off('data', check);
+      fn(value);
+    };
+    function check() {
+      const value = ready(state.stdout);
+      if (value !== undefined) settle(resolve, value);
+    }
+    timer = setTimeout(() => settle(reject, new Error(`${message} (${describeChild(state)})`)), waitMs);
+    state.child.stdout.on('data', check);
+    state.exit.then(({ code, signal }) => settle(reject, new Error(`${message}: child exited before readiness (code ${code}, signal ${signal})`)));
+    check();
+  });
+}
+
+/** Live timers in this process; a failed readiness wait must not add one. */
+const activeTimers = () => process.getActiveResourcesInfo().filter(resource => resource === 'Timeout').length;
+
 /** Bind a port, then release it, returning a port number that was free just now. */
 async function borrowPort() {
   const probe = createServer();
@@ -77,9 +117,9 @@ async function portIsFree(port) {
   return event === 'listening';
 }
 
-function launch(t, env, args = []) {
+function launch(t, env, args = [], entry = SERVER) {
   const state = { stdout: '', stderr: '', overflow: false };
-  const child = spawn(process.execPath, [SERVER, ...args], {
+  const child = spawn(process.execPath, [entry, ...args], {
     cwd: resolve(tmpdir()), env, stdio: ['ignore', 'pipe', 'pipe']
   });
   state.child = child;
@@ -208,13 +248,9 @@ test('4. successful separated startup binds both listeners with the right route 
     OWA_CONTENT_PUBLIC_PORT: String(contentPort)
   }));
 
-  await bounded(new Promise(done => {
-    const check = () => {
-      if (/artifactd control .* listening on port \d+\nartifactd content .* listening on port \d+\n/.test(state.stdout)) return done();
-      setTimeout(check, 50);
-    };
-    check();
-  }), 'both readiness lines timed out');
+  await awaitReadiness(state,
+    stdout => (/artifactd control .* listening on port \d+\nartifactd content .* listening on port \d+\n/.test(stdout) ? true : undefined),
+    'both readiness lines timed out');
 
   // Readiness output is deterministic: control first, content second, one line each.
   assert.equal(state.stdout,
@@ -262,14 +298,10 @@ test('6. legacy shared-origin startup keeps its exact readiness and warning cont
   const dataDir = await withDataDir(t);
   const state = launch(t, baseEnv(dataDir, { PORT: '0', HOST: '127.0.0.1' }));
 
-  const ready = await bounded(new Promise(done => {
-    const check = () => {
-      const match = /^artifactd \(filesystem, auth required\) listening on port (\d+)\n/m.exec(state.stdout);
-      if (match) return done(Number(match[1]));
-      setTimeout(check, 50);
-    };
-    check();
-  }), 'legacy readiness timed out');
+  const ready = await awaitReadiness(state, stdout => {
+    const match = /^artifactd \(filesystem, auth required\) listening on port (\d+)\n/m.exec(stdout);
+    return match ? Number(match[1]) : undefined;
+  }, 'legacy readiness timed out');
 
   assert.equal(state.stdout, `artifactd (filesystem, auth required) listening on port ${ready}\n`,
     'the pre-v0.4 readiness line is unchanged');
@@ -279,4 +311,67 @@ test('6. legacy shared-origin startup keeps its exact readiness and warning cont
   state.child.kill('SIGTERM');
   await bounded(state.exit, 'process did not exit after SIGTERM');
   assertSafeDiagnostics(state);
+});
+
+// ------------------------------------------------- harness regressions ---
+// A readiness wait that never succeeds must fail within its deadline and leave
+// no live timer or listener, so the test process can exit and the failure is
+// reported instead of the workflow's job timeout. The children here are stubs
+// written into the test's own temporary directory, launched through the same
+// `launch()` (and therefore the same kill-and-reap cleanup) as the real server.
+
+async function stubEntry(dataDir, name, source) {
+  const path = join(dirname(dataDir), name);
+  await writeFile(path, source);
+  return path;
+}
+
+test('7. a readiness wait that hits its deadline leaves no timer behind, and the never-ready child is killed and reaped', async t => {
+  const dataDir = await withDataDir(t);
+  const entry = await stubEntry(dataDir, 'never-ready.mjs', 'setInterval(() => {}, 1_000_000);\n'); // announces nothing, never exits by itself
+  const timersBefore = activeTimers();
+  const state = launch(t, baseEnv(dataDir), [], entry);
+  // Runs after launch()'s own cleanup (hooks run in registration order): the
+  // child must have been SIGKILLed and reaped, not left behind.
+  t.after(async () => {
+    const { code, signal } = await bounded(state.exit, 'never-ready child was not reaped');
+    assert.equal(code, null); assert.equal(signal, 'SIGKILL');
+    assert.throws(() => process.kill(state.child.pid, 0), { code: 'ESRCH' }, 'the child pid is gone');
+  });
+  const started = Date.now();
+  await assert.rejects(awaitReadiness(state, () => undefined, 'stub readiness timed out', 300),
+    { message: 'stub readiness timed out (child still running)' });
+  assert.ok(Date.now() - started < WAIT_MS, 'the wait fails at its own deadline, not at the suite deadline');
+  assert.equal(activeTimers(), timersBefore, 'the failed wait left no live timer to keep the process alive');
+  assert.equal(state.child.stdout.listenerCount('data'), 1, 'the failed wait removed its stdout listener (only the capture listener remains)');
+  assert.equal(state.child.exitCode, null, 'the child is still running here; cleanup must end it');
+});
+
+test('8. a readiness wait fails as soon as the child exits without announcing readiness, well before the deadline', async t => {
+  const dataDir = await withDataDir(t);
+  const entry = await stubEntry(dataDir, 'exit-early.mjs', 'process.exit(1);\n'); // e.g. a listener that failed to bind
+  const timersBefore = activeTimers();
+  const state = launch(t, baseEnv(dataDir), [], entry);
+  const started = Date.now();
+  await assert.rejects(awaitReadiness(state, () => undefined, 'stub readiness timed out'),
+    { message: 'stub readiness timed out: child exited before readiness (code 1, signal null)' });
+  assert.ok(Date.now() - started < WAIT_MS / 3, 'the exit is reported promptly instead of waiting out the deadline');
+  assert.equal(activeTimers(), timersBefore, 'no live timer remains');
+  assert.equal(state.child.stdout.listenerCount('data'), 1, 'the stdout listener was removed');
+  const { code, signal } = await bounded(state.exit, 'exited child was not reaped');
+  assert.equal(code, 1); assert.equal(signal, null);
+});
+
+test('9. a readiness wait that succeeds resolves with the parsed value and also leaves no timer behind', async t => {
+  const dataDir = await withDataDir(t);
+  const entry = await stubEntry(dataDir, 'ready.mjs', 'process.stdout.write("stub listening on port 4242\\n"); setInterval(() => {}, 1_000_000);\n');
+  const timersBefore = activeTimers();
+  const state = launch(t, baseEnv(dataDir), [], entry);
+  const port = await awaitReadiness(state, stdout => { const match = /^stub listening on port (\d+)\n/m.exec(stdout); return match ? Number(match[1]) : undefined; }, 'stub readiness timed out');
+  assert.equal(port, 4242);
+  assert.equal(activeTimers(), timersBefore, 'the successful wait cleared its timer');
+  assert.equal(state.child.stdout.listenerCount('data'), 1, 'the successful wait removed its stdout listener');
+  state.child.kill('SIGTERM');
+  const { signal } = await bounded(state.exit, 'stub did not exit after SIGTERM');
+  assert.equal(signal, 'SIGTERM');
 });

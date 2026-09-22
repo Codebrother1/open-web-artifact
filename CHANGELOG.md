@@ -77,6 +77,15 @@ digest algorithm); no package version, tag or release.
   artifact. The root/ancestor-link policy stays unresolved and no confinement
   or race resistance is claimed. No production code, corpus file, error
   category, protocol identity or package version changed.
+- fix a test-harness hang in `auth-startup-listeners.test.js` (issue #44):
+  the readiness wait for the spawned server polled with a self-rescheduling
+  timer that was never stopped when its deadline won, so a failed readiness
+  wait kept `npm run test:auth` alive until the workflow's 15-minute job
+  limit cancelled the lane. The wait is now event-driven, fails as soon as
+  the child exits without announcing readiness, and clears its timer and
+  listener on every path; regression tests pin the bounded failure, the
+  absence of leaked timers and the kill-and-reap of the child. Test code
+  only; no timeout, gate, production code, corpus file or version changed.
 
 ## 0.4.0 - 2026-09-21
 
