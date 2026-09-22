@@ -434,8 +434,9 @@ docs/
   mcp.md
   ci.md
   integration-tests.md
-  release.md                   maintainer release checklist and readiness table
-  release-notes-v0.4.0.md      release notes draft
+  release.md                   maintainer release process, v0.5.0 readiness review and the v0.4.0 release record
+  release-notes-v0.4.0.md      v0.4.0 release notes (released 2026-09-21)
+  release-notes-v0.5.0.md      v0.5.0 release notes — UNRELEASED draft
   conformance/                 portable corpus and cross-language guide
   independent-implementation.md  the Go conformance implementation: scope, independence rules, ambiguities
   test-vectors/

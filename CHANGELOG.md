@@ -95,6 +95,13 @@ digest algorithm); no package version, tag or release.
   removed, probe and timers cleared — before rejecting with the original error.
   Test-only code; ORAS remains the transport. No production code, dependency,
   tool version, corpus file, protocol identity or package version changed.
+- prepare the next software release (issue #48, documentation only): refresh
+  `docs/release.md` into a reusable process covering the 10 CI checks
+  (including Go conformance), the three live OCI tests, the authenticated HTTPS
+  coverage and its limits, and exact-commit post-merge verification before
+  tagging; record the v0.5.0 release-readiness review with its compatibility
+  notes and open maintainer decisions; add `docs/release-notes-v0.5.0.md` as an
+  UNRELEASED draft. No version bump, tag or release; the v0.4.0 record is kept.
 - fix a test-harness hang in `auth-startup-listeners.test.js` (issue #44):
   the readiness wait for the spawned server polled with a self-rescheduling
   timer that was never stopped when its deadline won, so a failed readiness
