@@ -156,6 +156,36 @@ decide whether to pin it. Items the specification has since pinned move to
    a strongly tested property rather than a demonstrated theorem.
 3. **Filesystem names that are not valid Unicode** are out of scope by the
    specification's own statement; the packer rejects them rather than guessing.
+4. **Pack-root and ancestor symbolic links** — noted during issue #40, which
+   deliberately excluded them, and *characterized* (not resolved) by issue
+   #42. [spec-v0.2.md](spec-v0.2.md#entry-types) governs entries discovered
+   beneath the directory being packed; it says nothing about the supplied root
+   itself or about links in its ancestor components, and this implementation
+   resolves the root with `filepath.Abs` and never inspects it with `os.Lstat`,
+   exactly as the reference does with `resolve()`.
+   `pack_root_symlink_unix_test.go` (compiled on Unix-like platforms only,
+   standard library only) records what that means today for the materialized
+   `pack-cross-language-anchor`: a directory link supplied as the root — with a
+   relative or an absolute target — and a link in an ancestor component with an
+   ordinary directory as the final component are all followed and pack to the
+   same canonical bytes, artifact digest, file order, blob digest set and blob
+   bytes as the direct path, still equal to the anchor's static expectations,
+   with no host path spelling in the artifact paths; through each of those
+   spellings a link found inside the tree (regular-file, dangling, directory and
+   external targets) still fails `OWA_SYMLINK`; a dangling root link fails with
+   the host `*fs.PathError` (`open`, `ENOENT`) and a root link to a regular file
+   with the host `*fs.PathError` (`open`, `ENOTDIR`) — no artifact and no
+   portable category. Every pack involving a link runs in a child process under
+   the external deadline of the non-regular-entry harness. The JavaScript
+   reference records the same observations in `pack-root-symlink.test.js` (host
+   `scandir` errors `ENOENT` and `ENOTDIR`); neither suite invokes the other,
+   and on this point the two implementations agree. **This is current
+   behaviour, not a guarantee.** The policy for root and ancestor links remains
+   open for the specification to decide; the tests establish no confinement (a
+   root alias may denote any directory the caller can read; the root is neither
+   canonicalized nor checked) and no resistance to concurrent filesystem
+   mutation; and Windows symbolic links, junctions and reparse points are not
+   characterized for this implementation, which has no Windows lane.
 
 ### Resolved
 

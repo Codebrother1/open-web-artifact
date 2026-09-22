@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"net"
 	"os"
 	"os/exec"
@@ -290,6 +291,8 @@ type childPack struct {
 	Category  string            `json:"category,omitempty"`
 	Known     bool              `json:"known,omitempty"`
 	Message   string            `json:"message,omitempty"`
+	HostOp    string            `json:"hostOp,omitempty"`    // *fs.PathError Op when the failure is a host filesystem error
+	HostErrno int               `json:"hostErrno,omitempty"` // its syscall.Errno, so a parent can characterize it without matching messages
 	Canonical string            `json:"canonical,omitempty"`
 	Digest    string            `json:"digest,omitempty"`
 	Paths     []string          `json:"paths,omitempty"`
@@ -404,6 +407,14 @@ func TestHelperProcessPackNonRegular(t *testing.T) {
 		if err != nil {
 			cat, known := CategoryOf(err)
 			res = childPack{Category: string(cat), Known: known, Message: err.Error()}
+			var pathErr *fs.PathError
+			if errors.As(err, &pathErr) {
+				res.HostOp = pathErr.Op
+			}
+			var errno syscall.Errno
+			if errors.As(err, &errno) {
+				res.HostErrno = int(errno)
+			}
 		} else if s, serr := snapshotOfPacked(packed); serr != nil {
 			res = childPack{Message: "canonicalize: " + serr.Error()}
 		} else {
