@@ -5,7 +5,7 @@
   "notes": [
     "Parse inputJson exactly, without trimming, BOM removal, URL handling, or manifest validation.",
     "A parser SyntaxError is mapped by the harness to OWA_INVALID_JSON. Successful parses compare static canonicalJson and digest.",
-    "Duplicate JSON object names and cross-runtime treatment of unpaired surrogates at parse time are not claimed to be universally portable."
+    "Duplicate decoded JSON object names at any depth reject as OWA_INVALID_JSON_VALUE, including overwritten invalid values; unpaired-surrogate parser limitations remain disclosed."
   ],
   "vectors": [
     {
@@ -152,6 +152,70 @@
       "expected": {
         "canonicalJson": "\"a/b\"",
         "digest": "sha256:f5effa31772a3689cb116700c569f4b72d765290968f099016a899ab6c1e4ee3"
+      }
+    },
+    {
+      "id": "parse-duplicate-same-name",
+      "description": "Reject repeated decoded JSON object member names before identity or manifest validation.",
+      "inputJson": "{\"a\":1,\"a\":2}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_JSON_VALUE"
+      }
+    },
+    {
+      "id": "parse-duplicate-same-value",
+      "description": "Reject repeated decoded JSON object member names before identity or manifest validation.",
+      "inputJson": "{\"a\":1,\"a\":1}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_JSON_VALUE"
+      }
+    },
+    {
+      "id": "parse-duplicate-escaped-name",
+      "description": "Reject repeated decoded JSON object member names before identity or manifest validation.",
+      "inputJson": "{\"a\":1,\"\\u0061\":2}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_JSON_VALUE"
+      }
+    },
+    {
+      "id": "parse-duplicate-nested-object",
+      "description": "Reject repeated decoded JSON object member names before identity or manifest validation.",
+      "inputJson": "{\"x\":{\"a\":1,\"a\":2}}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_JSON_VALUE"
+      }
+    },
+    {
+      "id": "parse-duplicate-inside-array",
+      "description": "Reject repeated decoded JSON object member names before identity or manifest validation.",
+      "inputJson": "[{\"a\":1,\"a\":2}]",
+      "expected": {
+        "errorCategory": "OWA_INVALID_JSON_VALUE"
+      }
+    },
+    {
+      "id": "parse-duplicate-overwritten-overflow",
+      "description": "Reject repeated decoded JSON object member names before identity or manifest validation.",
+      "inputJson": "{\"a\":1e400,\"a\":1}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_JSON_VALUE"
+      }
+    },
+    {
+      "id": "parse-duplicate-final-overflow",
+      "description": "Reject repeated decoded JSON object member names before identity or manifest validation.",
+      "inputJson": "{\"a\":1,\"a\":1e400}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_JSON_VALUE"
+      }
+    },
+    {
+      "id": "parse-duplicate-proto-name",
+      "description": "Reject repeated decoded JSON object member names before identity or manifest validation.",
+      "inputJson": "{\"__proto__\":1,\"__proto__\":2}",
+      "expected": {
+        "errorCategory": "OWA_INVALID_JSON_VALUE"
       }
     }
   ]

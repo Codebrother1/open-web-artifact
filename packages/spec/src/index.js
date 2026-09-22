@@ -12,6 +12,57 @@ export function sha256(data) {
   return `sha256:${createHash('sha256').update(data).digest('hex')}`;
 }
 
+/** Parse one JSON text, rejecting duplicate decoded member names at every depth. */
+export function parseJsonText(text) {
+  const value = JSON.parse(text); // Host parser owns syntax, escapes and binary64 parsing.
+  let i = 0;
+  const ws = () => { while (i < text.length && /[ \t\n\r]/.test(text[i])) i++; };
+  const string = () => {
+    const start = i++;
+    while (i < text.length) {
+      if (text[i] === '\\') { i += 2; continue; }
+      if (text[i++] === '"') break;
+    }
+    return JSON.parse(text.slice(start, i));
+  };
+  const scan = () => {
+    ws();
+    if (text[i] === '{') {
+      i++; ws();
+      const seen = new Set();
+      while (text[i] !== '}') {
+        const key = string();
+        if (seen.has(key)) throw owaError('OWA_INVALID_JSON_VALUE', 'Duplicate JSON member name');
+        seen.add(key);
+        ws(); i++; // ':' (already validated by JSON.parse)
+        scan(); ws();
+        if (text[i] !== ',') break;
+        i++; ws();
+      }
+      i++; // '}'
+    } else if (text[i] === '[') {
+      i++; ws();
+      while (text[i] !== ']') {
+        scan(); ws();
+        if (text[i] !== ',') break;
+        i++; ws();
+      }
+      i++; // ']'
+    } else if (text[i] === '"') {
+      string();
+    } else {
+      const start = i;
+      while (i < text.length && !/[\s,}\]]/.test(text[i])) i++;
+      if (text[start] !== 't' && text[start] !== 'f' && text[start] !== 'n'
+        && !Number.isFinite(Number(text.slice(start, i)))) {
+        throw owaError('OWA_INVALID_JSON_VALUE', 'JSON number overflows binary64');
+      }
+    }
+  };
+  scan();
+  return value;
+}
+
 /**
  * Unicode code-point lexicographic order: compare two strings as sequences of
  * code-point values, numerically at the first difference, shorter prefix first.

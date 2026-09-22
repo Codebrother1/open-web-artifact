@@ -442,6 +442,14 @@ test('explicit loopback dev health and plan/upload/commit/activate/list response
         assertPolicy(response);
       }
     });
+    await t.test('raw publish body rejects an overwritten duplicate before planning', async () => {
+      const body = JSON.stringify(planBody).replace('"manifest":{', '"manifest":{"specVersion":"decoy",');
+      assert.notEqual(body, JSON.stringify(planBody));
+      const response = await rawRequest(env, '/v1/sites/security/publish/plan', { method: 'POST', body, headers: { 'content-type': 'application/json' } });
+      assert.equal(response.status, 500); // Existing fixed-shape operation error for raw body failures.
+      assertPolicy(response);
+      assert.equal(JSON.parse(response.body.toString()).code, 'OWA_OPERATION_FAILED');
+    });
     await t.test('missing release-list site remains 404 with policy', async () => {
       const response = await rawRequest(env, '/v1/sites/unknown/releases');
       assert.equal(response.status, 404);

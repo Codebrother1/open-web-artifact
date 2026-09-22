@@ -77,8 +77,8 @@ Every file under `docs/conformance/v0.2/` and every vector in it is executed —
 | Corpus file | Operation | Vectors | Harness |
 | --- | --- | ---: | --- |
 | `canonical.json` | canonical | 107 | parse → canonicalize; category check (79 hard-boundary binary64 vectors, issue #38) |
-| `parse.json` | parse | 18 | parse → canonicalize; syntax → `OWA_INVALID_JSON` |
-| `manifest.json` | manifest | 150 | parse → validate → canonicalize + artifact digest |
+| `parse.json` | parse | 26 | parse → canonicalize; syntax → `OWA_INVALID_JSON`, duplicate keys → `OWA_INVALID_JSON_VALUE` |
+| `manifest.json` | manifest | 153 | parse → validate → canonicalize + artifact digest |
 | `path.json` | path | 25 | validate; exact original string returned |
 | `request.json` | request | 44 | validate manifest → resolve; exact file entry or null |
 | `pack.json` | pack | 17 | materialize files/symlinks in a temp dir → pack (media types from the fixed table) → manifest, canonical, digest, sorted unique blob digests, blob bytes |
@@ -130,9 +130,7 @@ None of these blocked the corpus; each is recorded so the specification can
 decide whether to pin it. Items the specification has since pinned move to
 "Resolved" below with their history.
 
-1. **Duplicate JSON member names** are explicitly outside the corpus. This
-   parser keeps the last value at the first member's position and discloses
-   that policy, as the conformance guide requires.
+1. **Duplicate JSON member names** — resolved by issue #54 (see Resolved below).
 2. **Shortest-digit selection.** The specification's "shortest round-tripping
    digits, closest, ties to even" is realised with `strconv.FormatFloat(v, 'e',
    -1, 64)` for the digits and an explicit implementation of the layout rules.
@@ -188,6 +186,15 @@ decide whether to pin it. Items the specification has since pinned move to
    characterized for this implementation, which has no Windows lane.
 
 ### Resolved
+
+- **Duplicate JSON member names** — issue #54 pins rejection of duplicate
+  decoded keys at every depth, including escape-equivalent spellings, as
+  `OWA_INVALID_JSON_VALUE`. The earlier local last-wins policy differed from
+  the JavaScript reference for an overwritten binary64 overflow token:
+  `{"a":1e400,"a":1}` was rejected by Go during parsing but accepted by
+  `JSON.parse` after the invalid value was discarded. Both now reject before
+  assigning artifact identity. A parser given an already-parsed object cannot
+  recover raw duplicates; the rule applies to raw JSON texts.
 
 - **Non-regular directory entries** — surfaced by this implementation, resolved
   by issue #40. The packing rule spoke only of "each discovered regular file"
