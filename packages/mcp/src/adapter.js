@@ -71,7 +71,7 @@ function validateArguments(tool, args, config) {
 
 export async function createAdapter(env = process.env) {
   const config = await readConfig(env);
-  const server = new Server({ name: 'owa-mcp', version: '0.4.0' }, { capabilities: { tools: {} } });
+  const server = new Server({ name: 'owa-mcp', version: '0.5.0' }, { capabilities: { tools: {} } });
   const tools = new Map(TOOLS.map(tool => [tool.name, tool]));
   server.setRequestHandler('tools/list', () => ({ tools: structuredClone(TOOLS) }));
   server.setRequestHandler('tools/call', async request => {

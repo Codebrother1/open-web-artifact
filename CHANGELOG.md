@@ -6,11 +6,12 @@ remains the v0.2 specification draft and every manifest keeps `specVersion`
 There was no tagged 0.3.0 release; everything below was merged between 0.2.0 and
 0.4.0.
 
-## Unreleased
+## 0.5.0 - 2026-09-22
 
 Protocol identity is unchanged (spec v0.2 draft, `owa.dev/v1`,
 `application/vnd.openwebartifact.site.v1+json`, canonical JSON and artifact
-digest algorithm); no package version, tag or release.
+digest algorithm). Software metadata is 0.5.0; tagging and publication require
+separate approval after the release-cut PR merges and post-merge CI passes.
 
 - specify pack-time media-type assignment as a portable producer rule (issue
   #33): the reference packer's existing fixed extension table plus a

@@ -8,15 +8,15 @@ The thesis: an AI agent, CLI, CI job, or application should be able to produce o
 
 | | |
 | --- | --- |
-| **Software / reference implementation** | **v0.4.0** — experimental; see [CHANGELOG](CHANGELOG.md) and the [release checklist](docs/release.md) |
+| **Software / reference implementation** | **v0.5.0** — experimental (release cut; publication pending); see [CHANGELOG](CHANGELOG.md) and the [release checklist](docs/release.md) |
 | **Specification** | **v0.2 draft** ([docs/spec-v0.2.md](docs/spec-v0.2.md)); manifest `specVersion` **`owa.dev/v1`**, media type `application/vnd.openwebartifact.site.v1+json` |
 | **Runtime** | Node.js **22+** |
 | **CI** | **10 checks**, all secretless: Linux/macOS/Windows × Node 22/24, real MinIO, Chromium/Firefox/WebKit, real ORAS + Zot, and the independent Go conformance runner ([docs/ci.md](docs/ci.md)) |
 | **Conformance** | portable corpus independently implemented in **JavaScript** (reference) and **Go** ([docs/independent-implementation.md](docs/independent-implementation.md)) |
 | **Distribution** | source / reference implementation; every repository package is private, nothing is published to npm |
 
-The software version and the protocol version are separate domains: v0.4.0
-implements the v0.2 protocol draft, and the protocol itself is not "v0.4".
+The software version and the protocol version are separate domains: v0.5.0
+implements the v0.2 protocol draft, and the protocol itself is not "v0.5".
 "v0.4" elsewhere in these docs (for example the content-only origin topology)
 refers to the reference software. This is **not yet a production multi-tenant
 hosting service** — see [Security / production status](#security--production-status).
@@ -436,7 +436,7 @@ docs/
   integration-tests.md
   release.md                   maintainer release process, v0.5.0 readiness review and the v0.4.0 release record
   release-notes-v0.4.0.md      v0.4.0 release notes (released 2026-09-21)
-  release-notes-v0.5.0.md      v0.5.0 release notes — UNRELEASED draft
+  release-notes-v0.5.0.md      v0.5.0 release notes (publication pending)
   conformance/                 portable corpus and cross-language guide
   independent-implementation.md  the Go conformance implementation: scope, independence rules, ambiguities
   test-vectors/
