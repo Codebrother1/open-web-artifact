@@ -66,6 +66,17 @@ digest algorithm); no package version, tag or release.
   process under an external deadline with kill-and-reap, so a writer-less
   FIFO can never hang the suite. No corpus file, error category, protocol
   identity or package version changed.
+- characterize pack-root and ancestor-symlink behaviour in both
+  implementations (issue #42), as current behaviour rather than a normative
+  rule: implementation-local tests record that a directory link supplied as
+  the pack root (relative or absolute target) or in an ancestor component is
+  followed and packs to the same identity as the direct path with no host
+  spelling in artifact paths; that a link inside the tree still fails
+  `OWA_SYMLINK` through every root spelling; and that a dangling root link or
+  a root link to a regular file fails with the host filesystem error and no
+  artifact. The root/ancestor-link policy stays unresolved and no confinement
+  or race resistance is claimed. No production code, corpus file, error
+  category, protocol identity or package version changed.
 
 ## 0.4.0 - 2026-09-21
 
