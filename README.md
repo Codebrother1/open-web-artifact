@@ -328,7 +328,7 @@ request, every push to `main`, and on demand (`pull_request`, never
 | `CI` — `offline (<os>, node <22\|24>)` | every ordinary suite plus the package-local MCP suite on Ubuntu, macOS and Windows × Node 22 and 24; the live suites run unconfigured and must skip |
 | `MinIO` — `minio (mediated + enforced, node 24)` | a real MinIO built from the pinned source commit of `RELEASE.2025-10-15T17-29-55Z`, disposable in-job credentials, the live suite in both default-mediated and explicitly-enforced modes, with skips turned into failures |
 | `Browsers` — `browsers (chromium, firefox, webkit)` | the `packages/browser-tests` suite in all three real Playwright engines, including WebKit |
-| `OCI` — `oci (oras + zot, node 24)` | the OCI layout pushed to and pulled from a real loopback Zot v2.1.21 registry with the pinned ORAS v1.3.4 CLI (checksum-verified official releases), by tag and by digest, then imported and served — with skips turned into failures |
+| `OCI` — `oci (oras + zot, node 24)` | the OCI layout pushed to and pulled from a real loopback Zot v2.1.21 registry with the pinned ORAS v1.3.4 CLI (checksum-verified official releases), by tag and by digest, then imported and served; plus the same round trip through a second, disposable Zot requiring TLS (temporary test CA, certificate verification on) and htpasswd authentication, with no-credential, wrong-credential and untrusted-CA controls — with skips turned into failures |
 
 Cloudflare R2 is intentionally **not** part of automatic CI: its credentials are
 never exposed to pull-request code, and R2 remains operator-run evidence. Every
@@ -373,8 +373,13 @@ entries — one layer descriptor per entry, identified by `dev.openwebartifact.p
 all referencing the one content-addressed blob (issue #9); the same live lane
 proves those repeated descriptors survive the registry and that each path is
 served with its own media type. Registry tags are mutable transport references —
-neither OWA artifact identity nor OWA releases. Details, exact commands and
-limitations (plain-HTTP loopback scope, no auth/TLS/signing claims):
+neither OWA artifact identity nor OWA releases. The same lane also drives the
+round trip through a disposable **authenticated HTTPS** Zot — certificate
+verification against a temporary test CA, htpasswd credentials required for
+push and pull, isolated ORAS login state — and shows that missing credentials,
+wrong credentials and an untrusted CA fail at their boundary (issue #46).
+Details, exact commands and limitations (loopback scope; no token exchange,
+mutual TLS, signing, multi-tenant or other-registry claims):
 [docs/oci.md](docs/oci.md).
 
 ## Artifact identity
@@ -512,7 +517,7 @@ integrity gate, MinIO/browser/ORAS+Zot lanes, Unicode pack ordering, cross-langu
 portable pack media-type rule are done):
 
 1. Decide the remaining portability interpretations recorded by the independent implementation ([docs/independent-implementation.md](docs/independent-implementation.md)), notably the pack-root and ancestor-symlink policy: both implementations currently follow a symbolic link supplied as the pack root, which issue #42 characterizes with tests in both implementations without making it normative. Non-regular directory entries are now specified in the v0.2 draft and pinned by implementation-local tests in both implementations (issue #40), deterministic pack-time media-type assignment is specified and corpus-pinned for the full fixed table (issue #33), and OCI index reference selection is exact, unique and fail-closed with a static multi-descriptor anchor (issue #36).
-2. Broader operator-run live evidence where it adds information: additional S3-compatible providers, registries beyond the tested ORAS v1.3.4 / Zot v2.1.21 pair, authenticated/TLS registry transport (registry transport itself stays with ORAS).
+2. Broader operator-run live evidence where it adds information: additional S3-compatible providers, registries beyond the tested ORAS v1.3.4 / Zot v2.1.21 pair, and registry authentication modes beyond the basic-auth-over-verified-TLS loopback case now covered continuously (token/bearer exchange, credential helpers, mutual TLS); registry transport itself stays with ORAS.
 3. Production and multi-tenant hardening beyond the documented prototype boundaries: tenant-private storage, token revocation/key rings, release retention, quotas.
 4. Separately reviewed future interactive capabilities (data/forms/secret proxies) only after the static lifecycle is stable; `sandboxed-web-v1` stays script-disabled.
 

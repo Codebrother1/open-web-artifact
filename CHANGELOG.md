@@ -77,6 +77,24 @@ digest algorithm); no package version, tag or release.
   artifact. The root/ancestor-link policy stays unresolved and no confinement
   or race resistance is claimed. No production code, corpus file, error
   category, protocol identity or package version changed.
+- add live evidence for authenticated HTTPS OCI transport (issue #46): the
+  `oci (oras + zot, node 24)` lane now also runs
+  `packages/integration/oci/authenticated-tls.test.js`, which starts a second,
+  disposable Zot v2.1.21 with TLS (temporary test CA, `IP:127.0.0.1`/`DNS:localhost`
+  SAN), htpasswd authentication required for every repository and a synthetic
+  per-run password, then pushes and pulls the static duplicate-content anchor
+  with the pinned ORAS v1.3.4 over verified HTTPS (isolated `--registry-config`,
+  password on stdin, `--ca-file`) and proves the OWA artifact digest, canonical
+  bytes, ordered entries, per-path media types, blob set and bytes and the OCI
+  manifest digest survive, while missing credentials, wrong credentials and an
+  untrusted CA each fail at their boundary (401s in the registry log; no request
+  at all for the untrusted CA). The disposable registry's start waits for the
+  exact challenge under a 60 s elapsed-time deadline that destroys in-flight
+  probes regardless of incoming bytes and rejects a response completed after
+  the budget, and cleans up its own failures — child stopped and reaped, state
+  removed, probe and timers cleared — before rejecting with the original error.
+  Test-only code; ORAS remains the transport. No production code, dependency,
+  tool version, corpus file, protocol identity or package version changed.
 - fix a test-harness hang in `auth-startup-listeners.test.js` (issue #44):
   the readiness wait for the spawned server polled with a self-rescheduling
   timer that was never stopped when its deadline won, so a failed readiness
