@@ -37,8 +37,9 @@ same checked-in corpus; neither calls the other.
 - safe request-path resolution (decode once, strict UTF-8, reject `\`/NUL/`..`
   before SPA fallback, `/a/.` vs `/a/./`);
 - directory packing with Unicode code-point ordering of complete artifact paths,
-  symlink rejection, duplicate-content blob deduplication, and the fixed
-  pack-time media-type table with its portable extension rule (issue #33);
+  symlink rejection, skipping of other non-regular entries (issue #40),
+  duplicate-content blob deduplication, and the fixed pack-time media-type
+  table with its portable extension rule (issue #33);
 - the OCI image-layout boundaries the corpus exercises: exact, unique
   `org.opencontainers.image.ref.name` index reference selection (issue #36),
   canonical config blob, one descriptor per file entry,
@@ -129,14 +130,10 @@ None of these blocked the corpus; each is recorded so the specification can
 decide whether to pin it. Items the specification has since pinned move to
 "Resolved" below with their history.
 
-1. **Non-regular directory entries.** The packing rule speaks of "each
-   discovered regular file". Symbolic links are rejected as specified; other
-   non-regular entries (sockets, devices, FIFOs) are skipped here. The corpus
-   does not cover them.
-2. **Duplicate JSON member names** are explicitly outside the corpus. This
+1. **Duplicate JSON member names** are explicitly outside the corpus. This
    parser keeps the last value at the first member's position and discloses
    that policy, as the conformance guide requires.
-3. **Shortest-digit selection.** The specification's "shortest round-tripping
+2. **Shortest-digit selection.** The specification's "shortest round-tripping
    digits, closest, ties to even" is realised with `strconv.FormatFloat(v, 'e',
    -1, 64)` for the digits and an explicit implementation of the layout rules.
    Since issue #38 the corpus stress-pins this rule at the hard binary64
@@ -157,10 +154,52 @@ decide whether to pin it. Items the specification has since pinned move to
    an exhaustive proof over all 2^64 bit patterns, so equivalence of Go's
    shortest-formatting algorithm with the rule for every binary64 value remains
    a strongly tested property rather than a demonstrated theorem.
-4. **Filesystem names that are not valid Unicode** are out of scope by the
+3. **Filesystem names that are not valid Unicode** are out of scope by the
    specification's own statement; the packer rejects them rather than guessing.
 
 ### Resolved
+
+- **Non-regular directory entries** — surfaced by this implementation, resolved
+  by issue #40. The packing rule spoke only of "each discovered regular file"
+  and of rejecting symbolic links; this implementation classified every entry
+  with `os.Lstat`, failed links, recursed into directories, read regular files
+  and let anything else fall through, and recorded that the corpus did not
+  cover FIFOs, sockets or devices. [spec-v0.2.md](spec-v0.2.md#entry-types)
+  now makes exactly that normative: links fail `OWA_SYMLINK` (never followed or
+  skipped), directories recurse, regular files pack, every other entry type is
+  skipped without being opened, read or connected to and without changing the
+  identity of the regular files, and a skipped entry never satisfies the
+  entrypoint. Because such entries cannot be materialized uniformly by the
+  portable corpus, the evidence is implementation-local:
+  `pack_nonregular_unix_test.go` (build-constrained to Unix-like platforms,
+  standard library only) creates a **real FIFO** (`syscall.Mkfifo`) and a
+  **real bound Unix-domain socket** (`net.Listen`) at the root and inside nested
+  directories of the materialized `pack-cross-language-anchor` fixture and
+  checks that the manifest, canonical bytes, artifact digest, file order, blob
+  digest set and every blob's bytes are unchanged and still equal the anchor's
+  static expectations, that the skipped names are absent, that no connection
+  reached the socket, that a writer-less FIFO does not hang packing, that the
+  two error cases are disjoint and ordered — a tree with regular files whose
+  `index.html` exists only as a FIFO or socket yields `OWA_MISSING_ENTRYPOINT`,
+  while a tree with zero regular-file entries (even one whose only entry is a
+  FIFO named `index.html`) yields `OWA_INVALID_MANIFEST` — and that symlinks to
+  a regular file, a directory, a missing target, an external file, a FIFO and a
+  socket all fail `OWA_SYMLINK`. Every pack operation that could meet a FIFO —
+  directly, or through a symbolic link should the link rule ever regress to
+  following links — runs in a child process: the test binary re-executes itself
+  under a 30-second `exec.CommandContext` deadline that kills (`SIGKILL`) and
+  reaps the child, and the child returns the complete packed identity or its
+  error category as one JSON document for the parent to assert on; only trees
+  of nothing but regular files are packed in-process. Negative controls prove
+  that a child which really opens the FIFO, and a simulated regressed packer
+  that reads every entry, are killed and reaped at a 2-second deadline. Each
+  socket listener registers its cleanup the moment it is bound.
+  The JavaScript reference has the same cases in `pack-nonregular.test.js`;
+  neither suite invokes the other. In CI the Go cases run on the Ubuntu Go
+  lane; the JavaScript cases run on the Ubuntu and macOS cells and skip on
+  Windows with an explicit reason. **Device nodes are not exercised** (creating
+  them needs privileges); their handling rests on the shared "neither directory
+  nor regular file" branch of `walk()`, verified by inspection, not by a test.
 
 - **Index reference selection** — surfaced by this implementation, resolved by
   issue #36. [oci.md](oci.md) said only that `index.json` lists the manifest

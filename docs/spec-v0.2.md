@@ -129,6 +129,22 @@ Traversal order of the filesystem is irrelevant: only the final sort of complete
 
 *Versioning and migration note.* Earlier v0.2 text left arbitrary-Unicode directory-pack ordering undefined (the reference used locale-sensitive collation). Defining it here closes an undefined producer behaviour inside the existing v0.2 draft: no new `specVersion`, media type or manifest field is introduced, canonical JSON and the artifact digest algorithm are unchanged, and every published v0.2 corpus and legacy artifact identity is preserved. Existing stored manifests and releases do not change. Re-packing a directory containing Unicode filenames with an older, locale-sensitive reference and with the corrected one MAY yield a different `files` order and therefore a different artifact digest; no legacy-collation compatibility mode exists because the old result depended on the host's locale/ICU and is not a portable algorithm. The packer operates on the Unicode filename strings the runtime exposes; a portable mapping for filesystem byte names that cannot be represented as such strings is out of scope.
 
+### Entry types
+Every entry discovered beneath the directory being packed is classified by inspecting it **without following symbolic links** (an `lstat`-style inspection), and then (issue #40):
+
+1. a **symbolic link** — to a regular file, a directory, a special entry or a missing target — MUST fail with `OWA_SYMLINK`; it is neither followed nor skipped;
+2. a **directory** MUST be traversed recursively;
+3. a **regular file** MUST be packed under the rules above (artifact path, ordering, media type);
+4. any **other** entry — a FIFO/named pipe, a filesystem socket, a character or block device, or anything classified as neither a directory nor a regular file — MUST be skipped: it contributes no `files` entry and no blob; its contents are never opened, read or connected to (only the metadata needed to classify it is inspected); and its presence MUST NOT change the canonical manifest bytes, artifact digest, file order, media types or blob contents produced for the same regular files.
+
+Errors while enumerating a directory or inspecting an entry propagate as before; they are not permission to omit entries silently. Manifest validation then applies to the result unchanged, and its two failure cases are disjoint and ordered:
+
+- If traversal produces zero regular-file entries, packing fails with `OWA_INVALID_MANIFEST`.
+- Otherwise, if the requested entrypoint is not among those regular-file entries, packing fails with `OWA_MISSING_ENTRYPOINT`.
+- A skipped special entry never satisfies the entrypoint.
+
+Regular files are included and special entries are skipped, so a directory containing only a FIFO named `index.html` produces zero regular-file entries and falls into the first case (`OWA_INVALID_MANIFEST`), whereas a directory with regular files whose `index.html` exists only as a FIFO or socket falls into the second (`OWA_MISSING_ENTRYPOINT`). This is producer behaviour of directory packing and states what the reference and the independent Go implementation already did; it does not restrict manually authored manifests. It concerns the types of entries observed during traversal only: the pack root itself, ancestor symbolic links, Windows reparse points, hard links and concurrent filesystem mutation during traversal are outside this rule, and no race-freedom is claimed.
+
 ### Media type assignment
 The pack operation assigns each file entry's `mediaType` from the **complete artifact path alone**, using the extension rule and the fixed table below (issue #33). Like the ordering rule, this is producer behaviour of directory packing: it exists so that two independent packers derive the same `files` entries, canonical JSON and artifact digest from the same directory. It does **not** restrict manually authored manifests, whose `mediaType` remains any nonempty string as specified above.
 
