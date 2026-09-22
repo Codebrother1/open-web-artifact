@@ -5,8 +5,8 @@ the Open Web Artifact reference implementation. It is a checklist, not an
 automation: no workflow creates tags or releases, and this document does not
 authorize one. It has two parts — the **reusable process** (version domains,
 evidence, pre-tag gates, tag and release policy) and a **per-version record**:
-the v0.5.0 readiness review (historical preparation baseline) and the v0.4.0 release
-record (released 2026-09-21, preserved with its dated evidence).
+the v0.5.0 readiness review (historical preparation baseline) and the v0.5.0
+and v0.4.0 release records (preserved with their dated evidence).
 
 ## Version domains
 
@@ -14,7 +14,7 @@ Three version numbers live in this repository and they do **not** move together:
 
 | Domain | Current value | Where it lives | What moves it |
 | --- | --- | --- | --- |
-| **Software / reference implementation** | **v0.4.0** released (annotated tag `v0.4.0`, tag object `8a63b39a`, peeled commit `v0.4.0^{commit}` = `5e792cc9`); **v0.5.0 software metadata prepared; tag and publication pending** | every `package.json` `version`, the MCP server-info string, `CHANGELOG.md`, the Git tag, the GitHub Release title | a software release |
+| **Software / reference implementation** | **v0.5.0 released** 2026-09-22 (annotated tag `v0.5.0`, tag object `0a08fa25`, peeled commit `v0.5.0^{commit}` = `0fb9f9f1`); prior **v0.4.0** record below | every `package.json` `version`, the MCP server-info string, `CHANGELOG.md`, the Git tag, the GitHub Release title | a software release |
 | **Protocol / specification draft** | **v0.2 (Draft)** | [`docs/spec-v0.2.md`](spec-v0.2.md), the conformance corpus under `docs/conformance/v0.2/` | a new spec draft, decided separately |
 | **Manifest `specVersion`** | **`owa.dev/v1`** with media type `application/vnd.openwebartifact.site.v1+json` | `packages/spec/src/index.js`, every manifest | an incompatible manifest change, decided separately |
 
@@ -82,13 +82,11 @@ post-merge checks green. The maintainer approved preparing the 0.5.0 release
 cut and acknowledged the stricter OCI reference-selection behavior on
 2026-09-22. Release-cut CI then exposed a diagnostic-only false positive when
 an ephemeral registry port contained `401`; #52 fixed the test-only check and
-added an exact regression without changing runtime behavior. This checkout
-updates software metadata and release notes; no
-0.5.0 tag or GitHub Release has been created. Tagging and publication still
-require approval after the release-cut PR is reviewed, merged, and its exact
-merge commit passes all ten checks. The proposed changelog date is 2026-09-22;
-reconfirm it if publication occurs on a later date. Other policy decisions
-below remain deferred and are not release blockers.
+added an exact regression without changing runtime behavior. At the time of
+this preparation review, software metadata and notes were pending and tagging
+required a later approval. That approval was granted, the release-cut PR merged,
+and v0.5.0 was published on 2026-09-22; see the release record below. Other
+policy decisions remain deferred and were not release blockers.
 
 Prepared under issue #48 at `main` `2e5f743a9d066da028ea8c0a5164c3566d27c9b4`
 (tree `77a40eda0e94c838fb873e728d9636633c3b9c4a`; 10/10 post-merge checks green
@@ -315,6 +313,36 @@ It must not touch runtime behaviour, dependencies, workflows, corpus files,
 - [ ] README links resolve at the tag; the README status block shows the released software version, spec v0.2 draft and `owa.dev/v1`.
 - [ ] `CHANGELOG.md` at the tag carries the version section with its release date and matches the release notes.
 - [ ] The release wording remains experimental; nothing claims production or multi-tenant hosting readiness.
+
+---
+
+## Release record — v0.5.0 (released 2026-09-22)
+
+Release-cut PR #50 merged to `main` as
+`0fb9f9f1687efd64c717d6bf18313b5f600b4347` (tree
+`00a4f2fefa7c3796e005330c3313b89091aa8e7d`). All ten `push` checks on
+that exact commit completed with `success`: six
+[`offline` matrix jobs](https://github.com/Codebrother1/open-web-artifact/actions/runs/35743453790),
+[`minio`](https://github.com/Codebrother1/open-web-artifact/actions/runs/35743453923),
+[`browsers`](https://github.com/Codebrother1/open-web-artifact/actions/runs/35743453763),
+[`oci`](https://github.com/Codebrother1/open-web-artifact/actions/runs/35743453800), and
+[`go-conformance`](https://github.com/Codebrother1/open-web-artifact/actions/runs/35743453795).
+
+The annotated tag `v0.5.0` has tag object
+`0a08fa25e573922be81742cd02cbf4a24c4c689c` and peels to that commit
+(`v0.5.0^{commit}`); tag message: `Open Web Artifact v0.5.0`. The
+[GitHub Release](https://github.com/Codebrother1/open-web-artifact/releases/tag/v0.5.0)
+was published at 2026-09-22T19:37:50Z, titled `Open Web Artifact v0.5.0`,
+marked Latest, neither draft nor prerelease. Its body matches
+[`release-notes-v0.5.0.md`](release-notes-v0.5.0.md) except that two relative
+documentation links were made tag-specific absolute links; GitHub lists
+generated source `.zip` and `.tar.gz` archives and no manually uploaded assets.
+
+The tag is immutable release evidence. At that commit, README and CHANGELOG
+still used prospective "publication pending" wording; this follow-up fixes
+those statements on `main` without moving the tag or altering release content.
+The v0.5.0 readiness table above remains a dated pre-release assessment, not a
+claim about current package versions or repository settings.
 
 ---
 

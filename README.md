@@ -8,7 +8,7 @@ The thesis: an AI agent, CLI, CI job, or application should be able to produce o
 
 | | |
 | --- | --- |
-| **Software / reference implementation** | **v0.5.0** — experimental (release cut; publication pending); see [CHANGELOG](CHANGELOG.md) and the [release checklist](docs/release.md) |
+| **Software / reference implementation** | **v0.5.0** — experimental ([GitHub Release](https://github.com/Codebrother1/open-web-artifact/releases/tag/v0.5.0)); see [CHANGELOG](CHANGELOG.md) and the [release record](docs/release.md) |
 | **Specification** | **v0.2 draft** ([docs/spec-v0.2.md](docs/spec-v0.2.md)); manifest `specVersion` **`owa.dev/v1`**, media type `application/vnd.openwebartifact.site.v1+json` |
 | **Runtime** | Node.js **22+** |
 | **CI** | **10 checks**, all secretless: Linux/macOS/Windows × Node 22/24, real MinIO, Chromium/Firefox/WebKit, real ORAS + Zot, and the independent Go conformance runner ([docs/ci.md](docs/ci.md)) |
@@ -434,9 +434,9 @@ docs/
   mcp.md
   ci.md
   integration-tests.md
-  release.md                   maintainer release process, v0.5.0 readiness review and the v0.4.0 release record
+  release.md                   maintainer release process, v0.5.0 and v0.4.0 release records
   release-notes-v0.4.0.md      v0.4.0 release notes (released 2026-09-21)
-  release-notes-v0.5.0.md      v0.5.0 release notes (publication pending)
+  release-notes-v0.5.0.md      v0.5.0 release notes (released 2026-09-22)
   conformance/                 portable corpus and cross-language guide
   independent-implementation.md  the Go conformance implementation: scope, independence rules, ambiguities
   test-vectors/
