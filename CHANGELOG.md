@@ -50,6 +50,19 @@ digest algorithm); no package version, tag or release.
   implementation pass all of them unchanged, and each gains a local
   round-trip/grammar property suite. No canonicalization code, protocol
   identity, error category, package version or pre-existing vector changed.
+- specify directory-packing behaviour for non-regular filesystem entries
+  (issue #40): entries are classified without following links; symbolic links
+  fail `OWA_SYMLINK`, directories recurse, regular files pack, and FIFOs,
+  sockets, devices and any other entry type are skipped without being opened,
+  read or connected to, contributing no entry or blob and leaving the identity
+  of the regular files unchanged; a skipped entry never satisfies the
+  entrypoint (`OWA_MISSING_ENTRYPOINT`) and a tree of only special entries is
+  `OWA_INVALID_MANIFEST`. This states existing JavaScript and Go behaviour;
+  no production code changed. Both implementations gain implementation-local
+  tests with real FIFOs and bound Unix-domain sockets (Linux/macOS; skipped
+  on Windows) including a separate-process, external-deadline proof that a
+  writer-less FIFO does not hang packing. No corpus file, error category,
+  protocol identity or package version changed.
 
 ## 0.4.0 - 2026-09-21
 
